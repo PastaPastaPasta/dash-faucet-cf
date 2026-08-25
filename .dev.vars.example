@@ -1,0 +1,10 @@
+# Local development secrets. Copy to .dev.vars (gitignored) — never commit.
+# In production these are Worker secrets:
+#   npx wrangler secret put FAUCET_WIF --env testnet
+#   npx wrangler secret put TURNSTILE_SECRET --env testnet
+
+# WIF for the faucet's hot key. Must match the deployment's NETWORK.
+FAUCET_WIF=
+
+# Leave blank to skip captcha verification entirely (local dev only).
+TURNSTILE_SECRET=

@@ -1,0 +1,28 @@
+{
+  "name": "dash-faucet-cf",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --env testnet",
+    "dev:mainnet": "wrangler dev --env mainnet",
+    "deploy:testnet": "wrangler deploy --env testnet",
+    "deploy:mainnet": "wrangler deploy --env mainnet",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "verify": "node scripts/verify-testnet.mjs"
+  },
+  "dependencies": {
+    "@dashincubator/secp256k1": "^1.7.1-5",
+    "dashkeys": "^1.1.5",
+    "dashtx": "^0.20.3"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.22.0",
+    "@cloudflare/workers-types": "^5.20260825.1",
+    "@types/node": "^22.10.0",
+    "typescript": "~5.9.2",
+    "vitest": "~4.1.11",
+    "wrangler": "^4.125.0"
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dash-faucet",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-15",
+  "compatibility_flags": [],
+  "observability": { "enabled": true },
+
+  // dashtx's ESM entry (dashtx.mjs) evaluates a bare `window`, which is a
+  // ReferenceError in workerd. Its CommonJS build guards with
+  // `globalThis.window || {}`, so resolve the package to that instead.
+  // Mirrored by resolve.alias in vitest.config.ts.
+  "alias": {
+    "dashtx": "./node_modules/dashtx/dashtx.js"
+  },
+
+  // Inherited by every environment.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Treasury"] }
+  ],
+
+  "env": {
+    "testnet": {
+      "assets": { "directory": "./public", "binding": "ASSETS" },
+      "triggers": { "crons": ["*/10 * * * *"] },
+      "durable_objects": {
+        "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
+      },
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "EDGE_LIMIT",
+            "type": "ratelimit",
+            "namespace_id": "1001",
+            "simple": { "limit": 20, "period": 60 }
+          }
+        ]
+      },
+      "vars": {
+        "NETWORK": "testnet",
+        // 1 tDASH
+        "PAYOUT_SATS": "100000000",
+        "RATE_LIMIT_PER_HOUR": "3",
+        // 200 tDASH/day ceiling
+        "DAILY_BUDGET_SATS": "20000000000",
+        // below this the faucet reports low_balance
+        "MIN_BALANCE_SATS": "5000000000",
+        "POOL_MIN": "8",
+        "POOL_TARGET": "20",
+        "POOL_UTXO_SATS": "500000000",
+        "TURNSTILE_SITE_KEY": "",
+        "DRY_RUN": "0"
+      }
+    },
+
+    "mainnet": {
+      "assets": { "directory": "./public", "binding": "ASSETS" },
+      "triggers": { "crons": ["*/10 * * * *"] },
+      "durable_objects": {
+        "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
+      },
+      "unsafe": {
+        "bindings": [
+          {
+            "name": "EDGE_LIMIT",
+            "type": "ratelimit",
+            "namespace_id": "1002",
+            "simple": { "limit": 10, "period": 60 }
+          }
+        ]
+      },
+      "vars": {
+        "NETWORK": "mainnet",
+        // 0.001 DASH — real money, keep the float thin
+        "PAYOUT_SATS": "100000",
+        "RATE_LIMIT_PER_HOUR": "1",
+        // 0.1 DASH/day hard ceiling on total loss
+        "DAILY_BUDGET_SATS": "10000000",
+        "MIN_BALANCE_SATS": "2000000",
+        "POOL_MIN": "8",
+        "POOL_TARGET": "20",
+        "POOL_UTXO_SATS": "1000000",
+        "TURNSTILE_SITE_KEY": "",
+        "DRY_RUN": "0"
+      }
+    }
+  }
+}
