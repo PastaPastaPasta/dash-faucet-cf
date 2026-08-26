@@ -51,7 +51,7 @@
         "POOL_MIN": "8",
         "POOL_TARGET": "20",
         "POOL_UTXO_SATS": "500000000",
-        "TURNSTILE_SITE_KEY": "",
+        "TURNSTILE_SITE_KEY": "0x4AAAAAAEc7OCY_Mbh19FLS",
         // cap.js proof-of-work challenge for native clients. Must stay inside
         // the Swift SDK's guard: c,s in 1..256, d in 1..6, c * 16^d <= 64M.
         // 100 * 16^4 = 6.55M, the shape the old CAP server served.
