@@ -579,8 +579,8 @@
          *
          * `solve()` is deliberately never called for the visitor: the widget's
          * own click-to-start UI is the consent step for spending a minute of
-         * their CPU. The widget is created once and reused, because it owns a
-         * Web Worker pool.
+         * their CPU. Re-entrant while a widget is live, so a second 429 cannot
+         * replace one mid-solve; `disposeCapWidget` is what ends its life.
          */
         async function showHardCaptcha() {
             const progress = $("hardCapProgress");
@@ -755,7 +755,10 @@
                 showError(error.message);
                 // An escalated attempt that failed leaves the box open but
                 // empty, so offer a fresh challenge rather than a dead panel.
+                // Dispose again here: a request that threw before reaching the
+                // response never got to burn its widget above.
                 if (proof) {
+                    disposeCapWidget();
                     showHardCaptcha().catch((err) => showError(err.message));
                 }
             } finally {

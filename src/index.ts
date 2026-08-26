@@ -1,4 +1,4 @@
-import { CapParams, mintChallenge, verifyCapToken, verifySolutions } from "./cap";
+import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
 import {
   COIN,
   Env,
@@ -124,28 +124,25 @@ const PAYOUT_FAILURES: Record<
  */
 function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   const { status, message } = PAYOUT_FAILURES[result.code];
-  if ("retryAfter" in result) {
-    return errorJson(
-      status,
-      message,
-      {
-        retryAfter: result.retryAfter,
-        ...(result.code === "rate_limited" && escalatable
-          ? { requiresHardCaptcha: true }
-          : {}),
-      },
-      { "Retry-After": String(result.retryAfter) },
-    );
+  if (!("retryAfter" in result)) {
+    return errorJson(status, message, { detailMessage: result.detail });
   }
-  return errorJson(status, message, { detailMessage: result.detail });
+
+  const extra: Record<string, unknown> = { retryAfter: result.retryAfter };
+  if (result.code === "rate_limited" && escalatable) {
+    extra.requiresHardCaptcha = true;
+  }
+  return errorJson(status, message, extra, {
+    "Retry-After": String(result.retryAfter),
+  });
 }
 
-async function handleCapChallenge(env: Env, hard: boolean): Promise<Response> {
+async function handleCapChallenge(env: Env, tier: "soft" | "hard"): Promise<Response> {
   const cfg = resolveConfig(env);
   if (!cfg.capSecret) {
     return errorJson(503, "Proof-of-work captcha is not configured");
   }
-  const params: CapParams = hard ? cfg.hardCapParams : cfg.capParams;
+  const params = tier === "hard" ? cfg.hardCapParams : cfg.capParams;
   // Nothing is stored: the token carries its own expiry, its shape and its MAC,
   // so issuing challenges costs no storage and cannot be exhausted — and the
   // tier a solve buys is readable off the token later without any lookup.
@@ -221,13 +218,11 @@ async function verifyCaptcha(
 
   if (body.turnstileToken) {
     const outcome = await verifyTurnstile(cfg.turnstileSecret, body.turnstileToken, ip);
-    return outcome.ok
-      ? { ok: true, tier: "turnstile" }
-      : {
-          ok: false,
-          status: 400,
-          reason: outcome.reason ?? "Captcha verification failed",
-        };
+    if (!outcome.ok) {
+      const reason = outcome.reason ?? "Captcha verification failed";
+      return { ok: false, status: 400, reason };
+    }
+    return { ok: true, tier: "turnstile" };
   }
 
   if (cfg.turnstileSecret || cfg.capSecret) {
@@ -313,10 +308,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handleStatus(request, env);
   }
   if (url.pathname === "/cap/v1/challenge" && request.method === "POST") {
-    return handleCapChallenge(env, false);
+    return handleCapChallenge(env, "soft");
   }
   if (url.pathname === "/cap/hard/challenge" && request.method === "POST") {
-    return handleCapChallenge(env, true);
+    return handleCapChallenge(env, "hard");
   }
   // Redeem is shape-agnostic on purpose: `verifySolutions` grades against the
   // shape the presented token itself commits to, so both tiers share one

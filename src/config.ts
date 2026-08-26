@@ -1,6 +1,6 @@
 /** Per-network configuration and env parsing. */
 
-import { CapParams, capWork } from "./cap";
+import { capWork, type CapParams } from "./cap";
 import type { Treasury } from "./treasury";
 
 export type NetworkName = "mainnet" | "testnet";
@@ -217,9 +217,11 @@ export function resolveConfig(env: Env): FaucetConfig {
   // `capTier` grades a presented token by work, so a hard shape that is not
   // strictly more expensive than the soft one would silently promote every
   // cheap native solve to the escalated allowance. Fail the deploy instead.
-  if (capWork(hard) <= capWork(soft)) {
+  const softWork = capWork(soft);
+  const hardWork = capWork(hard);
+  if (hardWork <= softWork) {
     throw new Error(
-      `CAP_HARD_* must cost more work than CAP_*: ${capWork(hard)} <= ${capWork(soft)} expected hashes`,
+      `CAP_HARD_* must cost more work than CAP_*: ${hardWork} <= ${softWork} expected hashes`,
     );
   }
 

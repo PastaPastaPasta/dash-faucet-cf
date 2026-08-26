@@ -228,13 +228,20 @@ describe("proof-strength rate limit tiers", () => {
   // The test config is a 2/3/4 ladder (soft/turnstile/hard) under a budget that
   // allows exactly four payouts, so one IP can walk the whole ladder and still
   // reach the hard ceiling before the budget answers instead.
+
+  /**
+   * One faucet request carrying `proof`, always to an address no earlier
+   * request used — the Treasury replays a same-day repeat before it ever
+   * reaches the rate-limit check, which would mask every assertion here.
+   */
+  let n = 0;
+  const fund = async (ip: string, proof: Record<string, unknown>) =>
+    post("/api/core-faucet", { address: await address((n += 1)), ...proof }, ip);
+
   it("raises the per-IP hourly limit as the proof gets stronger", async () => {
     env.TURNSTILE_SECRET = "turnstile-secret";
     const ip = "203.0.113.77";
-    let n = 0;
-    /** One request from `ip` to a fresh address, carrying `proof`. */
-    const to = async (proof: Record<string, unknown>) =>
-      post("/api/core-faucet", { address: await address((n += 1)), ...proof }, ip);
+    const to = (proof: Record<string, unknown>) => fund(ip, proof);
 
     // Soft proof of work: 2/hour.
     expect((await to({ capToken: await mintCapToken() })).status).toBe(200);
@@ -268,38 +275,21 @@ describe("proof-strength rate limit tiers", () => {
 
   it("grades the tier from the token, not the field it arrived in", async () => {
     const ip = "203.0.113.88";
-    expect(
-      (await post(
-        "/api/core-faucet",
-        { address: await address(31), capToken: await mintCapToken() },
-        ip,
-      )).status,
-    ).toBe(200);
-    expect(
-      (await post(
-        "/api/core-faucet",
-        { address: await address(32), capToken: await mintCapToken() },
-        ip,
-      )).status,
-    ).toBe(200);
+    const to = (proof: Record<string, unknown>) => fund(ip, proof);
+
+    // Spend the soft allowance.
+    expect((await to({ capToken: await mintCapToken() })).status).toBe(200);
+    expect((await to({ capToken: await mintCapToken() })).status).toBe(200);
 
     // `hardCapToken` is only an alias old web clients used. A soft token posted
     // under it must still be graded soft — the strength is signed into the
     // token's own payload, so the field name claims nothing.
-    const lying = await post(
-      "/api/core-faucet",
-      { address: await address(33), hardCapToken: await mintCapToken() },
-      ip,
-    );
+    const lying = await to({ hardCapToken: await mintCapToken() });
     expect(lying.status).toBe(429);
     expect(lying.body.requiresHardCaptcha).toBe(true);
 
     // The same alias with a genuinely hard token does raise the ceiling.
-    const honest = await post(
-      "/api/core-faucet",
-      { address: await address(34), hardCapToken: await mintCapToken("hard") },
-      ip,
-    );
+    const honest = await to({ hardCapToken: await mintCapToken("hard") });
     expect(honest.status).toBe(200);
   });
 
@@ -308,19 +298,13 @@ describe("proof-strength rate limit tiers", () => {
     // Four payouts exhaust DAILY_BUDGET_SATS. Spread over distinct IPs so the
     // per-IP limit is never what answers.
     for (let i = 0; i < 4; i += 1) {
-      const { status } = await post(
-        "/api/core-faucet",
-        { address: await address(40 + i), turnstileToken: "web-token" },
-        `203.0.113.${20 + i}`,
-      );
+      const { status } = await fund(`203.0.113.${20 + i}`, {
+        turnstileToken: "web-token",
+      });
       expect(status).toBe(200);
     }
 
-    const blocked = await post(
-      "/api/core-faucet",
-      { address: await address(50), turnstileToken: "web-token" },
-      "203.0.113.99",
-    );
+    const blocked = await fund("203.0.113.99", { turnstileToken: "web-token" });
     expect(blocked.status).toBe(429);
     expect(blocked.body.error).toBe("Faucet daily budget exhausted");
     // The daily budget is the global ceiling; no proof of work moves it.

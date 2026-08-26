@@ -193,7 +193,10 @@ inside the challenge token's MAC'd payload, and the capToken carries that token
 as a prefix, so the faucet reads the difficulty straight off a presented token —
 covered by the same signature that makes it valid at all. A soft token therefore
 cannot be passed off as hard. Grading is on `c × 16^d` rather than an exact
-parameter match, so retuning a tier never mis-grades a solve already in flight.
+parameter match, so retuning a tier never mis-grades a solve already in flight —
+and `resolveConfig` refuses to start with a `CAP_HARD_*` shape that is not
+strictly more expensive than `CAP_*`, which is the one misconfiguration that
+would silently promote every native solve to the escalated allowance.
 
 The browser side uses [`@cap.js/widget`](https://capjs.js.org) — pinned by
 version and SRI, loaded only after a `429`, and left to its own click-to-start
