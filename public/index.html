@@ -510,6 +510,7 @@
         const CAP_WIDGET_SRI =
             "sha384-jRVyBEwWeNAitIjhGT4Es7NBrYJS0WspXxvwUaxOve885Bj6sLTieyvmS85d9WF0";
 
+        let coinName = "tDash";
         let turnstileSiteKey = "";
         let turnstileWidgetId = null;
         let hardCapEndpoint = "";
@@ -746,6 +747,19 @@
                     throw new Error(message);
                 }
 
+                // The server is idempotent per (address, UTC day): asking twice
+                // returns the first transaction rather than paying again. That
+                // is a 200 in which no money moved, so reporting it as "Sent!"
+                // would be a lie the user can only catch by watching a balance
+                // that never changes.
+                if (data.replay) {
+                    throw new Error(
+                        `That address already received ${data.amount} ${coinName} today ` +
+                            `(tx ${data.txid.slice(0, 12)}\u2026). Use a different address, ` +
+                            `or try again after 00:00 UTC.`
+                    );
+                }
+
                 hideHardCaptcha();
                 $("coreTxid").textContent = data.txid;
                 card.classList.remove("show-config");
@@ -817,6 +831,7 @@
             $("configHeading").textContent = copy.heading;
             $("sentHeading").textContent = copy.sent;
             $("addressInput").placeholder = copy.placeholder;
+            coinName = copy.coin;
             $("startBtn").querySelector(".btn-text").textContent = copy.action;
             $("bridgeLink").href = copy.bridge;
             for (const el of document.querySelectorAll(".coin-name")) {
