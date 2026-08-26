@@ -27,8 +27,18 @@ const SPENT_SETTLED_MS = 30 * 60_000;
  * it, so the coin is eventually released back into circulation.
  */
 const SPENT_STALE_MS = 24 * HOUR_MS;
-/** How long an unconfirmed output of ours stays authoritative over explorers. */
-const PENDING_TTL_MS = 24 * HOUR_MS;
+/**
+ * How long an unconfirmed output of ours stays authoritative over explorers.
+ *
+ * A `pending` row only has to bridge broadcast to confirmation — one block, or
+ * a handful under congestion — so an hour is already generous. The two failure
+ * directions are not symmetric: dropping a live row costs a temporary
+ * under-count, because a coin that really exists comes back the moment the
+ * explorers list it, while keeping a dead one inflates the balance and offers a
+ * phantom outpoint to coin selection, which then builds a transaction spending
+ * an input that no longer exists. Prefer to drop early.
+ */
+const PENDING_TTL_MS = HOUR_MS;
 
 export type PayoutResult =
   | {
@@ -196,6 +206,14 @@ export class Treasury extends DurableObject<Env> {
       const stillUnspent = confirmed.has(key);
       if (!stillUnspent && age > SPENT_SETTLED_MS) {
         sql.exec(`DELETE FROM spent WHERE txid = ? AND vout = ?`, row.txid, row.vout);
+        // The same outpoint may also sit in `pending` — our own change, spent
+        // again before the explorers ever listed it as unspent. Such a row is
+        // never cleared by the `confirmed` check below, because the outpoint
+        // goes straight from unknown to consumed without appearing in their
+        // UTXO set. Dropping it here, with the `spent` row that was masking it,
+        // is what stops it outliving its guard and reappearing as a phantom
+        // coin for the rest of PENDING_TTL_MS.
+        sql.exec(`DELETE FROM pending WHERE txid = ? AND vout = ?`, row.txid, row.vout);
       } else if (stillUnspent && age > SPENT_STALE_MS) {
         console.warn(`treasury: releasing never-spent outpoint ${key}`);
         sql.exec(`DELETE FROM spent WHERE txid = ? AND vout = ?`, row.txid, row.vout);

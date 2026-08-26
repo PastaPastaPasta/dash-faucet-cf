@@ -1,4 +1,4 @@
-import { env } from "cloudflare:test";
+import { env, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FakeChain } from "./fakechain";
 import { RECIPIENT } from "../fixtures";
@@ -204,5 +204,38 @@ describe("maintenance", () => {
     chain.broadcast = { kind: "silence" };
     const result = await t.maintain();
     expect(result.action).toBe("blocked");
+  });
+});
+
+describe("ledger reconciliation", () => {
+  it("drops a pending change output when the spend that consumed it settles", async () => {
+    const t = treasury();
+
+    // The first payout records its change in `pending`. The second spends that
+    // change before the explorers ever list it as unspent — the burst path
+    // `pending` exists to enable — so the outpoint goes straight from unknown
+    // to consumed without ever entering the confirmed UTXO set, which is why
+    // the `confirmed` check in reconcile can never clear it.
+    expect((await t.payout(recipient(7))).ok).toBe(true);
+    expect((await t.payout(recipient(8))).ok).toBe(true);
+
+    const before = await t.snapshot();
+
+    // Age only the `spent` rows past SPENT_SETTLED_MS (30 min), leaving
+    // `pending` timestamps alone so this exercises reconcile rather than the
+    // PENDING_TTL_MS backstop.
+    await runInDurableObject(t, (_instance, state) => {
+      state.storage.sql.exec(
+        `UPDATE spent SET created_at = ?`,
+        Date.now() - 31 * 60_000,
+      );
+    });
+
+    // Settling a spend must not change what we think we own. Before the fix the
+    // `spent` row was dropped here while its `pending` twin survived, so the
+    // consumed change reappeared as a phantom coin and the balance went *up*.
+    const after = await t.snapshot();
+    expect(after.balanceSats).toBe(before.balanceSats);
+    expect(after.availableUtxos).toBe(before.availableUtxos);
   });
 });
