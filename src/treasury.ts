@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import DashTx from "dashtx";
 import { ChainClient, ProviderStatus, UtxoSnapshot } from "./chain";
-import { Env, FaucetConfig, resolveConfig } from "./config";
+import { Env, FaucetConfig, ProofTier, resolveConfig } from "./config";
 import { describeError } from "./errors";
 import { FaucetKey, loadFaucetKey } from "./keys";
 import {
@@ -11,6 +11,13 @@ import {
   buildPayout,
   buildSplit,
 } from "./tx";
+
+/**
+ * Name of the one global Treasury instance that owns all spending for a
+ * deployment. Lives here rather than in the Worker entry module because workerd
+ * rejects any named export from the entry that is not a handler or a class.
+ */
+export const TREASURY_ID = "faucet-v1";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -39,6 +46,20 @@ const SPENT_STALE_MS = 24 * HOUR_MS;
  * an input that no longer exists. Prefer to drop early.
  */
 const PENDING_TTL_MS = HOUR_MS;
+
+export interface PayoutRequest {
+  address: string;
+  pubKeyHash: string;
+  ip: string;
+  /**
+   * Strength of the proof the caller already verified. Only the ceiling the
+   * hourly hit count is measured against depends on it; the count itself is
+   * per-IP and tier-blind, so escalating raises the same allowance rather than
+   * opening a second one. Defaults to the weakest tier, which is also what an
+   * unauthenticated deployment (no captcha configured at all) gets.
+   */
+  tier?: ProofTier;
+}
 
 export type PayoutResult =
   | {
@@ -336,19 +357,11 @@ export class Treasury extends DurableObject<Env> {
     return true;
   }
 
-  async payout(input: {
-    address: string;
-    pubKeyHash: string;
-    ip: string;
-  }): Promise<PayoutResult> {
+  async payout(input: PayoutRequest): Promise<PayoutResult> {
     return this.serialize(() => this.payoutLocked(input));
   }
 
-  private async payoutLocked(input: {
-    address: string;
-    pubKeyHash: string;
-    ip: string;
-  }): Promise<PayoutResult> {
+  private async payoutLocked(input: PayoutRequest): Promise<PayoutResult> {
     const now = Date.now();
     const day = utcDay(now);
     const sql = this.ctx.storage.sql;
@@ -376,7 +389,8 @@ export class Treasury extends DurableObject<Env> {
       };
     }
 
-    // 2. Durable per-IP limit.
+    // 2. Durable per-IP limit, scaled by how strong a proof was presented.
+    const limit = cfg.rateLimits[input.tier ?? "soft"];
     const hits = sql
       .exec<{ oldest: number | null; n: number }>(
         `SELECT MIN(created_at) AS oldest, COUNT(*) AS n
@@ -385,7 +399,7 @@ export class Treasury extends DurableObject<Env> {
         now - HOUR_MS,
       )
       .toArray()[0];
-    if (hits && hits.n >= cfg.rateLimitPerHour) {
+    if (hits && hits.n >= limit) {
       const oldest = hits.oldest ?? now;
       const retryAfter = Math.max(1, Math.ceil((oldest + HOUR_MS - now) / 1000));
       return { ok: false, code: "rate_limited", retryAfter };

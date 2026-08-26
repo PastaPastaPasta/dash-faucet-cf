@@ -43,7 +43,11 @@
         "NETWORK": "testnet",
         // 1 tDASH
         "PAYOUT_SATS": "100000000",
+        // Hourly per-IP allowance by proof strength. Retunable without a code
+        // change; all three stay bounded by DAILY_BUDGET_SATS below.
         "RATE_LIMIT_PER_HOUR": "3",
+        "RATE_LIMIT_TURNSTILE_PER_HOUR": "10",
+        "RATE_LIMIT_HARD_PER_HOUR": "25",
         // 200 tDASH/day ceiling
         "DAILY_BUDGET_SATS": "20000000000",
         // below this the faucet reports low_balance
@@ -58,6 +62,13 @@
         "CAP_C": "100",
         "CAP_S": "32",
         "CAP_D": "4",
+        // Escalated shape served at /cap/hard/, for browsers that hit a 429.
+        // 50 * 16^6 = 839M — ~30-90s in @cap.js/widget's WASM worker pool, and
+        // exactly what the old CAP server served for its hard tier. No native
+        // client is offered this, so the SDK's 64M guard does not apply.
+        "CAP_HARD_C": "50",
+        "CAP_HARD_S": "32",
+        "CAP_HARD_D": "6",
         "DRY_RUN": "0"
       }
     },
@@ -82,7 +93,11 @@
         "NETWORK": "mainnet",
         // 0.001 DASH — real money, keep the float thin
         "PAYOUT_SATS": "100000",
+        // Hourly per-IP allowance by proof strength. Real money, so the
+        // escalated tier is a modest bump rather than testnet's 25.
         "RATE_LIMIT_PER_HOUR": "1",
+        "RATE_LIMIT_TURNSTILE_PER_HOUR": "3",
+        "RATE_LIMIT_HARD_PER_HOUR": "8",
         // 0.1 DASH/day hard ceiling on total loss
         "DAILY_BUDGET_SATS": "10000000",
         "MIN_BALANCE_SATS": "2000000",
@@ -96,6 +111,13 @@
         "CAP_C": "100",
         "CAP_S": "32",
         "CAP_D": "4",
+        // Escalated shape served at /cap/hard/, for browsers that hit a 429.
+        // 50 * 16^6 = 839M — ~30-90s in @cap.js/widget's WASM worker pool, and
+        // exactly what the old CAP server served for its hard tier. No native
+        // client is offered this, so the SDK's 64M guard does not apply.
+        "CAP_HARD_C": "50",
+        "CAP_HARD_S": "32",
+        "CAP_HARD_D": "6",
         "DRY_RUN": "0"
       }
     }

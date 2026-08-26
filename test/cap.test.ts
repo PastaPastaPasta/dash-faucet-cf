@@ -3,6 +3,7 @@ import {
   CAP_TOKEN_GRACE_MS,
   CHALLENGE_TTL_MS,
   CapParams,
+  capWork,
   checkSolution,
   deriveCapToken,
   mintChallenge,
@@ -225,7 +226,23 @@ describe("verifyCapToken", () => {
     expect(verifyCapToken(SECRET, capToken, now)).toEqual({
       ok: true,
       expiresAt: now + CHALLENGE_TTL_MS + CAP_TOKEN_GRACE_MS,
+      params: PARAMS,
     });
+  });
+
+  it("reports the challenge shape the token was minted with", () => {
+    // This is what makes proof-strength tiers stateless: the difficulty is
+    // inside the same MAC'd payload that authenticates the token, so a soft
+    // solve cannot be presented as a hard one, and no lookup table is needed to
+    // find out which it was.
+    const hard: CapParams = { c: 8, s: 32, d: 3 };
+    const { token } = mintChallenge(SECRET, hard);
+    const redeemed = verifySolutions(SECRET, token, solve(token, hard));
+    if (!redeemed.ok) throw new Error("solve failed");
+
+    const check = verifyCapToken(SECRET, redeemed.capToken);
+    expect(check.ok && check.params).toEqual(hard);
+    expect(capWork(hard)).toBeGreaterThan(capWork(PARAMS));
   });
 
   it("survives its challenge's expiry by the grace period", () => {

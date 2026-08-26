@@ -53,7 +53,8 @@ describe("payout", () => {
   it("enforces the per-IP hourly limit", async () => {
     const t = treasury();
     const ip = "203.0.113.9";
-    // RATE_LIMIT_PER_HOUR is 2 in the test config.
+    // RATE_LIMIT_PER_HOUR is 2 in the test config, and an unspecified tier is
+    // the weakest one.
     for (let i = 0; i < 2; i += 1) {
       const r = await t.payout({ ...recipient(20 + i), ip });
       expect(r.ok).toBe(true);
@@ -64,6 +65,24 @@ describe("payout", () => {
     expect(blocked.code).toBe("rate_limited");
     if (blocked.code !== "rate_limited") return;
     expect(blocked.retryAfter).toBeGreaterThan(0);
+  });
+
+  it("measures the same per-IP hit count against the tier's own ceiling", async () => {
+    const t = treasury();
+    const ip = "203.0.113.10";
+    // Soft is 2, hard is 4 in the test config. The hits are tier-blind: a
+    // stronger proof raises the ceiling the *same* count is compared against,
+    // rather than opening a second, independent quota.
+    for (let i = 0; i < 2; i += 1) {
+      expect((await t.payout({ ...recipient(60 + i), ip, tier: "soft" })).ok).toBe(true);
+    }
+    const soft = await t.payout({ ...recipient(62), ip, tier: "soft" });
+    expect(soft.ok).toBe(false);
+    if (soft.ok) return;
+    expect(soft.code).toBe("rate_limited");
+
+    // Same IP, same two hits, stronger proof: allowed.
+    expect((await t.payout({ ...recipient(63), ip, tier: "hard" })).ok).toBe(true);
   });
 
   it("stops at the daily budget even from fresh IPs", async () => {

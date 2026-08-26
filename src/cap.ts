@@ -7,12 +7,15 @@
  * it, so they speak the `cap.js` wire protocol instead: fetch a challenge, brute
  * force `c` little SHA-256 prefix searches, redeem the solutions for a token.
  *
- * Be honest about what this buys: the client-side guard caps aggregate work at
+ * Be honest about what this buys: the soft shape native clients get is capped at
  * `c × 16^d ≤ 64M` hashes, which is under a second on a server core, so a bot
- * that takes this path is barely inconvenienced. Accepting a PoW token means the
- * effective captcha strength for *everyone* becomes the PoW. This is
- * compatibility and friction, not a bot defence — the real limits are the
- * durable per-IP limit, the edge limit and `DAILY_BUDGET_SATS`.
+ * that takes this path is barely inconvenienced. The hard shape browsers can
+ * escalate to costs ~839M, still only tens of seconds for someone with real
+ * hardware. This is friction and cost, not a bot defence — the real limits are
+ * the durable per-IP limit, the edge limit and `DAILY_BUDGET_SATS`. What the
+ * work *does* buy is a defensible ordering: because the shape is signed into the
+ * token (see `mintChallenge`), the faucet can grade a presented token by how
+ * much it cost and hand out a proportionally larger per-IP allowance.
  *
  * Everything here is deliberately synchronous. Verifying a redeem costs two PRNG
  * seedings and one SHA-256 per sub-challenge; `crypto.subtle.digest` would turn
@@ -28,6 +31,19 @@ export interface CapParams {
   c: number;
   s: number;
   d: number;
+}
+
+/**
+ * Expected hashes to solve a challenge of this shape: `c` independent searches
+ * for a `d`-hex-digit prefix, each averaging `16^d` tries.
+ *
+ * This is the single number that orders challenges by strength, which is what
+ * lets the faucet grade a presented token by *work* rather than by an exact
+ * parameter match — so retuning a tier's shape never mis-grades a solve that is
+ * already in flight.
+ */
+export function capWork(params: CapParams): number {
+  return params.c * 16 ** params.d;
 }
 
 export interface CapChallenge {
@@ -307,12 +323,17 @@ export function verifySolutions(
 }
 
 export type CapTokenCheck =
-  | { ok: true; expiresAt: number }
+  | { ok: true; expiresAt: number; params: CapParams }
   | { ok: false; reason: string };
 
 /**
  * Verify a capToken presented to `/api/core-faucet`. Proves *authenticity* only;
  * single use is the caller's job (see `Treasury.consumeCapToken`).
+ *
+ * `params` comes back with it because the challenge shape is inside the MAC'd
+ * payload, so the caller learns how much work this token cost without storing
+ * anything: a soft challenge cannot be passed off as a hard one, since the
+ * difficulty is covered by the same signature that makes the token valid.
  */
 export function verifyCapToken(
   secret: string,
@@ -336,5 +357,5 @@ export function verifyCapToken(
   const expiresAt = parsed.expires + CAP_TOKEN_GRACE_MS;
   if (now > expiresAt) return { ok: false, reason: "Captcha token expired" };
 
-  return { ok: true, expiresAt };
+  return { ok: true, expiresAt, params: parsed.params };
 }

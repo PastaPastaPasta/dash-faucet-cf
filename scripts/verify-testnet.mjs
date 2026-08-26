@@ -79,6 +79,35 @@ if (s.balanceSats === 0) {
   process.exit(failures ? 1 : 0);
 }
 
+// --- captcha tiers ----------------------------------------------------------
+// Shapes only. Never solve the hard challenge here: 50 × 16^6 is ~839M hashes,
+// a quarter-hour of CPU, and proves nothing this check does not already.
+const work = (p) => (p ? p.c * 16 ** p.d : 0);
+const shape = (r) =>
+  r.body.challenge ? `c=${r.body.challenge.c} s=${r.body.challenge.s} d=${r.body.challenge.d}` : "none";
+
+const soft = await api("/cap/v1/challenge", { method: "POST" });
+const hard = await api("/cap/hard/challenge", { method: "POST" });
+if (soft.status === 503 && hard.status === 503) {
+  console.log("[ skip ] proof-of-work captcha is not configured on this instance");
+} else {
+  check(
+    "advertises the escalated cap endpoint",
+    /\/cap\/hard\/$/.test(s.hardCapEndpoint ?? ""),
+    s.hardCapEndpoint,
+  );
+  check(
+    "serves both challenge tiers",
+    soft.status === 200 && hard.status === 200,
+    `${shape(soft)} | ${shape(hard)}`,
+  );
+  check(
+    "the hard tier costs strictly more work",
+    work(hard.body.challenge) > work(soft.body.challenge),
+    `${work(hard.body.challenge)} vs ${work(soft.body.challenge)} hashes`,
+  );
+}
+
 // --- validation -------------------------------------------------------------
 const mainnetAddr = "XufxUJ15FiDRBU1J9Zjuo8vhBUkHT6bXv1";
 const wrongNet = await requestPayout(mainnetAddr);

@@ -1,14 +1,22 @@
-import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
-import { COIN, Env, FaucetConfig, resolveConfig } from "./config";
+import { CapParams, mintChallenge, verifyCapToken, verifySolutions } from "./cap";
+import {
+  COIN,
+  Env,
+  FaucetConfig,
+  ProofTier,
+  canEscalate,
+  capTier,
+  resolveConfig,
+} from "./config";
 import { describeError } from "./errors";
 import { AddressError, addressToPubKeyHash } from "./keys";
 import { clientIp, errorJson, json, preflight, verifyTurnstile } from "./http";
-import type { PayoutResult } from "./treasury";
+import { TREASURY_ID, type PayoutResult } from "./treasury";
 
+// Only the Durable Object class may be re-exported here: workerd validates the
+// entry module's named exports and rejects anything that is not a handler or a
+// class, so constants have to live in the module that defines them.
 export { Treasury } from "./treasury";
-
-/** One global Treasury instance owns all spending for a deployment. */
-const TREASURY_ID = "faucet-v1";
 
 function treasury(env: Env) {
   return env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
@@ -32,8 +40,8 @@ function toDash(satoshis: number): number {
  * serving the production hostname. Local clients should address `/cap/v1/`
  * directly rather than following this field.
  */
-function capEndpoint(request: Request): string {
-  return `https://${new URL(request.url).host}/cap/v1/`;
+function capEndpoint(request: Request, path: string): string {
+  return `https://${new URL(request.url).host}${path}`;
 }
 
 async function handleStatus(request: Request, env: Env): Promise<Response> {
@@ -57,7 +65,9 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       // the dash-faucet skill keep working.
       balance: toDash(snap.balanceSats),
       coreFaucetAmount: toDash(cfg.payoutSats),
-      rateLimitPerHour: cfg.rateLimitPerHour,
+      // The soft-tier limit, because that is the tier every client written
+      // against this field (the iOS SDK, the dash-faucet skill) actually uses.
+      rateLimitPerHour: cfg.rateLimits.soft,
       depositAddress: snap.address,
       blockHeight: snap.blockHeight,
       availableUtxos: snap.availableUtxos,
@@ -66,7 +76,13 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       turnstileSiteKey: cfg.turnstileSiteKey,
       // Non-optional in the Swift SDK's Decodable: omitting it makes every
       // native client fail to parse status at all.
-      capEndpoint: capEndpoint(request),
+      capEndpoint: capEndpoint(request, "/cap/v1/"),
+      // Deliberately the name the old Python faucet used: old web clients
+      // already understand it, and the Swift SDK ignores unknown keys.
+      hardCapEndpoint: capEndpoint(request, "/cap/hard/"),
+      // Per-tier hourly ceilings, so the UI can quote the number that applies
+      // to it rather than the soft-tier one above.
+      rateLimits: cfg.rateLimits,
       balanceSats: snap.balanceSats,
       poolUtxos: snap.poolUtxos,
       spentTodaySats: snap.spentToday,
@@ -100,27 +116,40 @@ const PAYOUT_FAILURES: Record<
   error: { status: 500, message: "Internal server error" },
 };
 
-function payoutFailure(result: PayoutFailure): Response {
+/**
+ * `escalatable` says a harder proof would raise this client's own ceiling. Only
+ * the per-IP limit is escalatable: `budget_exhausted` is the global daily
+ * ceiling, and no amount of proof of work moves it — advertising escalation
+ * there would burn a minute of the user's CPU for a guaranteed second 429.
+ */
+function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   const { status, message } = PAYOUT_FAILURES[result.code];
   if ("retryAfter" in result) {
     return errorJson(
       status,
       message,
-      { retryAfter: result.retryAfter },
+      {
+        retryAfter: result.retryAfter,
+        ...(result.code === "rate_limited" && escalatable
+          ? { requiresHardCaptcha: true }
+          : {}),
+      },
       { "Retry-After": String(result.retryAfter) },
     );
   }
   return errorJson(status, message, { detailMessage: result.detail });
 }
 
-async function handleCapChallenge(env: Env): Promise<Response> {
+async function handleCapChallenge(env: Env, hard: boolean): Promise<Response> {
   const cfg = resolveConfig(env);
   if (!cfg.capSecret) {
     return errorJson(503, "Proof-of-work captcha is not configured");
   }
-  // Nothing is stored: the token carries its own expiry and MAC, so issuing
-  // challenges costs no storage and cannot be exhausted.
-  return json(mintChallenge(cfg.capSecret, cfg.capParams));
+  const params: CapParams = hard ? cfg.hardCapParams : cfg.capParams;
+  // Nothing is stored: the token carries its own expiry, its shape and its MAC,
+  // so issuing challenges costs no storage and cannot be exhausted — and the
+  // tier a solve buys is readable off the token later without any lookup.
+  return json(mintChallenge(cfg.capSecret, params));
 }
 
 async function handleCapRedeem(request: Request, env: Env): Promise<Response> {
@@ -146,13 +175,13 @@ async function handleCapRedeem(request: Request, env: Env): Promise<Response> {
   return json({ success: true, token: result.capToken, expires: result.expiresAt });
 }
 
-interface CaptchaRejection {
-  status: number;
-  reason: string;
-}
+type CaptchaOutcome =
+  | { ok: true; tier: ProofTier }
+  | { ok: false; status: number; reason: string };
 
 /**
- * Verify whichever captcha credential the client presented.
+ * Verify whichever captcha credential the client presented, and report how
+ * strong it was.
  *
  * These are two different credentials and must not be interchangeable: the
  * previous code passed `turnstileToken ?? capToken` to Turnstile's siteverify,
@@ -160,47 +189,63 @@ interface CaptchaRejection {
  * to a third party on every native request.
  *
  * With no captcha configured at all, both paths fall through as a no-op — the
- * behaviour the old Python faucet had with CAP unset.
+ * behaviour the old Python faucet had with CAP unset — and get the weakest
+ * tier's allowance.
  */
 async function verifyCaptcha(
   env: Env,
   cfg: FaucetConfig,
   ip: string,
-  body: { turnstileToken?: string; capToken?: string },
-): Promise<CaptchaRejection | null> {
-  if (body.capToken) {
+  body: { turnstileToken?: string; capToken?: string; hardCapToken?: string },
+): Promise<CaptchaOutcome> {
+  // `hardCapToken` is only an alias old web clients used for the escalated
+  // token; it is never the source of truth for the tier. Both fields land in
+  // the same verifier and the tier comes from the shape signed into the token,
+  // so posting a soft token under the hard name buys nothing.
+  const capToken = body.capToken || body.hardCapToken;
+
+  if (capToken) {
     if (!cfg.capSecret) {
-      return { status: 400, reason: "Proof-of-work captcha is not configured" };
+      return { ok: false, status: 400, reason: "Proof-of-work captcha is not configured" };
     }
-    const check = verifyCapToken(cfg.capSecret, body.capToken);
-    if (!check.ok) return { status: 400, reason: check.reason };
+    const check = verifyCapToken(cfg.capSecret, capToken);
+    if (!check.ok) return { ok: false, status: 400, reason: check.reason };
 
     // Burn it here, not after a successful payout. A capToken that survived a
     // rate-limited or underfunded request would be a reusable bypass of the one
     // thing the proof-of-work actually costs.
-    const fresh = await treasury(env).consumeCapToken(body.capToken, check.expiresAt);
-    if (!fresh) return { status: 400, reason: "Captcha token already used" };
-    return null;
+    const fresh = await treasury(env).consumeCapToken(capToken, check.expiresAt);
+    if (!fresh) return { ok: false, status: 400, reason: "Captcha token already used" };
+    return { ok: true, tier: capTier(cfg, check.params) };
   }
 
   if (body.turnstileToken) {
     const outcome = await verifyTurnstile(cfg.turnstileSecret, body.turnstileToken, ip);
     return outcome.ok
-      ? null
-      : { status: 400, reason: outcome.reason ?? "Captcha verification failed" };
+      ? { ok: true, tier: "turnstile" }
+      : {
+          ok: false,
+          status: 400,
+          reason: outcome.reason ?? "Captcha verification failed",
+        };
   }
 
   if (cfg.turnstileSecret || cfg.capSecret) {
-    return { status: 400, reason: "Captcha token required" };
+    return { ok: false, status: 400, reason: "Captcha token required" };
   }
-  return null;
+  return { ok: true, tier: "soft" };
 }
 
 async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
   const ip = clientIp(request);
 
-  let body: { address?: string; turnstileToken?: string; capToken?: string };
+  let body: {
+    address?: string;
+    turnstileToken?: string;
+    capToken?: string;
+    hardCapToken?: string;
+  };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -230,11 +275,16 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     throw err;
   }
 
-  const rejected = await verifyCaptcha(env, cfg, ip, body);
-  if (rejected) return errorJson(rejected.status, rejected.reason);
+  const captcha = await verifyCaptcha(env, cfg, ip, body);
+  if (!captcha.ok) return errorJson(captcha.status, captcha.reason);
 
-  const result = await treasury(env).payout({ address, pubKeyHash, ip });
-  if (!result.ok) return payoutFailure(result);
+  const result = await treasury(env).payout({
+    address,
+    pubKeyHash,
+    ip,
+    tier: captcha.tier,
+  });
+  if (!result.ok) return payoutFailure(result, canEscalate(cfg, captcha.tier));
 
   return json({
     txid: result.txid,
@@ -263,9 +313,19 @@ async function route(request: Request, env: Env): Promise<Response> {
     return handleStatus(request, env);
   }
   if (url.pathname === "/cap/v1/challenge" && request.method === "POST") {
-    return handleCapChallenge(env);
+    return handleCapChallenge(env, false);
   }
-  if (url.pathname === "/cap/v1/redeem" && request.method === "POST") {
+  if (url.pathname === "/cap/hard/challenge" && request.method === "POST") {
+    return handleCapChallenge(env, true);
+  }
+  // Redeem is shape-agnostic on purpose: `verifySolutions` grades against the
+  // shape the presented token itself commits to, so both tiers share one
+  // implementation. The paths stay separate only because `@cap.js/widget`
+  // derives `redeem` from the same `data-cap-api-endpoint` as `challenge`.
+  if (
+    (url.pathname === "/cap/v1/redeem" || url.pathname === "/cap/hard/redeem") &&
+    request.method === "POST"
+  ) {
     return handleCapRedeem(request, env);
   }
   if (url.pathname === "/api/core-faucet" && request.method === "POST") {

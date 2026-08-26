@@ -81,6 +81,8 @@ Response shapes match the old Python faucet, so existing clients and the
   "network": "testnet",
   "turnstileSiteKey": "0x...",
   "capEndpoint": "https://faucet.example/cap/v1/",
+  "hardCapEndpoint": "https://faucet.example/cap/hard/",
+  "rateLimits": { "soft": 3, "turnstile": 10, "hard": 25 },
   "providers": [{ "name": "insight", "ok": true, "height": 1540992, "error": null }]
 }
 ```
@@ -104,13 +106,20 @@ Errors carry both a flat shape and FastAPI's nested `detail`, so old and new
 clients both work:
 
 ```json
-{ "error": "Rate limit exceeded", "retryAfter": 1800,
-  "detail": { "error": "Rate limit exceeded", "retryAfter": 1800 } }
+{ "error": "Rate limit exceeded", "retryAfter": 1800, "requiresHardCaptcha": true,
+  "detail": { "error": "Rate limit exceeded", "retryAfter": 1800,
+              "requiresHardCaptcha": true } }
 ```
 
 Send `turnstileToken` from the browser, or `capToken` from a native client.
 They are separate credentials verified by separate code paths; a `capToken` is
-never forwarded to Turnstile.
+never forwarded to Turnstile. `hardCapToken` is accepted as an alias for
+`capToken`, for old web clients — it is only a field name and claims nothing
+about strength.
+
+`requiresHardCaptcha` appears on a `429` from the per-IP limit when, and only
+when, re-solving at the hard tier would raise this client's own ceiling. It is
+absent when the daily budget is what ran out, since no proof of work moves that.
 
 `400` invalid address or captcha · `429` rate limited or daily budget spent
 (`Retry-After` set) · `503` insufficient funds or every explorer unreachable.
@@ -118,11 +127,17 @@ never forwarded to Turnstile.
 Requesting the same address twice in one UTC day returns the original `txid`
 with `replay: true` rather than paying again.
 
-### `POST /cap/v1/challenge` · `POST /cap/v1/redeem`
+### `POST /cap/{v1,hard}/challenge` · `POST /cap/{v1,hard}/redeem`
 
 A [cap.js](https://capjs.js.org)-compatible proof-of-work captcha, for clients
 that cannot run a browser challenge — dashwallet-ios' one-tap "get tDash" solves
 this on-device via `TestnetFaucet.swift` in the Dash Platform Swift SDK.
+
+`/cap/v1/` serves the soft shape (`CAP_*`); `/cap/hard/` serves the escalated
+one (`CAP_HARD_*`) that browsers use to get past a `429`. Redeem is shared
+logic — it grades against the shape the presented token itself commits to — and
+the paths only stay separate because `@cap.js/widget` derives both from one
+`data-cap-api-endpoint`.
 
 ```
 POST /cap/v1/challenge   {}
@@ -152,9 +167,39 @@ capToken usable once — burned on presentation, whether or not the payout then
 succeeds.
 
 Be clear-eyed about the strength: the Swift SDK refuses any challenge above
-`c × 16^d = 64M` expected hashes, which is well under a second on a server core.
-This is compatibility and friction, not a bot defence. The real limits are the
+`c × 16^d = 64M` expected hashes, which is well under a second on a server core,
+and even the hard tier's 839M is only tens of seconds for someone with real
+hardware. This is friction and cost, not a bot defence. The real limits are the
 per-IP rate limit and `DAILY_BUDGET_SATS`.
+
+## Proof-strength tiers
+
+The hourly per-IP limit scales with how strong a proof the client presented.
+
+| Proof | Shape | Limit | Used by |
+|---|---|---|---|
+| soft PoW | `c=100 s=32 d=4` (6.55M) | `RATE_LIMIT_PER_HOUR` = 3 | native / iOS |
+| Turnstile | — | `RATE_LIMIT_TURNSTILE_PER_HOUR` = 10 | browsers, normal path |
+| hard PoW | `c=50 s=32 d=6` (839M) | `RATE_LIMIT_HARD_PER_HOUR` = 25 | browsers, after a `429` |
+
+The hit count is per-IP and tier-blind; only the ceiling it is measured against
+varies, so escalating raises the same allowance rather than opening a second
+one. Every tier stays under `DAILY_BUDGET_SATS`, which remains the real limit —
+`hard` is a high-but-finite ceiling rather than the old faucet's unlimited
+bypass, so one IP cannot drain a day's budget in minutes.
+
+Deriving the tier needs no new state and no new token type. `c/s/d` already live
+inside the challenge token's MAC'd payload, and the capToken carries that token
+as a prefix, so the faucet reads the difficulty straight off a presented token —
+covered by the same signature that makes it valid at all. A soft token therefore
+cannot be passed off as hard. Grading is on `c × 16^d` rather than an exact
+parameter match, so retuning a tier never mis-grades a solve already in flight.
+
+The browser side uses [`@cap.js/widget`](https://capjs.js.org) — pinned by
+version and SRI, loaded only after a `429`, and left to its own click-to-start
+UI, since a WASM Web Worker pool chewing through 839M hashes is a minute of the
+visitor's CPU. Each capToken is single-use, so one hard solve buys exactly one
+payout.
 
 ## Configuration
 
@@ -165,12 +210,15 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 |---|---|
 | `NETWORK` | `mainnet` or `testnet` — selects address versions and providers |
 | `PAYOUT_SATS` | Amount per request, in duffs |
-| `RATE_LIMIT_PER_HOUR` | Durable per-IP limit (IPv6 bucketed to /48) |
+| `RATE_LIMIT_PER_HOUR` | Durable per-IP limit for the soft proof-of-work tier (IPv6 bucketed to /48) |
+| `RATE_LIMIT_TURNSTILE_PER_HOUR` | Same limit for a request backed by Turnstile |
+| `RATE_LIMIT_HARD_PER_HOUR` | Same limit for a request backed by the hard proof of work |
 | `DAILY_BUDGET_SATS` | Hard ceiling on total payouts per UTC day |
 | `MIN_BALANCE_SATS` | Below this, status reports `low_balance` |
 | `POOL_MIN` / `POOL_TARGET` / `POOL_UTXO_SATS` | Pool maintenance thresholds |
 | `TURNSTILE_SITE_KEY` | Public key, served to the UI |
-| `CAP_C` / `CAP_S` / `CAP_D` | Proof-of-work shape. Rejected at startup unless `c,s ∈ 1..256`, `d ∈ 1..6` and `c × 16^d ≤ 64M` — the bounds the Swift SDK enforces client-side |
+| `CAP_C` / `CAP_S` / `CAP_D` | Soft proof-of-work shape. Rejected at startup unless `c,s ∈ 1..256`, `d ∈ 1..6` and `c × 16^d ≤ 64M` — the bounds the Swift SDK enforces client-side |
+| `CAP_HARD_C` / `CAP_HARD_S` / `CAP_HARD_D` | Escalated shape served at `/cap/hard/`. Browser-only, so the SDK's 64M bound does not apply; capped at 1B instead |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
