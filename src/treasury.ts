@@ -124,6 +124,10 @@ export class Treasury extends DurableObject<Env> {
         day      TEXT    PRIMARY KEY,
         satoshis INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS used_cap (
+        token      TEXT    PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
     `);
   }
 
@@ -150,6 +154,9 @@ export class Treasury extends DurableObject<Env> {
     sql.exec(`DELETE FROM ip_hits WHERE created_at < ?`, now - HOUR_MS);
     sql.exec(`DELETE FROM claims WHERE created_at < ?`, now - 7 * DAY_MS);
     sql.exec(`DELETE FROM budget WHERE day < ?`, utcDay(now - 7 * DAY_MS));
+    // A capToken past its own expiry can never be accepted again, so the row
+    // proving it was spent has nothing left to protect.
+    sql.exec(`DELETE FROM used_cap WHERE expires_at < ?`, now);
 
     // A pending output this old either confirmed long ago (in which case the
     // explorers now carry it and the row is redundant) or never landed. Log the
@@ -277,6 +284,38 @@ export class Treasury extends DurableObject<Env> {
       .exec<{ satoshis: number }>(`SELECT satoshis FROM budget WHERE day = ?`, day)
       .toArray()[0];
     return row?.satoshis ?? 0;
+  }
+
+  /**
+   * Burn a capToken, returning false if it was already spent.
+   *
+   * capTokens are self-verifying, so this table is the *only* captcha state the
+   * faucet keeps: a spent-set, not a session store. It lives in the Treasury
+   * because the Treasury is already the one place with durable storage and a
+   * single thread.
+   *
+   * Deliberately not wrapped in `serialize()`. There is no `await` between the
+   * read and the write, so the Durable Object's single thread makes the pair
+   * atomic on its own; taking the spending lock would only make every request
+   * queue behind an in-flight broadcast for no added safety. For the same
+   * reason this prunes only its own table and leaves the coin ledger to
+   * `prune()`, which runs under the lock.
+   */
+  async consumeCapToken(token: string, expiresAt: number): Promise<boolean> {
+    const sql = this.ctx.storage.sql;
+    sql.exec(`DELETE FROM used_cap WHERE expires_at < ?`, Date.now());
+
+    const seen = sql
+      .exec(`SELECT 1 FROM used_cap WHERE token = ?`, token)
+      .toArray();
+    if (seen.length > 0) return false;
+
+    sql.exec(
+      `INSERT INTO used_cap (token, expires_at) VALUES (?, ?)`,
+      token,
+      expiresAt,
+    );
+    return true;
   }
 
   async payout(input: {

@@ -28,6 +28,12 @@ export class FakeChain {
   /** Transactions the network will admit to knowing. */
   readonly known = new Set<string>();
   readonly broadcastAttempts: string[] = [];
+  /**
+   * Every token handed to Turnstile's siteverify. Recorded so a test can prove
+   * that a proof-of-work capToken is never sent to Cloudflare.
+   */
+  readonly siteverifyTokens: string[] = [];
+  siteverifySucceeds = true;
 
   install(): void {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>
@@ -63,6 +69,16 @@ export class FakeChain {
   }
 
   private async route(url: string, init: RequestInit): Promise<Response> {
+    // --- captcha -------------------------------------------------------------
+    if (url.includes("challenges.cloudflare.com/turnstile")) {
+      const form = init.body as FormData;
+      this.siteverifyTokens.push(String(form.get("response") ?? ""));
+      return this.json({
+        success: this.siteverifySucceeds,
+        "error-codes": this.siteverifySucceeds ? [] : ["invalid-input-response"],
+      });
+    }
+
     // --- broadcast -----------------------------------------------------------
     if (url.includes("/insight-api/tx/send")) {
       this.broadcastAttempts.push(String(init.body));

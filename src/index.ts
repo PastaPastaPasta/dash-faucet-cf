@@ -1,4 +1,5 @@
-import { COIN, Env, resolveConfig } from "./config";
+import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
+import { COIN, Env, FaucetConfig, resolveConfig } from "./config";
 import { describeError } from "./errors";
 import { AddressError, addressToPubKeyHash } from "./keys";
 import { clientIp, errorJson, json, preflight, verifyTurnstile } from "./http";
@@ -17,7 +18,25 @@ function toDash(satoshis: number): number {
   return satoshis / COIN;
 }
 
-async function handleStatus(env: Env): Promise<Response> {
+/**
+ * Base URL native clients POST the cap.js handshake to.
+ *
+ * Derived from the incoming request rather than configured, so it is correct on
+ * every hostname the Worker answers on without a redeploy — and it satisfies the
+ * Swift SDK's `sameRegistrableDomain` guard by construction, since it *is* the
+ * host the client already chose to talk to.
+ *
+ * The scheme is pinned to https rather than mirrored from the request: the SDK
+ * refuses a non-https endpoint outright (an http one would leak the redeemed
+ * capToken), and `wrangler dev` reports the request URL as http even when it is
+ * serving the production hostname. Local clients should address `/cap/v1/`
+ * directly rather than following this field.
+ */
+function capEndpoint(request: Request): string {
+  return `https://${new URL(request.url).host}/cap/v1/`;
+}
+
+async function handleStatus(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
 
   let snap: Awaited<ReturnType<ReturnType<typeof treasury>["snapshot"]>>;
@@ -45,6 +64,9 @@ async function handleStatus(env: Env): Promise<Response> {
       // new fields
       network: cfg.network,
       turnstileSiteKey: cfg.turnstileSiteKey,
+      // Non-optional in the Swift SDK's Decodable: omitting it makes every
+      // native client fail to parse status at all.
+      capEndpoint: capEndpoint(request),
       balanceSats: snap.balanceSats,
       poolUtxos: snap.poolUtxos,
       spentTodaySats: snap.spentToday,
@@ -91,6 +113,89 @@ function payoutFailure(result: PayoutFailure): Response {
   return errorJson(status, message, { detailMessage: result.detail });
 }
 
+async function handleCapChallenge(env: Env): Promise<Response> {
+  const cfg = resolveConfig(env);
+  if (!cfg.capSecret) {
+    return errorJson(503, "Proof-of-work captcha is not configured");
+  }
+  // Nothing is stored: the token carries its own expiry and MAC, so issuing
+  // challenges costs no storage and cannot be exhausted.
+  return json(mintChallenge(cfg.capSecret, cfg.capParams));
+}
+
+async function handleCapRedeem(request: Request, env: Env): Promise<Response> {
+  const cfg = resolveConfig(env);
+  if (!cfg.capSecret) {
+    return errorJson(503, "Proof-of-work captcha is not configured");
+  }
+
+  let body: { token?: unknown; solutions?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return errorJson(400, "Request body must be JSON");
+  }
+
+  // The challenge shape comes from the token, not from config, so retuning
+  // CAP_C/CAP_S/CAP_D cannot invalidate a solve that is already in flight.
+  const result = verifySolutions(cfg.capSecret, body.token, body.solutions);
+  if (!result.ok) return errorJson(400, result.reason, { success: false });
+
+  // Must be 200: the SDK's postJSON throws on any other status before it ever
+  // looks at `success`.
+  return json({ success: true, token: result.capToken, expires: result.expiresAt });
+}
+
+interface CaptchaRejection {
+  status: number;
+  reason: string;
+}
+
+/**
+ * Verify whichever captcha credential the client presented.
+ *
+ * These are two different credentials and must not be interchangeable: the
+ * previous code passed `turnstileToken ?? capToken` to Turnstile's siteverify,
+ * which could never succeed for a proof-of-work token and would have handed it
+ * to a third party on every native request.
+ *
+ * With no captcha configured at all, both paths fall through as a no-op — the
+ * behaviour the old Python faucet had with CAP unset.
+ */
+async function verifyCaptcha(
+  env: Env,
+  cfg: FaucetConfig,
+  ip: string,
+  body: { turnstileToken?: string; capToken?: string },
+): Promise<CaptchaRejection | null> {
+  if (body.capToken) {
+    if (!cfg.capSecret) {
+      return { status: 400, reason: "Proof-of-work captcha is not configured" };
+    }
+    const check = verifyCapToken(cfg.capSecret, body.capToken);
+    if (!check.ok) return { status: 400, reason: check.reason };
+
+    // Burn it here, not after a successful payout. A capToken that survived a
+    // rate-limited or underfunded request would be a reusable bypass of the one
+    // thing the proof-of-work actually costs.
+    const fresh = await treasury(env).consumeCapToken(body.capToken, check.expiresAt);
+    if (!fresh) return { status: 400, reason: "Captcha token already used" };
+    return null;
+  }
+
+  if (body.turnstileToken) {
+    const outcome = await verifyTurnstile(cfg.turnstileSecret, body.turnstileToken, ip);
+    return outcome.ok
+      ? null
+      : { status: 400, reason: outcome.reason ?? "Captcha verification failed" };
+  }
+
+  if (cfg.turnstileSecret || cfg.capSecret) {
+    return { status: 400, reason: "Captcha token required" };
+  }
+  return null;
+}
+
 async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
   const ip = clientIp(request);
@@ -113,15 +218,9 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     }
   }
 
-  const captcha = await verifyTurnstile(
-    cfg.turnstileSecret,
-    body.turnstileToken ?? body.capToken,
-    ip,
-  );
-  if (!captcha.ok) {
-    return errorJson(400, captcha.reason ?? "Captcha verification failed");
-  }
-
+  // Address first: it is pure local arithmetic, and checking it before the
+  // captcha means a typo costs the user a retry rather than a fresh proof of
+  // work (verifying the capToken consumes it).
   let pubKeyHash: string;
   const address = (body.address ?? "").trim();
   try {
@@ -130,6 +229,9 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     if (err instanceof AddressError) return errorJson(400, err.message);
     throw err;
   }
+
+  const rejected = await verifyCaptcha(env, cfg, ip, body);
+  if (rejected) return errorJson(rejected.status, rejected.reason);
 
   const result = await treasury(env).payout({ address, pubKeyHash, ip });
   if (!result.ok) return payoutFailure(result);
@@ -148,19 +250,28 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
-  if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
+  if (
+    request.method === "OPTIONS" &&
+    (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/"))
+  ) {
     return preflight();
   }
   if (url.pathname === "/health") {
     return json({ status: "healthy" });
   }
   if (url.pathname === "/api/status" && request.method === "GET") {
-    return handleStatus(env);
+    return handleStatus(request, env);
+  }
+  if (url.pathname === "/cap/v1/challenge" && request.method === "POST") {
+    return handleCapChallenge(env);
+  }
+  if (url.pathname === "/cap/v1/redeem" && request.method === "POST") {
+    return handleCapRedeem(request, env);
   }
   if (url.pathname === "/api/core-faucet" && request.method === "POST") {
     return handleFaucet(request, env);
   }
-  if (url.pathname.startsWith("/api/")) {
+  if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/")) {
     return errorJson(404, "Not found");
   }
   // Anything else is the static UI.

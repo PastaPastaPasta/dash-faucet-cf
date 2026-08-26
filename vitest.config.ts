@@ -38,6 +38,12 @@ export default defineConfig({
                 POOL_UTXO_SATS: "20000000",
                 TURNSTILE_SITE_KEY: "",
                 TURNSTILE_SECRET: "",
+                CAP_C: "4",
+                CAP_S: "32",
+                CAP_D: "2",
+                // Cheap challenge (4 x ~256 tries) so the tests can actually
+                // brute-force one; production serves 100 x 16^4.
+                CAP_SECRET: "test-cap-secret",
                 DRY_RUN: "0",
               },
             },

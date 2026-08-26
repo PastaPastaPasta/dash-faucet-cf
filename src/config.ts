@@ -1,5 +1,6 @@
 /** Per-network configuration and env parsing. */
 
+import type { CapParams } from "./cap";
 import type { Treasury } from "./treasury";
 
 export type NetworkName = "mainnet" | "testnet";
@@ -25,11 +26,15 @@ export interface Env {
   POOL_TARGET: string;
   POOL_UTXO_SATS: string;
   TURNSTILE_SITE_KEY: string;
+  CAP_C?: string;
+  CAP_S?: string;
+  CAP_D?: string;
   DRY_RUN?: string;
 
   // secrets
   FAUCET_WIF: string;
   TURNSTILE_SECRET?: string;
+  CAP_SECRET?: string;
 }
 
 export interface FaucetConfig {
@@ -44,8 +49,43 @@ export interface FaucetConfig {
   poolUtxoSats: number;
   turnstileSiteKey: string;
   turnstileSecret: string;
+  /** cap.js proof-of-work challenge shape served to native clients. */
+  capParams: CapParams;
+  /** Blank disables the proof-of-work captcha entirely. */
+  capSecret: string;
   wif: string;
   dryRun: boolean;
+}
+
+/**
+ * Validate the challenge shape against the bounds the Swift SDK enforces on the
+ * client (`TestnetFaucet.swift`): per-field `c,s in 1..256`, `d in 1..6`, and an
+ * aggregate work cap of `c * 16^d <= 64M` expected hashes.
+ *
+ * Those checks live on the client to stop a hostile faucet pinning a phone's
+ * cores. Mirroring them here means a typo in `CAP_D` fails the deploy's first
+ * request loudly, instead of silently bricking every native client with a
+ * challenge they refuse to even attempt.
+ */
+function capParams(env: Env): CapParams {
+  const params = {
+    c: int("CAP_C", env.CAP_C, 100),
+    s: int("CAP_S", env.CAP_S, 32),
+    d: int("CAP_D", env.CAP_D, 4),
+  };
+  const inRange = (n: number, lo: number, hi: number) => n >= lo && n <= hi;
+  if (!inRange(params.c, 1, 256) || !inRange(params.s, 1, 256) || !inRange(params.d, 1, 6)) {
+    throw new Error(
+      `CAP_C/CAP_S must be 1..256 and CAP_D 1..6, got c=${params.c} s=${params.s} d=${params.d}`,
+    );
+  }
+  const work = params.c * 16 ** params.d;
+  if (work > 64_000_000) {
+    throw new Error(
+      `cap challenge too expensive: c=${params.c} d=${params.d} is ${work} expected hashes > 64000000`,
+    );
+  }
+  return params;
 }
 
 /**
@@ -100,6 +140,8 @@ export function resolveConfig(env: Env): FaucetConfig {
     poolUtxoSats: int("POOL_UTXO_SATS", env.POOL_UTXO_SATS),
     turnstileSiteKey: env.TURNSTILE_SITE_KEY ?? "",
     turnstileSecret: env.TURNSTILE_SECRET ?? "",
+    capParams: capParams(env),
+    capSecret: env.CAP_SECRET ?? "",
     wif: env.FAUCET_WIF,
     dryRun: env.DRY_RUN === "1",
   };

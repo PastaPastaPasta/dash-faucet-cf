@@ -52,6 +52,12 @@
         "POOL_TARGET": "20",
         "POOL_UTXO_SATS": "500000000",
         "TURNSTILE_SITE_KEY": "",
+        // cap.js proof-of-work challenge for native clients. Must stay inside
+        // the Swift SDK's guard: c,s in 1..256, d in 1..6, c * 16^d <= 64M.
+        // 100 * 16^4 = 6.55M, the shape the old CAP server served.
+        "CAP_C": "100",
+        "CAP_S": "32",
+        "CAP_D": "4",
         "DRY_RUN": "0"
       }
     },
@@ -84,6 +90,12 @@
         "POOL_TARGET": "20",
         "POOL_UTXO_SATS": "1000000",
         "TURNSTILE_SITE_KEY": "",
+        // cap.js proof-of-work challenge for native clients. Must stay inside
+        // the Swift SDK's guard: c,s in 1..256, d in 1..6, c * 16^d <= 64M.
+        // 100 * 16^4 = 6.55M, the shape the old CAP server served.
+        "CAP_C": "100",
+        "CAP_S": "32",
+        "CAP_D": "4",
         "DRY_RUN": "0"
       }
     }

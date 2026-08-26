@@ -11,7 +11,7 @@ This replaces the FastAPI + `dashd` + CAP + `cloudflared` stack in
 ## How it works
 
 ```
-Browser ──► Worker (src/index.ts)
+Browser ──► Worker (src/index.ts)   ◄── native clients (cap.js proof of work)
               │  Turnstile · address validation · edge rate limit
               ▼
             Treasury Durable Object (SQLite)
@@ -27,8 +27,10 @@ Transactions are built and signed in the Worker with
 [`dashtx`](https://www.npmjs.com/package/dashtx),
 [`dashkeys`](https://www.npmjs.com/package/dashkeys) and
 [`@dashincubator/secp256k1`](https://www.npmjs.com/package/@dashincubator/secp256k1)
-— three zero-dependency libraries that run unmodified on `workerd`. The whole
-Worker is ~43 KiB gzipped, against a 3 MiB free-plan limit.
+— three zero-dependency libraries that run unmodified on `workerd`, plus
+[`@noble/hashes`](https://www.npmjs.com/package/@noble/hashes) for the
+synchronous SHA-256/HMAC the proof-of-work captcha needs. The whole Worker is
+~45 KiB gzipped, against a 3 MiB free-plan limit.
 
 ### Why a Durable Object
 
@@ -78,6 +80,7 @@ Response shapes match the old Python faucet, so existing clients and the
   "availableUtxos": 12,
   "network": "testnet",
   "turnstileSiteKey": "0x...",
+  "capEndpoint": "https://faucet.example/cap/v1/",
   "providers": [{ "name": "insight", "ok": true, "height": 1540992, "error": null }]
 }
 ```
@@ -105,11 +108,53 @@ clients both work:
   "detail": { "error": "Rate limit exceeded", "retryAfter": 1800 } }
 ```
 
+Send `turnstileToken` from the browser, or `capToken` from a native client.
+They are separate credentials verified by separate code paths; a `capToken` is
+never forwarded to Turnstile.
+
 `400` invalid address or captcha · `429` rate limited or daily budget spent
 (`Retry-After` set) · `503` insufficient funds or every explorer unreachable.
 
 Requesting the same address twice in one UTC day returns the original `txid`
 with `replay: true` rather than paying again.
+
+### `POST /cap/v1/challenge` · `POST /cap/v1/redeem`
+
+A [cap.js](https://capjs.js.org)-compatible proof-of-work captcha, for clients
+that cannot run a browser challenge — dashwallet-ios' one-tap "get tDash" solves
+this on-device via `TestnetFaucet.swift` in the Dash Platform Swift SDK.
+
+```
+POST /cap/v1/challenge   {}
+  → { "challenge": { "c": 100, "s": 32, "d": 4 }, "token": "<50 hex>", "expires": 1758... }
+
+client, for i in 1..c:
+    salt   = prng("{token}{i}",  s)      # FNV-1a seed + xorshift32
+    target = prng("{token}{i}d", d)
+    nonce  = smallest n >= 0 with sha256(salt + str(n)) starting with target
+
+POST /cap/v1/redeem      { "token": "...", "solutions": [n1..nc] }
+  → { "success": true, "token": "<capToken>", "expires": 1758... }
+```
+
+`prng` is bit-identical to `@cap.js/widget`; the test vectors in
+`test/cap.test.ts` come from a challenge the live cap.js server issued and then
+accepted our solution for.
+
+Both halves are stateless. The challenge token is
+`hex(expiry ‖ c,s,d ‖ random ‖ HMAC(CAP_SECRET, …))`, so issuing challenges
+stores nothing and cannot be exhausted — and because the challenge shape rides
+inside the MAC, retuning `CAP_C`/`CAP_S`/`CAP_D` cannot reject a solve that is
+already in flight. The capToken carries that token plus a second HMAC, so
+`/api/core-faucet` can verify it without a lookup. The only stored
+state is a self-expiring spent-set in the Durable Object that makes each
+capToken usable once — burned on presentation, whether or not the payout then
+succeeds.
+
+Be clear-eyed about the strength: the Swift SDK refuses any challenge above
+`c × 16^d = 64M` expected hashes, which is well under a second on a server core.
+This is compatibility and friction, not a bot defence. The real limits are the
+per-IP rate limit and `DAILY_BUDGET_SATS`.
 
 ## Configuration
 
@@ -125,9 +170,11 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `MIN_BALANCE_SATS` | Below this, status reports `low_balance` |
 | `POOL_MIN` / `POOL_TARGET` / `POOL_UTXO_SATS` | Pool maintenance thresholds |
 | `TURNSTILE_SITE_KEY` | Public key, served to the UI |
+| `CAP_C` / `CAP_S` / `CAP_D` | Proof-of-work shape. Rejected at startup unless `c,s ∈ 1..256`, `d ∈ 1..6` and `c × 16^d ≤ 64M` — the bounds the Swift SDK enforces client-side |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
+| `CAP_SECRET` | **secret** — HMAC key for the proof-of-work captcha; blank disables it |
 
 ### Security
 
@@ -153,6 +200,7 @@ node scripts/verify-testnet.mjs  # end-to-end against live testnet explorers
 ```bash
 npx wrangler secret put FAUCET_WIF --env testnet
 npx wrangler secret put TURNSTILE_SECRET --env testnet
+npx wrangler secret put CAP_SECRET --env testnet   # any high-entropy string
 npm run deploy:testnet
 ```
 
@@ -171,6 +219,10 @@ silently disables the primary mainnet provider. Hyphen also returns 404 for an
 address with no history, meaning "empty" rather than "unavailable", and caps
 `limit` at 100 with a non-functional `offset` — so a truncated page is treated
 as an error rather than as a smaller balance.
+
+Rotating `CAP_SECRET` invalidates every outstanding challenge and unspent
+capToken. That is harmless — clients simply fetch a new challenge — and it is
+also the way to revoke tokens in bulk, since none of them are stored.
 
 A broadcast that neither succeeds nor is explicitly rejected — a timeout, a
 5xx — is treated as *ambiguous*: the transaction may be live. Those inputs are

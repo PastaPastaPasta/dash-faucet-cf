@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@dashincubator/secp256k1": "^1.7.1-5",
+    "@noble/hashes": "^2.3.0",
     "dashkeys": "^1.1.5",
     "dashtx": "^0.20.3"
   },
