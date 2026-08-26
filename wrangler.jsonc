@@ -83,6 +83,7 @@
 
     "mainnet": {
       "assets": { "directory": "./public", "binding": "ASSETS" },
+      "workers_dev": false,
       "triggers": { "crons": ["*/10 * * * *"] },
       "durable_objects": {
         "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
@@ -126,9 +127,9 @@
         "CAP_HARD_C": "50",
         "CAP_HARD_S": "32",
         "CAP_HARD_D": "6",
-        // Real-DASH identity invitations. Keep the treasury float deliberately
-        // small; this endpoint dispenses bearer invitations worth real money.
-        "INVITATIONS_ENABLED": "1",
+        // Keep disabled until the parallel mainnet invitation backend is
+        // connected behind the testnet faucet's public frontend.
+        "INVITATIONS_ENABLED": "0",
         "INVITATION_INVENTORY_TARGET": "3",
         "INVITATION_TTL_SECS": "3600",
         "INVITATION_RATE_WINDOW_SECS": "604800",
