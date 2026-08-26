@@ -4,6 +4,7 @@
 #   npx wrangler secret put TURNSTILE_SECRET --env testnet
 #   npx wrangler secret put CAP_SECRET --env testnet
 #   npx wrangler secret put INVITATION_SECRET --env testnet
+#   npx wrangler secret put INVITATION_FAUCET_WIF --env testnet
 
 # WIF for the faucet's hot key. Must match the deployment's NETWORK.
 FAUCET_WIF=
@@ -21,3 +22,7 @@ CAP_SECRET=
 # makes the stored invitation keys unreadable. Required only when
 # INVITATIONS_ENABLED=1.
 INVITATION_SECRET=
+
+# Optional separate hot key when INVITATION_NETWORK differs from NETWORK.
+# The deployed testnet faucet uses a mainnet key here for real-DASH vouchers.
+INVITATION_FAUCET_WIF=

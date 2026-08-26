@@ -1,31 +1,38 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { TREASURY_ID } from "../../src/treasury";
+import { FAUCET } from "../fixtures";
 import { FakeChain } from "./fakechain";
 
 const chain = new FakeChain();
-const treasury = () => env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+const coreTreasury = () => env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+const invitationTreasury = () => {
+  const namespace = env.INVITATION_TREASURY!;
+  return namespace.get(namespace.idFromName(TREASURY_ID));
+};
 
 async function resetTreasury(): Promise<void> {
-  await runInDurableObject(treasury(), (_instance, state) => {
-    for (const table of [
-      "claims",
-      "ip_hits",
-      "spent",
-      "pending",
-      "budget",
-      "used_cap",
-      "invitation_hits",
-      "invitation_inventory",
-    ]) {
-      state.storage.sql.exec(`DELETE FROM ${table}`);
-    }
-  });
+  for (const treasury of [coreTreasury(), invitationTreasury()]) {
+    await runInDurableObject(treasury, (_instance, state) => {
+      for (const table of [
+        "claims",
+        "ip_hits",
+        "spent",
+        "pending",
+        "budget",
+        "used_cap",
+        "invitation_hits",
+        "invitation_inventory",
+      ]) {
+        state.storage.sql.exec(`DELETE FROM ${table}`);
+      }
+    });
+  }
 }
 
 async function prepareInvitation(): Promise<void> {
-  expect((await treasury().maintainInvitations()).action).toBe("minted");
-  expect((await treasury().maintainInvitations()).action).toBe("updated");
+  expect((await invitationTreasury().maintainInvitations()).action).toBe("minted");
+  expect((await invitationTreasury().maintainInvitations()).action).toBe("updated");
 }
 
 async function postInvitation(ip = "203.0.113.10", cookie?: string) {
@@ -47,7 +54,7 @@ async function postInvitation(ip = "203.0.113.10", cookie?: string) {
 }
 
 async function ageIssuedInvitation(): Promise<void> {
-  await runInDurableObject(treasury(), (_instance, state) => {
+  await runInDurableObject(invitationTreasury(), (_instance, state) => {
     state.storage.sql.exec(
       `UPDATE invitation_inventory SET issued_at = ? WHERE state = 'issued'`,
       Date.now() - 61 * 60_000,
@@ -72,16 +79,16 @@ beforeEach(async () => {
 
 describe("invitation inventory", () => {
   it("mints an asset lock and waits for its ChainLock before offering it", async () => {
-    const minted = await treasury().maintainInvitations();
+    const minted = await invitationTreasury().maintainInvitations();
     expect(minted.action).toBe("minted");
     expect(chain.broadcastAttempts).toHaveLength(2);
 
-    const waiting = await treasury().snapshot();
+    const waiting = await invitationTreasury().snapshot();
     expect(waiting.invitations).toEqual({ available: 0, preparing: 1, issued: 0 });
 
-    const ready = await treasury().maintainInvitations();
+    const ready = await invitationTreasury().maintainInvitations();
     expect(ready.action).toBe("updated");
-    expect((await treasury().snapshot()).invitations).toEqual({
+    expect((await invitationTreasury().snapshot()).invitations).toEqual({
       available: 1,
       preparing: 0,
       issued: 0,
@@ -96,7 +103,7 @@ describe("invitation inventory", () => {
     expect(first.body).toMatchObject({
       amount: 0.003,
       replay: false,
-      network: "testnet",
+      network: "mainnet",
     });
     expect(first.body.invitation).toMatch(
       /^dashpay:\/\/invite\?assetlocktx=[0-9a-f]{64}&pk=/,
@@ -134,7 +141,7 @@ describe("invitation inventory", () => {
     expect(first.response.status).toBe(200);
     await ageIssuedInvitation();
 
-    const maintenance = await treasury().maintainInvitations();
+    const maintenance = await invitationTreasury().maintainInvitations();
     expect(maintenance.action).toBe("updated");
     expect(maintenance.detail).toContain("1 recycled");
 
@@ -151,7 +158,7 @@ describe("invitation inventory", () => {
     expect((await postInvitation()).response.status).toBe(200);
     await ageIssuedInvitation();
 
-    const identityId = await runInDurableObject(treasury(), (_instance, state) =>
+    const identityId = await runInDurableObject(invitationTreasury(), (_instance, state) =>
       state.storage.sql
         .exec<{ prospective_identity_id: string }>(
           `SELECT prospective_identity_id FROM invitation_inventory LIMIT 1`,
@@ -160,11 +167,11 @@ describe("invitation inventory", () => {
     );
     chain.platformIdentities.add(identityId);
 
-    const maintenance = await treasury().maintainInvitations();
+    const maintenance = await invitationTreasury().maintainInvitations();
     // Retiring it drops the live inventory below target, so this same pass
     // immediately starts its replacement.
     expect(maintenance.action).toBe("minted");
-    const row = await runInDurableObject(treasury(), (_instance, state) =>
+    const row = await runInDurableObject(invitationTreasury(), (_instance, state) =>
       state.storage.sql
         .exec<{ state: string; cipher_hex: string }>(
           `SELECT state, cipher_hex FROM invitation_inventory WHERE state = 'claimed'`,
@@ -172,6 +179,29 @@ describe("invitation inventory", () => {
         .toArray()[0],
     );
     expect(row).toEqual({ state: "claimed", cipher_hex: "" });
+  });
+
+  it("keeps the testnet faucet and mainnet invitation treasuries isolated", async () => {
+    await prepareInvitation();
+
+    const status = await SELF.fetch("https://faucet.test/api/status");
+    const body = (await status.json()) as Record<string, any>;
+    expect(body).toMatchObject({
+      network: "testnet",
+      depositAddress: FAUCET.testnet.address,
+      coreFaucetAmount: 0.1,
+      invitationNetwork: "mainnet",
+      invitationDepositAddress: FAUCET.mainnet.address,
+      invitationAmount: 0.003,
+      invitationInventory: { available: 1, preparing: 0, issued: 0 },
+    });
+
+    const coreRows = await runInDurableObject(coreTreasury(), (_instance, state) =>
+      state.storage.sql
+        .exec<{ n: number }>(`SELECT COUNT(*) AS n FROM invitation_inventory`)
+        .toArray()[0].n,
+    );
+    expect(coreRows).toBe(0);
   });
 });
 

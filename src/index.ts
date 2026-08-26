@@ -28,10 +28,19 @@ import {
 // Only the Durable Object class may be re-exported here: workerd validates the
 // entry module's named exports and rejects anything that is not a handler or a
 // class, so constants have to live in the module that defines them.
-export { Treasury } from "./treasury";
+export { InvitationTreasury, Treasury } from "./treasury";
 
 function treasury(env: Env) {
   return env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+}
+
+function invitationTreasury(env: Env) {
+  if (!env.INVITATION_TREASURY) {
+    throw new Error("INVITATION_TREASURY binding is not configured");
+  }
+  return env.INVITATION_TREASURY.get(
+    env.INVITATION_TREASURY.idFromName(TREASURY_ID),
+  );
 }
 
 function toDash(satoshis: number): number {
@@ -72,6 +81,16 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
     );
   }
 
+  let invitationSnap: typeof snap | undefined;
+  let invitationError: string | undefined;
+  if (cfg.invitations.enabled) {
+    try {
+      invitationSnap = await invitationTreasury(env).snapshot();
+    } catch (err) {
+      invitationError = describeError(err);
+    }
+  }
+
   const low = snap.balanceSats < cfg.minBalanceSats;
   return json(
     {
@@ -106,9 +125,22 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       providers: snap.providers,
       dryRun: cfg.dryRun,
       invitationsEnabled: cfg.invitations.enabled,
+      invitationNetwork: cfg.invitations.network,
       invitationAmount: toDash(cfg.invitations.amountSats),
       invitationExpiresIn: Math.floor(cfg.invitations.ttlMs / 1000),
-      invitationInventory: snap.invitations,
+      invitationInventory: invitationSnap?.invitations ?? {
+        available: 0,
+        preparing: 0,
+        issued: 0,
+      },
+      ...(invitationSnap
+        ? {
+            invitationDepositAddress: invitationSnap.address,
+            invitationBalance: toDash(invitationSnap.balanceSats),
+            invitationBalanceSats: invitationSnap.balanceSats,
+          }
+        : {}),
+      ...(invitationError ? { invitationError } : {}),
     },
     low ? 503 : 200,
     device?.setCookie ? { "Set-Cookie": device.setCookie } : {},
@@ -370,7 +402,7 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   if (!captcha.ok) return errorJson(400, captcha.reason ?? "Captcha verification failed");
 
   const device = invitationDevice(request, cfg.invitations.secret);
-  const result = await treasury(env).issueInvitation({
+  const result = await invitationTreasury(env).issueInvitation({
     ipHash: hashInvitationSignal(cfg.invitations.secret, "ip", ip),
     deviceHash: hashInvitationSignal(cfg.invitations.secret, "device", device.id),
   });
@@ -383,7 +415,7 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
       amount: toDash(cfg.invitations.amountSats),
       expiresAt: result.expiresAt,
       replay: result.replay,
-      network: cfg.network,
+      network: cfg.invitations.network,
     },
     200,
     {
@@ -452,12 +484,21 @@ export default {
     }
   },
 
-  /** Cron: refresh invitations, then keep the shared UTXO pool healthy. */
+  /** Cron: refresh the isolated invitation inventory, then the tDASH pool. */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    const invitations = await treasury(env).maintainInvitations();
-    console.log(
-      `invitation maintenance: ${invitations.action} — ${invitations.detail}`,
-    );
+    const cfg = resolveConfig(env);
+    if (cfg.invitations.enabled) {
+      try {
+        const invitations = await invitationTreasury(env).maintainInvitations();
+        console.log(
+          `invitation maintenance: ${invitations.action} — ${invitations.detail}`,
+        );
+      } catch (err) {
+        // The real-DASH actor must not keep the existing tDASH faucet from
+        // maintaining its pool when an invitation provider is unavailable.
+        console.error(`invitation maintenance failed: ${describeError(err)}`);
+      }
+    }
     const result = await treasury(env).maintain();
     console.log(`treasury maintenance: ${result.action} — ${result.detail}`);
   },

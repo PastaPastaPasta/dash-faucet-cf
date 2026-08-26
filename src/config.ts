@@ -25,6 +25,8 @@ export interface ProviderSpec {
 export interface Env {
   ASSETS: Fetcher;
   TREASURY: DurableObjectNamespace<Treasury>;
+  /** Separate treasury for real-DASH invitation asset locks. */
+  INVITATION_TREASURY?: DurableObjectNamespace<Treasury>;
   /** Cloudflare's built-in rate limiter. Optional so tests can omit it. */
   EDGE_LIMIT?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
 
@@ -47,16 +49,19 @@ export interface Env {
   CAP_HARD_D?: string;
   DRY_RUN?: string;
   INVITATIONS_ENABLED?: string;
+  INVITATION_NETWORK?: string;
   INVITATION_INVENTORY_TARGET?: string;
   INVITATION_TTL_SECS?: string;
   INVITATION_RATE_WINDOW_SECS?: string;
   PLATFORM_EXPLORER_URL?: string;
+  INVITATION_PLATFORM_EXPLORER_URL?: string;
 
   // secrets
   FAUCET_WIF: string;
   TURNSTILE_SECRET?: string;
   CAP_SECRET?: string;
   INVITATION_SECRET?: string;
+  INVITATION_FAUCET_WIF?: string;
 }
 
 export interface FaucetConfig {
@@ -90,6 +95,8 @@ export interface FaucetConfig {
   dryRun: boolean;
   invitations: {
     enabled: boolean;
+    /** May differ from the ordinary faucet network. */
+    network: NetworkName;
     /** Fixed onboarding voucher value: 0.003 DASH. */
     amountSats: number;
     inventoryTarget: number;
@@ -209,19 +216,36 @@ function int(name: string, raw: string | undefined, fallback?: number): number {
   return n;
 }
 
-export function resolveConfig(env: Env): FaucetConfig {
-  const network = env.NETWORK as NetworkName;
-  if (network !== "mainnet" && network !== "testnet") {
-    throw new Error(`NETWORK must be "mainnet" or "testnet", got ${env.NETWORK}`);
+function networkName(name: string, raw: string): NetworkName {
+  if (raw !== "mainnet" && raw !== "testnet") {
+    throw new Error(`${name} must be "mainnet" or "testnet", got ${raw}`);
   }
+  return raw;
+}
+
+export function resolveConfig(env: Env): FaucetConfig {
+  const network = networkName("NETWORK", env.NETWORK);
   if (!env.FAUCET_WIF) {
     throw new Error("FAUCET_WIF secret is not set");
   }
 
   const invitationsEnabled = env.INVITATIONS_ENABLED === "1";
+  const invitationNetwork = networkName(
+    "INVITATION_NETWORK",
+    env.INVITATION_NETWORK || network,
+  );
   const invitationSecret = env.INVITATION_SECRET ?? "";
   if (invitationsEnabled && !invitationSecret) {
     throw new Error("INVITATION_SECRET must be set when invitations are enabled");
+  }
+  if (
+    invitationsEnabled &&
+    invitationNetwork !== network &&
+    !env.INVITATION_FAUCET_WIF
+  ) {
+    throw new Error(
+      "INVITATION_FAUCET_WIF must be set when the invitation network differs from NETWORK",
+    );
   }
 
   const soft = capParams(
@@ -274,6 +298,7 @@ export function resolveConfig(env: Env): FaucetConfig {
     dryRun: env.DRY_RUN === "1",
     invitations: {
       enabled: invitationsEnabled,
+      network: invitationNetwork,
       amountSats: 300_000,
       inventoryTarget: int(
         "INVITATION_INVENTORY_TARGET",
@@ -288,13 +313,37 @@ export function resolveConfig(env: Env): FaucetConfig {
           7 * 24 * 60 * 60,
         ) * 1000,
       platformExplorerUrl:
-        (env.PLATFORM_EXPLORER_URL ??
-          (network === "mainnet"
+        (env.INVITATION_PLATFORM_EXPLORER_URL ??
+          env.PLATFORM_EXPLORER_URL ??
+          (invitationNetwork === "mainnet"
             ? "https://platform-explorer.pshenmic.dev"
             : "https://testnet.platform-explorer.pshenmic.dev"))
           .replace(/\/+$/, ""),
       secret: invitationSecret,
     },
+  };
+}
+
+/**
+ * Build the configuration used by the isolated invitation Durable Object.
+ *
+ * The public Worker may remain a testnet DASH faucet while this actor signs
+ * mainnet asset locks with a different key and different chain providers.
+ */
+export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
+  const config = resolveConfig(env);
+  const network = config.invitations.network;
+  const wif =
+    env.INVITATION_FAUCET_WIF ||
+    (network === config.network ? config.wif : "");
+  if (!wif) {
+    throw new Error("INVITATION_FAUCET_WIF secret is not set");
+  }
+  return {
+    ...config,
+    network,
+    providers: PROVIDERS[network],
+    wif,
   };
 }
 

@@ -50,7 +50,8 @@ export class FakeChain {
   }
 
   private async scriptFor(address: string): Promise<string> {
-    const parts = await DashKeys.decode(address, { version: "testnet" });
+    const version = address.startsWith("X") ? "mainnet" : "testnet";
+    const parts = await DashKeys.decode(address, { version });
     return `76a914${parts.pubKeyHash}88ac`;
   }
 

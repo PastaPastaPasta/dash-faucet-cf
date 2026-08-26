@@ -136,7 +136,10 @@ with `replay: true` rather than paying again.
 ### `POST /api/invitation-faucet`
 
 Enabled only when `INVITATIONS_ENABLED=1`. It requires a Turnstile token bound
-to the `invitation_faucet` action; proof-of-work tokens are not accepted.
+to the `invitation_faucet` action; proof-of-work tokens are not accepted. The
+invitation treasury can use a different network and key from the ordinary
+faucet, so the deployed service dispenses testnet DASH and real-DASH identity
+invitations side by side without sharing coins or Durable Object state.
 
 ```bash
 curl -X POST https://faucet.example/api/invitation-faucet \
@@ -282,16 +285,18 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `TURNSTILE_SITE_KEY` | Public key, served to the UI |
 | `CAP_C` / `CAP_S` / `CAP_D` | Soft proof-of-work shape. Rejected at startup unless `c,s ∈ 1..256`, `d ∈ 1..6` and `c × 16^d ≤ 64M` — the bounds the Swift SDK enforces client-side |
 | `CAP_HARD_C` / `CAP_HARD_S` / `CAP_HARD_D` | Escalated shape served at `/cap/hard/`. Browser-only, so the SDK's 64M bound does not apply; capped at 1B instead |
-| `INVITATIONS_ENABLED` | `1` enables the identity-invitation API and UI; disabled by default |
+| `INVITATIONS_ENABLED` | `1` enables the identity-invitation API and UI |
+| `INVITATION_NETWORK` | Optional network for invitation asset locks; defaults to `NETWORK` |
 | `INVITATION_INVENTORY_TARGET` | Number of ready or preparing invitations to keep on hand (default 3) |
 | `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
 | `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days) |
-| `PLATFORM_EXPLORER_URL` | Network-appropriate Platform Explorer base URL for identity claim checks |
+| `INVITATION_PLATFORM_EXPLORER_URL` | Platform Explorer base URL for invitation claim checks |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
 | `CAP_SECRET` | **secret** — HMAC key for the proof-of-work captcha; blank disables it |
 | `INVITATION_SECRET` | **secret** — encrypts bearer WIFs and HMACs IP/device signals; required when invitations are enabled |
+| `INVITATION_FAUCET_WIF` | **secret** — separate invitation hot key; required when `INVITATION_NETWORK` differs from `NETWORK` |
 
 ### Security
 
@@ -326,10 +331,14 @@ npx wrangler secret put FAUCET_WIF --env testnet
 npx wrangler secret put TURNSTILE_SECRET --env testnet
 npx wrangler secret put CAP_SECRET --env testnet   # any high-entropy string
 npx wrangler secret put INVITATION_SECRET --env testnet
+npx wrangler secret put INVITATION_FAUCET_WIF --env testnet
 npm run deploy:testnet
 ```
 
-Same for `--env mainnet` / `npm run deploy:mainnet`.
+The production testnet Worker uses `FAUCET_WIF` for tDASH payouts and
+`INVITATION_FAUCET_WIF` for its isolated mainnet invitation actor. Both public
+hostnames point to that Worker. The separate `mainnet` Wrangler environment is
+kept disabled and unrouted; it is not the public invitation backend.
 
 ## Notes
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canEscalate, capTier, resolveConfig, type Env } from "../src/config";
+import {
+  canEscalate,
+  capTier,
+  resolveConfig,
+  resolveInvitationTreasuryConfig,
+  type Env,
+} from "../src/config";
 import { FAUCET } from "./fixtures";
 
 /** The minimum a deployment must set; everything else has a default. */
@@ -84,6 +90,7 @@ describe("invitation configuration", () => {
   it("is disabled by default and fixes the voucher at 0.003 DASH", () => {
     const cfg = resolveConfig(env());
     expect(cfg.invitations.enabled).toBe(false);
+    expect(cfg.invitations.network).toBe("testnet");
     expect(cfg.invitations.amountSats).toBe(300_000);
     expect(cfg.invitations.ttlMs).toBe(60 * 60 * 1000);
     expect(cfg.invitations.rateWindowMs).toBe(7 * 24 * 60 * 60 * 1000);
@@ -103,5 +110,32 @@ describe("invitation configuration", () => {
     );
     expect(cfg.invitations.enabled).toBe(true);
     expect(cfg.invitations.inventoryTarget).toBe(3);
+  });
+
+  it("requires and isolates a separate key for cross-network invitations", () => {
+    const parallel = {
+      INVITATIONS_ENABLED: "1",
+      INVITATION_NETWORK: "mainnet",
+      INVITATION_SECRET: "secret",
+    };
+    expect(() => resolveConfig(env(parallel))).toThrow(/INVITATION_FAUCET_WIF/);
+
+    const input = env({
+      ...parallel,
+      INVITATION_FAUCET_WIF: FAUCET.mainnet.wif,
+      INVITATION_PLATFORM_EXPLORER_URL: "https://platform.example",
+    });
+    const publicConfig = resolveConfig(input);
+    expect(publicConfig.network).toBe("testnet");
+    expect(publicConfig.wif).toBe(FAUCET.testnet.wif);
+    expect(publicConfig.invitations).toMatchObject({
+      network: "mainnet",
+      platformExplorerUrl: "https://platform.example",
+    });
+
+    const invitationConfig = resolveInvitationTreasuryConfig(input);
+    expect(invitationConfig.network).toBe("mainnet");
+    expect(invitationConfig.wif).toBe(FAUCET.mainnet.wif);
+    expect(invitationConfig.providers[0]).toMatchObject({ kind: "hyphen" });
   });
 });

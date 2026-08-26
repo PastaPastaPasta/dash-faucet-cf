@@ -1,7 +1,13 @@
 import { DurableObject } from "cloudflare:workers";
 import DashTx from "dashtx";
 import { ChainClient, ProviderStatus, UtxoSnapshot } from "./chain";
-import { Env, FaucetConfig, ProofTier, resolveConfig } from "./config";
+import {
+  Env,
+  FaucetConfig,
+  ProofTier,
+  resolveConfig,
+  resolveInvitationTreasuryConfig,
+} from "./config";
 import { describeError } from "./errors";
 import {
   decryptWif,
@@ -172,9 +178,13 @@ export class Treasury extends DurableObject<Env> {
   private keyPromise: Promise<FaucetKey> | null = null;
   private queue: Promise<unknown> = Promise.resolve();
 
-  constructor(ctx: DurableObjectState, env: Env) {
+  constructor(
+    ctx: DurableObjectState,
+    env: Env,
+    config: FaucetConfig = resolveConfig(env),
+  ) {
     super(ctx, env);
-    this.config = resolveConfig(env);
+    this.config = config;
     this.chain = new ChainClient(this.config.providers);
     this.migrate();
   }
@@ -1105,5 +1115,19 @@ export class Treasury extends DurableObject<Env> {
       detail: `split into ${count} coins of ${cfg.poolUtxoSats} duffs`,
       txid: built.txid,
     };
+  }
+}
+
+/**
+ * A physically separate actor for invitation money and state.
+ *
+ * It intentionally reuses Treasury's transaction and recovery machinery, but
+ * resolves its signing key, network and providers from the invitation-specific
+ * bindings. The public testnet faucet can therefore expose real-DASH vouchers
+ * without either treasury ever selecting the other one's coins.
+ */
+export class InvitationTreasury extends Treasury {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env, resolveInvitationTreasuryConfig(env));
   }
 }
