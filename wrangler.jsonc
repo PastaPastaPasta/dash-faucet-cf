@@ -23,7 +23,7 @@
     "testnet": {
       "assets": { "directory": "./public", "binding": "ASSETS" },
       "routes": [
-        { "pattern": "faucet.dashhq.org", "custom_domain": true }
+        { "pattern": "faucet.thepasta.org", "custom_domain": true }
       ],
       "triggers": { "crons": ["*/10 * * * *"] },
       "durable_objects": {
@@ -82,6 +82,9 @@
 
     "mainnet": {
       "assets": { "directory": "./public", "binding": "ASSETS" },
+      "routes": [
+        { "pattern": "faucet.dashhq.org", "custom_domain": true }
+      ],
       "triggers": { "crons": ["*/10 * * * *"] },
       "durable_objects": {
         "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
@@ -111,7 +114,7 @@
         "POOL_MIN": "8",
         "POOL_TARGET": "20",
         "POOL_UTXO_SATS": "1000000",
-        "TURNSTILE_SITE_KEY": "",
+        "TURNSTILE_SITE_KEY": "0x4AAAAAAEc7OCY_Mbh19FLS",
         // cap.js proof-of-work challenge for native clients. Must stay inside
         // the Swift SDK's guard: c,s in 1..256, d in 1..6, c * 16^d <= 64M.
         // 100 * 16^4 = 6.55M, the shape the old CAP server served.
@@ -125,8 +128,9 @@
         "CAP_HARD_C": "50",
         "CAP_HARD_S": "32",
         "CAP_HARD_D": "6",
-        // Real-DASH identity invitations; disabled by default.
-        "INVITATIONS_ENABLED": "0",
+        // Real-DASH identity invitations. Keep the treasury float deliberately
+        // small; this endpoint dispenses bearer invitations worth real money.
+        "INVITATIONS_ENABLED": "1",
         "INVITATION_INVENTORY_TARGET": "3",
         "INVITATION_TTL_SECS": "3600",
         "INVITATION_RATE_WINDOW_SECS": "604800",
