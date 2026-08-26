@@ -19,6 +19,17 @@ export interface ChainProvider {
   /** Whether this provider knows the transaction, in a block or the mempool. */
   hasTx(txid: string, signal: AbortSignal): Promise<boolean>;
   broadcast(rawHex: string, signal: AbortSignal): Promise<string>;
+  /** Optional Core-specific ChainLock lookup used by pre-created invitations. */
+  getChainLockStatus?(
+    txid: string,
+    signal: AbortSignal,
+  ): Promise<ChainLockStatus>;
+}
+
+export interface ChainLockStatus {
+  known: boolean;
+  height: number | null;
+  chainLocked: boolean;
 }
 
 /**

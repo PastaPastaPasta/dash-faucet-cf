@@ -66,14 +66,19 @@ export function normalizeIp(ip: string): string {
 }
 
 export function clientIp(request: Request): string {
+  return normalizeIp(rawClientIp(request));
+}
+
+/** Unmodified client address for Turnstile's remoteip binding. */
+export function rawClientIp(request: Request): string {
   const cf = request.headers.get("CF-Connecting-IP");
-  if (cf) return normalizeIp(cf.trim());
+  if (cf) return cf.trim();
 
   const forwarded = request.headers.get("X-Forwarded-For");
-  if (forwarded) return normalizeIp(forwarded.split(",")[0].trim());
+  if (forwarded) return forwarded.split(",")[0].trim();
 
   const real = request.headers.get("X-Real-IP");
-  if (real) return normalizeIp(real.trim());
+  if (real) return real.trim();
 
   return "unknown";
 }
@@ -91,6 +96,7 @@ export async function verifyTurnstile(
   secret: string,
   token: string | undefined,
   ip: string,
+  expected?: { hostname: string; action: string },
 ): Promise<TurnstileOutcome> {
   if (!secret) return { ok: true };
   if (!token) return { ok: false, reason: "Captcha token required" };
@@ -107,8 +113,15 @@ export async function verifyTurnstile(
     );
     const body = (await res.json()) as {
       success?: boolean;
+      hostname?: string;
+      action?: string;
       "error-codes"?: string[];
     };
+    if (body.success && expected) {
+      if (body.hostname !== expected.hostname || body.action !== expected.action) {
+        return { ok: false, reason: "Captcha token was issued for another request" };
+      }
+    }
     if (body.success) return { ok: true };
     return {
       ok: false,

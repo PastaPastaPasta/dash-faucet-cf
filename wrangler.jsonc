@@ -69,6 +69,13 @@
         "CAP_HARD_C": "50",
         "CAP_HARD_S": "32",
         "CAP_HARD_D": "6",
+        // Pre-created 0.003 DASH identity invitations. Keep disabled until an
+        // INVITATION_SECRET and Turnstile secret are installed.
+        "INVITATIONS_ENABLED": "0",
+        "INVITATION_INVENTORY_TARGET": "3",
+        "INVITATION_TTL_SECS": "3600",
+        "INVITATION_RATE_WINDOW_SECS": "604800",
+        "PLATFORM_EXPLORER_URL": "https://testnet.platform-explorer.pshenmic.dev",
         "DRY_RUN": "0"
       }
     },
@@ -118,6 +125,12 @@
         "CAP_HARD_C": "50",
         "CAP_HARD_S": "32",
         "CAP_HARD_D": "6",
+        // Real-DASH identity invitations; disabled by default.
+        "INVITATIONS_ENABLED": "0",
+        "INVITATION_INVENTORY_TARGET": "3",
+        "INVITATION_TTL_SECS": "3600",
+        "INVITATION_RATE_WINDOW_SECS": "604800",
+        "PLATFORM_EXPLORER_URL": "https://platform-explorer.pshenmic.dev",
         "DRY_RUN": "0"
       }
     }

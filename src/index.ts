@@ -9,9 +9,21 @@ import {
   resolveConfig,
 } from "./config";
 import { describeError } from "./errors";
+import { hashInvitationSignal, invitationDevice } from "./invitation";
 import { AddressError, addressToPubKeyHash } from "./keys";
-import { clientIp, errorJson, json, preflight, verifyTurnstile } from "./http";
-import { TREASURY_ID, type PayoutResult } from "./treasury";
+import {
+  clientIp,
+  errorJson,
+  json,
+  preflight,
+  rawClientIp,
+  verifyTurnstile,
+} from "./http";
+import {
+  TREASURY_ID,
+  type InvitationIssueResult,
+  type PayoutResult,
+} from "./treasury";
 
 // Only the Durable Object class may be re-exported here: workerd validates the
 // entry module's named exports and rejects anything that is not a handler or a
@@ -46,6 +58,9 @@ function capEndpoint(request: Request, path: string): string {
 
 async function handleStatus(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
+  const device = cfg.invitations.enabled
+    ? invitationDevice(request, cfg.invitations.secret)
+    : undefined;
 
   let snap: Awaited<ReturnType<ReturnType<typeof treasury>["snapshot"]>>;
   try {
@@ -90,8 +105,13 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       source: snap.source,
       providers: snap.providers,
       dryRun: cfg.dryRun,
+      invitationsEnabled: cfg.invitations.enabled,
+      invitationAmount: toDash(cfg.invitations.amountSats),
+      invitationExpiresIn: Math.floor(cfg.invitations.ttlMs / 1000),
+      invitationInventory: snap.invitations,
     },
     low ? 503 : 200,
+    device?.setCookie ? { "Set-Cookie": device.setCookie } : {},
   );
 }
 
@@ -292,6 +312,89 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
   });
 }
 
+type InvitationFailure = Extract<InvitationIssueResult, { ok: false }>;
+
+function invitationFailure(result: InvitationFailure): Response {
+  switch (result.code) {
+    case "rate_limited":
+      return errorJson(
+        429,
+        "One invitation is allowed per IP and device every seven days",
+        { retryAfter: result.retryAfter },
+        { "Retry-After": String(result.retryAfter) },
+      );
+    case "unavailable":
+      return errorJson(503, "Invitation inventory is refilling — please try again soon");
+    case "platform_unavailable":
+      return errorJson(503, "Platform availability check is temporarily unavailable");
+    case "error":
+      return errorJson(500, "Invitation could not be created", {
+        detailMessage: result.detail,
+      });
+  }
+}
+
+async function handleInvitation(request: Request, env: Env): Promise<Response> {
+  const cfg = resolveConfig(env);
+  if (!cfg.invitations.enabled) return errorJson(404, "Not found");
+  if (!cfg.turnstileSecret || !cfg.turnstileSiteKey) {
+    return errorJson(503, "Invitation captcha is not configured");
+  }
+
+  let body: { turnstileToken?: unknown };
+  try {
+    body = (await request.json()) as typeof body;
+  } catch {
+    return errorJson(400, "Request body must be JSON");
+  }
+
+  const ip = clientIp(request);
+  if (env.EDGE_LIMIT) {
+    const { success } = await env.EDGE_LIMIT.limit({ key: `invite:${ip}` });
+    if (!success) {
+      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, {
+        "Retry-After": "60",
+      });
+    }
+  }
+
+  const captcha = await verifyTurnstile(
+    cfg.turnstileSecret,
+    typeof body.turnstileToken === "string" ? body.turnstileToken : undefined,
+    rawClientIp(request),
+    {
+      hostname: new URL(request.url).hostname,
+      action: "invitation_faucet",
+    },
+  );
+  if (!captcha.ok) return errorJson(400, captcha.reason ?? "Captcha verification failed");
+
+  const device = invitationDevice(request, cfg.invitations.secret);
+  const result = await treasury(env).issueInvitation({
+    ipHash: hashInvitationSignal(cfg.invitations.secret, "ip", ip),
+    deviceHash: hashInvitationSignal(cfg.invitations.secret, "device", device.id),
+  });
+  if (!result.ok) return invitationFailure(result);
+
+  return json(
+    {
+      invitation: result.uri,
+      txid: result.txid,
+      amount: toDash(cfg.invitations.amountSats),
+      expiresAt: result.expiresAt,
+      replay: result.replay,
+      network: cfg.network,
+    },
+    200,
+    {
+      "Cache-Control": "no-store, max-age=0",
+      Pragma: "no-cache",
+      "Referrer-Policy": "no-referrer",
+      ...(device.setCookie ? { "Set-Cookie": device.setCookie } : {}),
+    },
+  );
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
@@ -326,6 +429,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/api/core-faucet" && request.method === "POST") {
     return handleFaucet(request, env);
   }
+  if (url.pathname === "/api/invitation-faucet" && request.method === "POST") {
+    return handleInvitation(request, env);
+  }
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/")) {
     return errorJson(404, "Not found");
   }
@@ -346,8 +452,12 @@ export default {
     }
   },
 
-  /** Cron: keep the UTXO pool split so bursts cannot stall on mempool limits. */
+  /** Cron: refresh invitations, then keep the shared UTXO pool healthy. */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    const invitations = await treasury(env).maintainInvitations();
+    console.log(
+      `invitation maintenance: ${invitations.action} — ${invitations.detail}`,
+    );
     const result = await treasury(env).maintain();
     console.log(`treasury maintenance: ${result.action} — ${result.detail}`);
   },

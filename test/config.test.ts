@@ -79,3 +79,29 @@ describe("proof tiers", () => {
     expect(canEscalate(noPow, "turnstile")).toBe(false);
   });
 });
+
+describe("invitation configuration", () => {
+  it("is disabled by default and fixes the voucher at 0.003 DASH", () => {
+    const cfg = resolveConfig(env());
+    expect(cfg.invitations.enabled).toBe(false);
+    expect(cfg.invitations.amountSats).toBe(300_000);
+    expect(cfg.invitations.ttlMs).toBe(60 * 60 * 1000);
+    expect(cfg.invitations.rateWindowMs).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("requires the encryption secret and Turnstile when enabled", () => {
+    expect(() => resolveConfig(env({ INVITATIONS_ENABLED: "1" }))).toThrow(
+      /INVITATION_SECRET/,
+    );
+    const cfg = resolveConfig(
+      env({
+        INVITATIONS_ENABLED: "1",
+        INVITATION_SECRET: "secret",
+        TURNSTILE_SITE_KEY: "site",
+        TURNSTILE_SECRET: "turnstile",
+      }),
+    );
+    expect(cfg.invitations.enabled).toBe(true);
+    expect(cfg.invitations.inventoryTarget).toBe(3);
+  });
+});

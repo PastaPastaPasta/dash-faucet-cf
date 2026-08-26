@@ -46,11 +46,17 @@ export interface Env {
   CAP_HARD_S?: string;
   CAP_HARD_D?: string;
   DRY_RUN?: string;
+  INVITATIONS_ENABLED?: string;
+  INVITATION_INVENTORY_TARGET?: string;
+  INVITATION_TTL_SECS?: string;
+  INVITATION_RATE_WINDOW_SECS?: string;
+  PLATFORM_EXPLORER_URL?: string;
 
   // secrets
   FAUCET_WIF: string;
   TURNSTILE_SECRET?: string;
   CAP_SECRET?: string;
+  INVITATION_SECRET?: string;
 }
 
 export interface FaucetConfig {
@@ -82,6 +88,16 @@ export interface FaucetConfig {
   capSecret: string;
   wif: string;
   dryRun: boolean;
+  invitations: {
+    enabled: boolean;
+    /** Fixed onboarding voucher value: 0.003 DASH. */
+    amountSats: number;
+    inventoryTarget: number;
+    ttlMs: number;
+    rateWindowMs: number;
+    platformExplorerUrl: string;
+    secret: string;
+  };
 }
 
 /**
@@ -202,6 +218,12 @@ export function resolveConfig(env: Env): FaucetConfig {
     throw new Error("FAUCET_WIF secret is not set");
   }
 
+  const invitationsEnabled = env.INVITATIONS_ENABLED === "1";
+  const invitationSecret = env.INVITATION_SECRET ?? "";
+  if (invitationsEnabled && !invitationSecret) {
+    throw new Error("INVITATION_SECRET must be set when invitations are enabled");
+  }
+
   const soft = capParams(
     "CAP",
     { c: env.CAP_C, s: env.CAP_S, d: env.CAP_D },
@@ -250,6 +272,29 @@ export function resolveConfig(env: Env): FaucetConfig {
     capSecret: env.CAP_SECRET ?? "",
     wif: env.FAUCET_WIF,
     dryRun: env.DRY_RUN === "1",
+    invitations: {
+      enabled: invitationsEnabled,
+      amountSats: 300_000,
+      inventoryTarget: int(
+        "INVITATION_INVENTORY_TARGET",
+        env.INVITATION_INVENTORY_TARGET,
+        3,
+      ),
+      ttlMs: int("INVITATION_TTL_SECS", env.INVITATION_TTL_SECS, 60 * 60) * 1000,
+      rateWindowMs:
+        int(
+          "INVITATION_RATE_WINDOW_SECS",
+          env.INVITATION_RATE_WINDOW_SECS,
+          7 * 24 * 60 * 60,
+        ) * 1000,
+      platformExplorerUrl:
+        (env.PLATFORM_EXPLORER_URL ??
+          (network === "mainnet"
+            ? "https://platform-explorer.pshenmic.dev"
+            : "https://testnet.platform-explorer.pshenmic.dev"))
+          .replace(/\/+$/, ""),
+      secret: invitationSecret,
+    },
   };
 }
 

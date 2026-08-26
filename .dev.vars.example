@@ -3,6 +3,7 @@
 #   npx wrangler secret put FAUCET_WIF --env testnet
 #   npx wrangler secret put TURNSTILE_SECRET --env testnet
 #   npx wrangler secret put CAP_SECRET --env testnet
+#   npx wrangler secret put INVITATION_SECRET --env testnet
 
 # WIF for the faucet's hot key. Must match the deployment's NETWORK.
 FAUCET_WIF=
@@ -14,3 +15,9 @@ TURNSTILE_SECRET=
 # rotating it invalidates outstanding challenges (clients just retry).
 # Leave blank to disable the proof-of-work path.
 CAP_SECRET=
+
+# Encryption and HMAC key for pre-created identity invitations. Generate a
+# high-entropy value and do not rotate it while inventory exists: rotation
+# makes the stored invitation keys unreadable. Required only when
+# INVITATIONS_ENABLED=1.
+INVITATION_SECRET=

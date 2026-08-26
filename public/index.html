@@ -59,6 +59,9 @@
             background: #0070b8;
             transform: translateY(-2px);
         }
+        a.btn {
+            text-decoration: none;
+        }
         .btn:disabled {
             background: #555;
             cursor: not-allowed;
@@ -382,6 +385,17 @@
             --cap-spinner-background-color: rgba(255, 255, 255, 0.15);
             --cap-widget-width: 100%;
         }
+        [hidden] {
+            display: none !important;
+        }
+        .expiry {
+            color: #f0ad4e;
+            margin: 12px 0;
+            font-size: 0.9rem;
+        }
+        .expiry.expired {
+            color: #ff6b6b;
+        }
     </style>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
@@ -445,8 +459,37 @@
             </div>
         </div>
 
+        <!-- Platform invitation faucet (enabled by server configuration). -->
+        <div class="feature-card" id="invitationCard" hidden>
+            <div class="initial-view">
+                <h2>Create a Dash Identity</h2>
+                <p class="description">
+                    Get an invitation with <span id="invitationAmountDisplay">0.003</span>
+                    DASH for one identity and non-contested name. You will choose
+                    the name in Dash Wallet.
+                </p>
+                <button class="btn" id="invitationBtn">
+                    <span class="spinner"></span>
+                    <span class="btn-text">Get Invitation</span>
+                </button>
+                <div class="turnstile-holder" id="invitationTurnstileHolder"></div>
+                <div class="error" id="invitationErrorBox"></div>
+            </div>
+
+            <div class="results-view">
+                <h2 style="color: #28a745;">Invitation Ready</h2>
+                <p class="description">Open this in Dash Wallet, then choose your username.</p>
+                <p class="expiry" id="invitationExpiry"></p>
+                <span id="invitationLink" hidden></span>
+                <div class="action-buttons">
+                    <a class="btn" id="openInvitationBtn" href="#">Open in Dash Wallet</a>
+                    <button class="btn-secondary" id="copyInvitationBtn">Copy Invitation</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Identity Creation Note -->
-        <div class="info-box">
+        <div class="info-box" id="identityNote">
             <strong>Need a Platform Identity?</strong>
             <p>To create a Dash Platform identity, visit the <a id="bridgeLink" href="https://bridge.thepasta.org" target="_blank" rel="noopener noreferrer">Dash Bridge</a>.</p>
         </div>
@@ -512,12 +555,13 @@
 
         let coinName = "tDash";
         let turnstileSiteKey = "";
-        let turnstileWidgetId = null;
+        const turnstileWidgetIds = { core: null, invitation: null };
         let hardCapEndpoint = "";
         let capScriptPromise = null;
         let capWidget = null;
         /** True while the widget's worker pool is grinding on a hard challenge. */
         let capSolving = false;
+        let invitationExpiryTimer = null;
 
         const $ = (id) => document.getElementById(id);
 
@@ -635,8 +679,13 @@
          * Resolves to null when no site key is configured, in which case the
          * server skips verification too.
          */
-        function solveTurnstile() {
-            if (!turnstileSiteKey) return Promise.resolve(null);
+        function solveTurnstile(kind = "core") {
+            const invitation = kind === "invitation";
+            if (!turnstileSiteKey) {
+                return invitation
+                    ? Promise.reject(new Error("Invitation captcha is not configured"))
+                    : Promise.resolve(null);
+            }
             if (typeof window.turnstile === "undefined") {
                 return Promise.reject(new Error("Captcha failed to load — please reload the page"));
             }
@@ -661,14 +710,90 @@
                     "timeout-callback": () =>
                         settle(reject, new Error("Captcha timed out — please try again")),
                 };
+                if (invitation) opts.action = "invitation_faucet";
 
-                if (turnstileWidgetId === null) {
-                    turnstileWidgetId = window.turnstile.render($("turnstileHolder"), opts);
+                if (turnstileWidgetIds[kind] === null) {
+                    const holder = invitation
+                        ? $("invitationTurnstileHolder")
+                        : $("turnstileHolder");
+                    turnstileWidgetIds[kind] = window.turnstile.render(holder, opts);
                 } else {
-                    window.turnstile.reset(turnstileWidgetId);
+                    window.turnstile.reset(turnstileWidgetIds[kind]);
                 }
-                window.turnstile.execute(turnstileWidgetId, opts);
+                window.turnstile.execute(turnstileWidgetIds[kind], opts);
             });
+        }
+
+        function updateInvitationCountdown(expiresAt) {
+            const expiry = $("invitationExpiry");
+            const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+            if (remaining > 0) {
+                expiry.textContent = `Reserved for you for ${formatDuration(remaining)}. Claim it before then.`;
+                return;
+            }
+
+            clearInterval(invitationExpiryTimer);
+            invitationExpiryTimer = null;
+            expiry.textContent = "Reservation expired. This invitation may be given to someone else.";
+            expiry.classList.add("expired");
+            $("openInvitationBtn").setAttribute("aria-disabled", "true");
+            $("openInvitationBtn").removeAttribute("href");
+            $("copyInvitationBtn").disabled = true;
+        }
+
+        async function requestInvitation() {
+            const card = $("invitationCard");
+            const btn = $("invitationBtn");
+            const btnText = btn.querySelector(".btn-text");
+            const errorBox = $("invitationErrorBox");
+
+            btn.classList.add("loading");
+            btn.disabled = true;
+            errorBox.classList.remove("visible");
+            try {
+                btnText.textContent = "Verifying...";
+                const turnstileToken = await solveTurnstile("invitation");
+                btnText.textContent = "Creating...";
+                const response = await fetch("/api/invitation-faucet", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ turnstileToken }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    let message = data.error || data.detail?.error || "Invitation request failed";
+                    const retryAfter = data.retryAfter ?? data.detail?.retryAfter;
+                    if (response.status === 429 && retryAfter) {
+                        message += ` — try again in ${formatDuration(retryAfter)}.`;
+                    }
+                    throw new Error(message);
+                }
+
+                $("invitationLink").textContent = data.invitation;
+                $("openInvitationBtn").href = data.invitation;
+                $("openInvitationBtn").removeAttribute("aria-disabled");
+                $("copyInvitationBtn").disabled = false;
+                card.classList.add("show-results", "success");
+                clearInterval(invitationExpiryTimer);
+                $("invitationExpiry").classList.remove("expired");
+                updateInvitationCountdown(data.expiresAt);
+                if (data.expiresAt > Date.now()) {
+                    invitationExpiryTimer = setInterval(
+                        () => updateInvitationCountdown(data.expiresAt),
+                        1000
+                    );
+                }
+            } catch (error) {
+                errorBox.textContent = error.message;
+                errorBox.classList.add("visible");
+            } finally {
+                if (turnstileWidgetIds.invitation !== null && window.turnstile) {
+                    window.turnstile.reset(turnstileWidgetIds.invitation);
+                }
+                btn.classList.remove("loading");
+                btn.disabled = false;
+                btnText.textContent = "Get Invitation";
+            }
         }
 
         /**
@@ -776,8 +901,8 @@
                     showHardCaptcha().catch((err) => showError(err.message));
                 }
             } finally {
-                if (turnstileWidgetId !== null && window.turnstile) {
-                    window.turnstile.reset(turnstileWidgetId);
+                if (turnstileWidgetIds.core !== null && window.turnstile) {
+                    window.turnstile.reset(turnstileWidgetIds.core);
                 }
                 btn.classList.remove("loading");
                 btn.disabled = false;
@@ -877,6 +1002,11 @@
                 if (data.hardCapEndpoint) {
                     hardCapEndpoint = data.hardCapEndpoint;
                 }
+                if (data.invitationsEnabled) {
+                    $("invitationCard").hidden = false;
+                    $("invitationAmountDisplay").textContent = data.invitationAmount;
+                    $("identityNote").hidden = true;
+                }
             } catch (err) {
                 $("statusBar").textContent = "Could not load faucet status";
             }
@@ -890,6 +1020,10 @@
         $("addressInput").addEventListener("keydown", (e) => {
             if (e.key === "Enter") requestCoreFaucet();
         });
+        $("invitationBtn").addEventListener("click", requestInvitation);
+        $("copyInvitationBtn").addEventListener("click", () =>
+            copyFrom("invitationLink", $("copyInvitationBtn"))
+        );
         for (const btn of document.querySelectorAll("[data-copy]")) {
             btn.addEventListener("click", () => copyFrom(btn.dataset.copy, btn));
         }

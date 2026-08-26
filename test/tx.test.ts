@@ -6,6 +6,7 @@ import {
   SelfPayError,
   buildPayout,
   buildSplit,
+  buildInvitationAssetLock,
   selectInputs,
 } from "../src/tx";
 import { FAUCET, FAUCET_SCRIPT_TESTNET, RECIPIENT, utxo } from "./fixtures";
@@ -169,5 +170,30 @@ describe("buildSplit", () => {
     await expect(
       buildSplit({ key, utxos: [utxo("f", 0, 1_000_000_000)], count: 1, perOutputSats: 1_000 }),
     ).rejects.toThrow(/at least 2/);
+  });
+});
+
+describe("buildInvitationAssetLock", () => {
+  it("builds an exact v3/type-8 300,000-duff voucher", async () => {
+    const amount = 300_000;
+    const voucherPkh = "11".repeat(20);
+    const built = await buildInvitationAssetLock({
+      key,
+      utxos: [utxo("d", 0, 1_000_000)],
+      voucherPublicKeyHash: voucherPkh,
+      satoshis: amount,
+    });
+
+    // Two little-endian uint16s: nVersion=3, nType=8.
+    expect(built.hex.startsWith("03000800")).toBe(true);
+    // Core requires the value-bearing empty OP_RETURN to be exactly 6a00.
+    expect(built.hex).toContain("e093040000000000026a00");
+    // 36-byte payload: v1, one credit output, exact value, P2PKH script.
+    expect(built.hex.endsWith(
+      `240101e0930400000000001976a914${voucherPkh}88ac`,
+    )).toBe(true);
+    expect(built.ownOutputs).toHaveLength(1);
+    expect(txidOf(built.hex)).toBe(built.txid);
+    expect(built.totalIn - amount - built.ownOutputs[0].satoshis).toBe(built.fee);
   });
 });

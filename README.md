@@ -5,6 +5,10 @@ signs and broadcasts payouts itself, so there is no Dash Core node, no captcha
 container, and no tunnel to keep alive. The only external dependencies are
 public block explorers, and it fails over between several of them.
 
+It can also run an optional identity-invitation faucet. That path pre-creates
+ChainLocked 0.003 DASH asset locks and gives a wallet everything it needs to
+claim one Platform identity and non-contested DPNS name.
+
 This replaces the FastAPI + `dashd` + CAP + `cloudflared` stack in
 [`PastaPastaPasta/dash-faucet`](https://github.com/PastaPastaPasta/dash-faucet).
 
@@ -21,6 +25,8 @@ Browser ──► Worker (src/index.ts)   ◄── native clients (cap.js proof
             Chain layer (src/chain/) ──► hyphen ┐
                                       ──► insight ├─ ordered failover
                                       ──► dashrpc ┘
+              │
+              └──► Platform Explorer (identity claim checks)
 ```
 
 Transactions are built and signed in the Worker with
@@ -30,7 +36,7 @@ Transactions are built and signed in the Worker with
 — three zero-dependency libraries that run unmodified on `workerd`, plus
 [`@noble/hashes`](https://www.npmjs.com/package/@noble/hashes) for the
 synchronous SHA-256/HMAC the proof-of-work captcha needs. The whole Worker is
-~45 KiB gzipped, against a 3 MiB free-plan limit.
+~52 KiB gzipped, against a 3 MiB free-plan limit.
 
 ### Why a Durable Object
 
@@ -127,6 +133,60 @@ absent when the daily budget is what ran out, since no proof of work moves that.
 Requesting the same address twice in one UTC day returns the original `txid`
 with `replay: true` rather than paying again.
 
+### `POST /api/invitation-faucet`
+
+Enabled only when `INVITATIONS_ENABLED=1`. It requires a Turnstile token bound
+to the `invitation_faucet` action; proof-of-work tokens are not accepted.
+
+```bash
+curl -X POST https://faucet.example/api/invitation-faucet \
+  -H 'content-type: application/json' \
+  -d '{"turnstileToken":"..."}'
+```
+
+```json
+{
+  "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null",
+  "txid": "...",
+  "amount": 0.003,
+  "expiresAt": 1787000000000,
+  "replay": false,
+  "network": "mainnet"
+}
+```
+
+The Treasury builds version-3/type-8 asset-lock transactions in advance and
+does not make them available until Dash Core reports that their containing
+block is ChainLocked. The wallet reconstructs a `ChainAssetLockProof` from the
+transaction; no InstantLock payload is required.
+
+This is a pure funding voucher: it does not select a username. The wallet asks
+the recipient to choose a currently available, non-contested name during the
+claim flow. In the legacy invitation format, the optional `du` field identifies
+the inviter for contact bootstrap; using it for the recipient's desired name
+would be incorrect.
+
+Each normalized IP and signed `HttpOnly` device cookie gets one issuance per
+seven days. The IP and device values are stored only as keyed HMACs. Repeating
+a request from the same device during its reservation returns the same
+invitation instead of consuming another one.
+
+An invitation is a bearer private key. The WIF is AES-GCM encrypted at rest and
+is returned only in the no-store API response. After 60 minutes, maintenance
+checks the prospective identity ID. A claimed invitation is retired and its
+encrypted key erased; an unclaimed one goes back into inventory. This recovery
+is intentionally simple and racy: after expiry, the old recipient and a new
+recipient may both have the key, and whichever wallet claims the asset lock
+first wins. The browser clearly marks the reservation expired at 60 minutes;
+the cron may take up to its next run to recycle it.
+
+Compatibility note: current Android releases structurally require a `du` field
+and still gate non-contested invitation claims at 0.03 DASH in the username UI,
+even though the protocol-side invitation minimum is 0.003 DASH. Android must
+accept inviter-less links and use the 0.003-DASH invitation floor before these
+faucet vouchers can be claimed there. The faucet deliberately does not increase
+the real-money voucher tenfold to accommodate that stale UI check.
+
 ### `POST /cap/{v1,hard}/challenge` · `POST /cap/{v1,hard}/redeem`
 
 A [cap.js](https://capjs.js.org)-compatible proof-of-work captcha, for clients
@@ -222,10 +282,16 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `TURNSTILE_SITE_KEY` | Public key, served to the UI |
 | `CAP_C` / `CAP_S` / `CAP_D` | Soft proof-of-work shape. Rejected at startup unless `c,s ∈ 1..256`, `d ∈ 1..6` and `c × 16^d ≤ 64M` — the bounds the Swift SDK enforces client-side |
 | `CAP_HARD_C` / `CAP_HARD_S` / `CAP_HARD_D` | Escalated shape served at `/cap/hard/`. Browser-only, so the SDK's 64M bound does not apply; capped at 1B instead |
+| `INVITATIONS_ENABLED` | `1` enables the identity-invitation API and UI; disabled by default |
+| `INVITATION_INVENTORY_TARGET` | Number of ready or preparing invitations to keep on hand (default 3) |
+| `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
+| `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days) |
+| `PLATFORM_EXPLORER_URL` | Network-appropriate Platform Explorer base URL for identity claim checks |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
 | `CAP_SECRET` | **secret** — HMAC key for the proof-of-work captcha; blank disables it |
+| `INVITATION_SECRET` | **secret** — encrypts bearer WIFs and HMACs IP/device signals; required when invitations are enabled |
 
 ### Security
 
@@ -233,6 +299,13 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 float thin and top it up from cold storage. `DAILY_BUDGET_SATS` is enforced in
 the Durable Object and is the hard ceiling on what a single day can cost you,
 regardless of how the limits above it are defeated.
+
+Invitation asset locks are irreversible once broadcast and are intentionally
+outside `DAILY_BUDGET_SATS`; control their maximum cost with a thin faucet
+balance and a small `INVITATION_INVENTORY_TARGET`. Enabling invitations also
+requires a non-empty Turnstile site key and secret. Keep `INVITATION_SECRET`
+stable and backed up for as long as unclaimed inventory exists—losing or
+rotating it makes those stored WIFs unrecoverable.
 
 ## Development
 
@@ -252,6 +325,7 @@ node scripts/verify-testnet.mjs  # end-to-end against live testnet explorers
 npx wrangler secret put FAUCET_WIF --env testnet
 npx wrangler secret put TURNSTILE_SECRET --env testnet
 npx wrangler secret put CAP_SECRET --env testnet   # any high-entropy string
+npx wrangler secret put INVITATION_SECRET --env testnet
 npm run deploy:testnet
 ```
 
