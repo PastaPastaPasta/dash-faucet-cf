@@ -22,6 +22,9 @@
   "env": {
     "testnet": {
       "assets": { "directory": "./public", "binding": "ASSETS" },
+      "routes": [
+        { "pattern": "faucet.dashhq.org", "custom_domain": true }
+      ],
       "triggers": { "crons": ["*/10 * * * *"] },
       "durable_objects": {
         "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
