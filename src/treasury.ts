@@ -4,7 +4,13 @@ import { ChainClient, ProviderStatus, UtxoSnapshot } from "./chain";
 import { Env, FaucetConfig, resolveConfig } from "./config";
 import { describeError } from "./errors";
 import { FaucetKey, loadFaucetKey } from "./keys";
-import { BuiltTx, InsufficientFundsError, buildPayout, buildSplit } from "./tx";
+import {
+  BuiltTx,
+  InsufficientFundsError,
+  SelfPayError,
+  buildPayout,
+  buildSplit,
+} from "./tx";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 86_400_000;
@@ -36,6 +42,7 @@ export type PayoutResult =
   | { ok: false; code: "rate_limited"; retryAfter: number }
   | { ok: false; code: "budget_exhausted"; retryAfter: number }
   | { ok: false; code: "insufficient_funds"; detail: string }
+  | { ok: false; code: "self_pay"; detail: string }
   | { ok: false; code: "chain_unavailable"; detail: string }
   | { ok: false; code: "error"; detail: string };
 
@@ -363,6 +370,9 @@ export class Treasury extends DurableObject<Env> {
     } catch (err) {
       if (err instanceof InsufficientFundsError) {
         return { ok: false, code: "insufficient_funds", detail: err.message };
+      }
+      if (err instanceof SelfPayError) {
+        return { ok: false, code: "self_pay", detail: err.message };
       }
       // Never forward raw library text to a client; log it for operators.
       console.error(`treasury: payout build failed: ${describeError(err)}`);

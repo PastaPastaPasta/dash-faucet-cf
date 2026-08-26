@@ -35,6 +35,19 @@ export class InsufficientFundsError extends Error {
   }
 }
 
+/**
+ * The recipient is the faucet's own address. Refused because a payout's change
+ * shares that pubKeyHash, so `finish()` — which identifies our outputs by
+ * script — would record the recipient output as in-flight change and corrupt
+ * the ledger. Client error, not a server fault.
+ */
+export class SelfPayError extends Error {
+  constructor() {
+    super("refusing to pay the faucet's own address");
+    this.name = "SelfPayError";
+  }
+}
+
 const DUMMY_PKH = "00".repeat(20);
 
 /**
@@ -151,7 +164,7 @@ export async function buildPayout(opts: {
   const { key, utxos, recipientPubKeyHash, satoshis } = opts;
 
   if (recipientPubKeyHash === key.pubKeyHash) {
-    throw new Error("refusing to pay the faucet's own address");
+    throw new SelfPayError();
   }
 
   const selected = selectInputs(utxos, satoshis, 2);

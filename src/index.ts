@@ -70,6 +70,10 @@ const PAYOUT_FAILURES: Record<
   rate_limited: { status: 429, message: "Rate limit exceeded" },
   budget_exhausted: { status: 429, message: "Faucet daily budget exhausted" },
   insufficient_funds: { status: 503, message: "Faucet has insufficient funds" },
+  self_pay: {
+    status: 400,
+    message: "That is the faucet's own deposit address — send to a wallet you control",
+  },
   chain_unavailable: { status: 503, message: "Chain providers unavailable" },
   error: { status: 500, message: "Internal server error" },
 };

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { loadFaucetKey } from "../src/keys";
 import {
   InsufficientFundsError,
+  SelfPayError,
   buildPayout,
   buildSplit,
   selectInputs,
@@ -111,7 +112,7 @@ describe("buildPayout", () => {
         recipientPubKeyHash: key.pubKeyHash,
         satoshis: 100_000_000,
       }),
-    ).rejects.toThrow(/own address/);
+    ).rejects.toThrow(SelfPayError);
   });
 
   it("reports insufficient funds rather than building a bad tx", async () => {
