@@ -19,7 +19,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 600px;
+            max-width: 920px;
             margin: 0 auto;
         }
         header {
@@ -34,6 +34,17 @@
         .subtitle {
             color: #888;
             font-size: 1.1rem;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+            align-items: stretch;
+        }
+        .feature-grid:not(.has-invitations) #coreFaucetCard {
+            grid-column: 1 / -1;
+            width: min(100%, 600px);
+            justify-self: center;
         }
         .card {
             background: rgba(255, 255, 255, 0.05);
@@ -107,6 +118,10 @@
             background: #28a745;
             color: white;
         }
+        .copy-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
         .error {
             background: rgba(220, 53, 69, 0.2);
             border: 1px solid #dc3545;
@@ -126,6 +141,7 @@
             padding: 30px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            min-width: 0;
         }
         .feature-card:hover {
             border-color: rgba(0, 141, 228, 0.3);
@@ -185,6 +201,31 @@
             margin-bottom: 10px;
             font-size: 1.4rem;
         }
+        .network-kicker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #888;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+        .network-dot {
+            background: #008de4;
+            border-radius: 50%;
+            box-shadow: 0 0 8px rgba(0, 141, 228, 0.75);
+            height: 7px;
+            width: 7px;
+        }
+        .network-kicker.mainnet {
+            color: #f0ad4e;
+        }
+        .network-kicker.mainnet .network-dot {
+            background: #f0ad4e;
+            box-shadow: 0 0 8px rgba(240, 173, 78, 0.65);
+        }
         .feature-card .description {
             color: #aaa;
             margin-bottom: 20px;
@@ -193,6 +234,11 @@
         .feature-card .card-bottom {
             margin-top: auto;
             padding-top: 20px;
+        }
+        .availability-line {
+            color: #888;
+            font-size: 0.82rem;
+            margin-top: 12px;
         }
         /* Initial view and results view toggle */
         .initial-view, .results-view {
@@ -267,26 +313,152 @@
             font-size: 0.85rem;
             margin-bottom: 10px;
         }
-        .footer-fund {
+        .treasury-panel {
+            margin-top: 20px;
+        }
+        .treasury-heading {
+            align-items: flex-start;
             display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .treasury-heading h2 {
+            color: #fff;
+            font-size: 1.25rem;
+            margin-bottom: 5px;
+        }
+        .treasury-heading p {
+            color: #888;
+            font-size: 0.88rem;
+        }
+        .live-pill {
+            background: rgba(40, 167, 69, 0.14);
+            border: 1px solid rgba(40, 167, 69, 0.4);
+            border-radius: 999px;
+            color: #72d58a;
+            flex: 0 0 auto;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            padding: 5px 10px;
+            text-transform: uppercase;
+        }
+        .treasury-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+        .treasury-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 10px;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .treasury-card-mainnet {
+            border-color: rgba(240, 173, 78, 0.24);
+        }
+        .treasury-card-top {
+            padding: 18px 18px 14px;
+        }
+        .treasury-card-title {
             align-items: center;
-            justify-content: center;
+            display: flex;
+            justify-content: space-between;
             gap: 10px;
-            color: #666;
-            font-size: 0.8rem;
+        }
+        .treasury-card-title h3 {
+            color: #ddd;
+            font-size: 0.92rem;
+        }
+        .network-badge {
+            background: rgba(0, 141, 228, 0.13);
+            border: 1px solid rgba(0, 141, 228, 0.35);
+            border-radius: 999px;
+            color: #53b8f6;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            padding: 4px 8px;
+            text-transform: uppercase;
+        }
+        .network-badge.mainnet {
+            background: rgba(240, 173, 78, 0.12);
+            border-color: rgba(240, 173, 78, 0.4);
+            color: #f4c46a;
+        }
+        .treasury-balance {
+            color: #fff;
+            font-size: 1.65rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 650;
+            letter-spacing: -0.03em;
+            margin-top: 15px;
+        }
+        .treasury-balance span {
+            color: #888;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0;
+            margin-left: 3px;
+        }
+        .treasury-detail {
+            color: #777;
+            font-size: 0.78rem;
+            margin-top: 4px;
+        }
+        .inventory-row {
+            display: flex;
             flex-wrap: wrap;
+            gap: 6px 12px;
+            margin-top: 12px;
         }
-        .footer-fund-address {
-            font-family: 'Monaco', 'Consolas', monospace;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 0.75rem;
+        .inventory-item {
             color: #aaa;
+            font-size: 0.75rem;
         }
-        .footer-fund .copy-btn {
+        .inventory-item strong {
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+        }
+        .funding-address {
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 14px 18px 16px;
+        }
+        .funding-address-header {
+            align-items: center;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .funding-address-label {
+            color: #777;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .funding-address code {
+            color: #bbb;
+            display: block;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.73rem;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+        .funding-address .copy-btn {
             padding: 4px 10px;
             font-size: 0.7rem;
+        }
+        .network-warning {
+            color: #777;
+            font-size: 0.68rem;
+            margin-top: 8px;
+        }
+        .network-warning strong {
+            color: #aaa;
         }
         .footer-github {
             margin-top: 15px;
@@ -396,6 +568,43 @@
         .expiry.expired {
             color: #ff6b6b;
         }
+        @media (max-width: 720px) {
+            body {
+                padding: 14px;
+            }
+            header {
+                padding: 28px 0;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+            .feature-grid,
+            .treasury-grid {
+                grid-template-columns: 1fr;
+            }
+            .feature-card,
+            .card {
+                padding: 22px;
+            }
+            .treasury-card {
+                padding: 0;
+            }
+            .input-row {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .input-row .btn,
+            .feature-card .btn {
+                justify-content: center;
+                width: 100%;
+            }
+            .action-buttons .btn,
+            .action-buttons .btn-secondary {
+                flex: 1 1 100%;
+                justify-content: center;
+                text-align: center;
+            }
+        }
     </style>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
@@ -406,10 +615,12 @@
             <p class="subtitle" id="pageSubtitle">Get DASH for development and testing</p>
         </header>
 
+        <main class="feature-grid" id="featureGrid">
         <!-- Core Faucet Section -->
         <div class="feature-card" id="coreFaucetCard">
             <!-- Initial View -->
             <div class="initial-view">
+                <div class="network-kicker" id="coreNetworkKicker"><span class="network-dot"></span><span id="coreNetworkLabel">Testnet</span></div>
                 <h2 id="initialHeading">Get DASH</h2>
                 <p class="description">
                     Receive <span id="coreFaucetAmountDisplay">…</span> <span class="coin-name">DASH</span> to your address.
@@ -462,6 +673,7 @@
         <!-- Platform invitation faucet (enabled by server configuration). -->
         <div class="feature-card" id="invitationCard" hidden>
             <div class="initial-view">
+                <div class="network-kicker mainnet" id="invitationNetworkKicker"><span class="network-dot"></span><span id="invitationNetworkLabel">Mainnet · Real DASH</span></div>
                 <h2>Create a Dash Identity</h2>
                 <p class="description">
                     Get an invitation with <span id="invitationAmountDisplay">0.003</span>
@@ -472,6 +684,7 @@
                     <span class="spinner"></span>
                     <span class="btn-text">Get Invitation</span>
                 </button>
+                <p class="availability-line" id="invitationAvailability">Checking availability…</p>
                 <div class="turnstile-holder" id="invitationTurnstileHolder"></div>
                 <div class="error" id="invitationErrorBox"></div>
             </div>
@@ -487,6 +700,7 @@
                 </div>
             </div>
         </div>
+        </main>
 
         <!-- Identity Creation Note -->
         <div class="info-box" id="identityNote">
@@ -494,14 +708,63 @@
             <p>To create a Dash Platform identity, visit the <a id="bridgeLink" href="https://bridge.thepasta.org" target="_blank" rel="noopener noreferrer">Dash Bridge</a>.</p>
         </div>
 
+        <section class="card treasury-panel" id="treasuryPanel" hidden>
+            <div class="treasury-heading">
+                <div>
+                    <h2>Faucet reserves</h2>
+                    <p>Two networks, two separate treasuries. Fund the address for the service you want to support.</p>
+                </div>
+                <span class="live-pill">Live</span>
+            </div>
+            <div class="treasury-grid">
+                <article class="treasury-card">
+                    <div class="treasury-card-top">
+                        <div class="treasury-card-title">
+                            <h3>Testnet faucet</h3>
+                            <span class="network-badge" id="coreNetworkBadge">Testnet</span>
+                        </div>
+                        <div class="treasury-balance"><strong id="coreTreasuryBalance">—</strong> <span id="coreTreasuryCurrency">tDASH</span></div>
+                        <p class="treasury-detail" id="coreTreasuryDetail">Loading payout status…</p>
+                    </div>
+                    <div class="funding-address">
+                        <div class="funding-address-header">
+                            <span class="funding-address-label">Funding address</span>
+                            <button class="copy-btn" id="coreFundingCopy" data-copy="depositAddress">Copy</button>
+                        </div>
+                        <code id="depositAddress">—</code>
+                        <p class="network-warning">Send <strong id="coreNetworkWarning">testnet DASH only</strong> to this address.</p>
+                    </div>
+                </article>
+
+                <article class="treasury-card treasury-card-mainnet" id="invitationTreasuryCard" hidden>
+                    <div class="treasury-card-top">
+                        <div class="treasury-card-title">
+                            <h3>Identity invitations</h3>
+                            <span class="network-badge mainnet" id="invitationNetworkBadge">Mainnet · Real DASH</span>
+                        </div>
+                        <div class="treasury-balance"><strong id="invitationTreasuryBalance">—</strong> <span id="invitationTreasuryCurrency">DASH</span></div>
+                        <p class="treasury-detail">Spendable balance; locked invitations are counted below.</p>
+                        <div class="inventory-row" id="invitationInventory">
+                            <span class="inventory-item"><strong id="invitationAvailable">—</strong> ready</span>
+                            <span class="inventory-item"><strong id="invitationPreparing">—</strong> preparing</span>
+                            <span class="inventory-item"><strong id="invitationIssued">—</strong> reserved</span>
+                        </div>
+                    </div>
+                    <div class="funding-address">
+                        <div class="funding-address-header">
+                            <span class="funding-address-label">Funding address</span>
+                            <button class="copy-btn" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
+                        </div>
+                        <code id="invitationDepositAddress">—</code>
+                        <p class="network-warning">Send <strong id="invitationNetworkWarning">real mainnet DASH only</strong> to this address.</p>
+                    </div>
+                </article>
+            </div>
+        </section>
+
         <footer class="site-footer">
             <div class="footer-status" id="statusBar">
                 Loading faucet status...
-            </div>
-            <div class="footer-fund" id="fundingSection" style="display: none;">
-                <span>Help fund this faucet:</span>
-                <span class="footer-fund-address" id="depositAddress"></span>
-                <button class="copy-btn" data-copy="depositAddress">Copy</button>
             </div>
             <div class="footer-github">
                 <a href="https://github.com/PastaPastaPasta/dash-faucet" target="_blank" rel="noopener noreferrer">
@@ -521,10 +784,10 @@
             testnet: {
                 title: "Dash Testnet Faucet",
                 subtitle: "Get testnet DASH for development and testing",
-                coin: "tDash",
-                action: "Get tDash",
+                coin: "tDASH",
+                action: "Get tDASH",
                 heading: "Get Testnet DASH",
-                sent: "tDash Sent!",
+                sent: "tDASH Sent!",
                 placeholder: "Enter your testnet Dash address (y...)",
                 bridge: "https://bridge.thepasta.org",
             },
@@ -917,6 +1180,42 @@
             return `${Math.ceil(minutes / 60)}h`;
         }
 
+        function formatBalance(value) {
+            const amount = Number(value);
+            if (!Number.isFinite(amount)) return "Unavailable";
+            return amount.toLocaleString(undefined, {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 8,
+            });
+        }
+
+        function networkPresentation(network) {
+            return network === "mainnet"
+                ? {
+                    badge: "Mainnet · Real DASH",
+                    currency: "DASH",
+                    warning: "real mainnet DASH only",
+                }
+                : {
+                    badge: "Testnet",
+                    currency: "tDASH",
+                    warning: "testnet DASH only",
+                };
+        }
+
+        function applyNetworkPresentation(prefix, network) {
+            const presentation = networkPresentation(network);
+            const kicker = $(`${prefix}NetworkKicker`);
+            const badge = $(`${prefix}NetworkBadge`);
+            $(`${prefix}NetworkLabel`).textContent = presentation.badge;
+            kicker.classList.toggle("mainnet", network === "mainnet");
+            badge.textContent = presentation.badge;
+            badge.classList.toggle("mainnet", network === "mainnet");
+            $(`${prefix}TreasuryCurrency`).textContent = presentation.currency;
+            $(`${prefix}NetworkWarning`).textContent = presentation.warning;
+            return presentation;
+        }
+
         async function copyFrom(targetId, btn) {
             const original = btn.textContent;
             try {
@@ -982,20 +1281,29 @@
                 // number `rateLimitPerHour` reports for native clients.
                 const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
                 const parts = [
-                    `Balance: ${balance.toFixed(4)} DASH`,
-                    `Rate Limit: ${limit}/hour`,
-                    `Block: ${Number(data.blockHeight).toLocaleString()}`,
+                    "Faucets online",
+                    `Core rate limit: ${limit}/hour`,
+                    `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                 ];
-                if (data.status === "low_balance") parts.unshift("⚠️ Low balance");
-                $("statusBar").textContent = parts.join(" | ");
+                if (data.status === "low_balance") parts[0] = "⚠️ Testnet faucet low balance";
+                $("statusBar").textContent = parts.join(" · ");
 
                 if (data.depositAddress) {
                     $("depositAddress").textContent = data.depositAddress;
-                    $("fundingSection").style.display = "flex";
+                } else {
+                    $("coreFundingCopy").disabled = true;
                 }
                 if (data.coreFaucetAmount) {
                     $("coreFaucetAmountDisplay").textContent = data.coreFaucetAmount;
                 }
+                const corePresentation = applyNetworkPresentation("core", data.network);
+                $("coreTreasuryBalance").textContent = formatBalance(balance);
+                $("coreTreasuryDetail").textContent =
+                    `${data.coreFaucetAmount} ${corePresentation.currency} per request` +
+                    (Number.isFinite(Number(data.availableUtxos))
+                        ? ` · ${Number(data.availableUtxos).toLocaleString()} spendable outputs`
+                        : "");
+                $("treasuryPanel").hidden = false;
                 if (data.turnstileSiteKey) {
                     turnstileSiteKey = data.turnstileSiteKey;
                 }
@@ -1004,8 +1312,44 @@
                 }
                 if (data.invitationsEnabled) {
                     $("invitationCard").hidden = false;
+                    $("featureGrid").classList.add("has-invitations");
                     $("invitationAmountDisplay").textContent = data.invitationAmount;
                     $("identityNote").hidden = true;
+
+                    const invitationNetwork = data.invitationNetwork || data.network;
+                    const inventory = data.invitationInventory || {};
+                    const available = Number(inventory.available) || 0;
+                    const preparing = Number(inventory.preparing) || 0;
+                    const issued = Number(inventory.issued) || 0;
+                    applyNetworkPresentation("invitation", invitationNetwork);
+                    $("invitationTreasuryCard").hidden = false;
+                    $("invitationTreasuryBalance").textContent =
+                        formatBalance(data.invitationBalance);
+                    $("invitationDepositAddress").textContent =
+                        data.invitationDepositAddress || "Unavailable";
+                    $("invitationFundingCopy").disabled = !data.invitationDepositAddress;
+                    $("invitationAvailable").textContent = available.toLocaleString();
+                    $("invitationPreparing").textContent = preparing.toLocaleString();
+                    $("invitationIssued").textContent = issued.toLocaleString();
+
+                    if (data.invitationError) {
+                        $("invitationAvailability").textContent = "Invitation treasury unavailable";
+                    } else if (available > 0) {
+                        $("invitationAvailability").textContent =
+                            `${available.toLocaleString()} invitation${available === 1 ? "" : "s"} ready now`;
+                    } else if (preparing > 0) {
+                        $("invitationAvailability").textContent =
+                            `${preparing.toLocaleString()} invitation${preparing === 1 ? "" : "s"} preparing`;
+                    } else if (Number(data.invitationBalance) > 0) {
+                        $("invitationAvailability").textContent = "Inventory is refilling";
+                    } else {
+                        $("invitationAvailability").textContent = "Inventory empty · funding required";
+                    }
+
+                    document.title = "Dash Faucets";
+                    $("pageTitle").textContent = "Dash Faucets";
+                    $("pageSubtitle").textContent =
+                        "Testnet coins and real-DASH identity invitations";
                 }
             } catch (err) {
                 $("statusBar").textContent = "Could not load faucet status";
