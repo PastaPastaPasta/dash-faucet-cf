@@ -109,7 +109,7 @@ describe("invitation configuration", () => {
       }),
     );
     expect(cfg.invitations.enabled).toBe(true);
-    expect(cfg.invitations.inventoryTarget).toBe(3);
+    expect(cfg.invitations.inventoryTarget).toBe(10);
   });
 
   it("requires and isolates a separate key for cross-network invitations", () => {

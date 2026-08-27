@@ -78,7 +78,7 @@
         // use their own mainnet actor, key, chain providers and inventory.
         "INVITATIONS_ENABLED": "1",
         "INVITATION_NETWORK": "mainnet",
-        "INVITATION_INVENTORY_TARGET": "3",
+        "INVITATION_INVENTORY_TARGET": "10",
         "INVITATION_TTL_SECS": "3600",
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",
@@ -136,7 +136,7 @@
         // Keep disabled until the parallel mainnet invitation backend is
         // connected behind the testnet faucet's public frontend.
         "INVITATIONS_ENABLED": "0",
-        "INVITATION_INVENTORY_TARGET": "3",
+        "INVITATION_INVENTORY_TARGET": "10",
         "INVITATION_TTL_SECS": "3600",
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",

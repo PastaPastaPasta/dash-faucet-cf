@@ -303,7 +303,7 @@ export function resolveConfig(env: Env): FaucetConfig {
       inventoryTarget: int(
         "INVITATION_INVENTORY_TARGET",
         env.INVITATION_INVENTORY_TARGET,
-        3,
+        10,
       ),
       ttlMs: int("INVITATION_TTL_SECS", env.INVITATION_TTL_SECS, 60 * 60) * 1000,
       rateWindowMs:

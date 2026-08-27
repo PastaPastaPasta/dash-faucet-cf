@@ -291,7 +291,7 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `CAP_HARD_C` / `CAP_HARD_S` / `CAP_HARD_D` | Escalated shape served at `/cap/hard/`. Browser-only, so the SDK's 64M bound does not apply; capped at 1B instead |
 | `INVITATIONS_ENABLED` | `1` enables the identity-invitation API and UI |
 | `INVITATION_NETWORK` | Optional network for invitation asset locks; defaults to `NETWORK` |
-| `INVITATION_INVENTORY_TARGET` | Number of ready or preparing invitations to keep on hand (default 3) |
+| `INVITATION_INVENTORY_TARGET` | Number of ready or preparing invitations to keep on hand (default 10) |
 | `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
 | `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days); `0` disables it |
 | `INVITATION_PLATFORM_EXPLORER_URL` | Platform Explorer base URL for invitation claim checks |
