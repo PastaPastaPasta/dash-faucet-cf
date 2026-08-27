@@ -118,21 +118,16 @@ describe("invitation inventory", () => {
     expect(replay.body.invitation).toBe(first.body.invitation);
   });
 
-  it("enforces the seven-day limit independently for IP and device", async () => {
+  it("allows another issuance after expiry when the weekly limit is disabled", async () => {
     await prepareInvitation();
     const first = await postInvitation();
     expect(first.response.status).toBe(200);
-
-    const sameIp = await postInvitation();
-    expect(sameIp.response.status).toBe(429);
-    expect(sameIp.body.retryAfter).toBeGreaterThan(6 * 24 * 60 * 60);
-
-    // Once the replay window has elapsed, the old disclosure is no longer
-    // returned, but its signed device is still under the seven-day limit.
     await ageIssuedInvitation();
-    const sameDevice = await postInvitation("198.51.100.30", first.cookie);
-    expect(sameDevice.response.status).toBe(429);
-    expect(sameDevice.body.error).toMatch(/per IP and device/);
+    expect((await invitationTreasury().maintainInvitations()).action).toBe("updated");
+
+    const next = await postInvitation("203.0.113.10", first.cookie);
+    expect(next.response.status).toBe(200);
+    expect(next.body.replay).toBe(false);
   });
 
   it("recycles an unclaimed invitation after 60 minutes", async () => {

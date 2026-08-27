@@ -80,7 +80,8 @@
         "INVITATION_NETWORK": "mainnet",
         "INVITATION_INVENTORY_TARGET": "3",
         "INVITATION_TTL_SECS": "3600",
-        "INVITATION_RATE_WINDOW_SECS": "604800",
+        // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
+        "INVITATION_RATE_WINDOW_SECS": "0",
         "INVITATION_PLATFORM_EXPLORER_URL": "https://platform-explorer.pshenmic.dev",
         "DRY_RUN": "0"
       }
@@ -137,7 +138,8 @@
         "INVITATIONS_ENABLED": "0",
         "INVITATION_INVENTORY_TARGET": "3",
         "INVITATION_TTL_SECS": "3600",
-        "INVITATION_RATE_WINDOW_SECS": "604800",
+        // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
+        "INVITATION_RATE_WINDOW_SECS": "0",
         "PLATFORM_EXPLORER_URL": "https://platform-explorer.pshenmic.dev",
         "DRY_RUN": "0"
       }
