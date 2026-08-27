@@ -163,6 +163,10 @@ does not make them available until Dash Core reports that their containing
 block is ChainLocked. The wallet reconstructs a `ChainAssetLockProof` from the
 transaction; no InstantLock payload is required.
 
+The web result displays the invitation as a QR code generated entirely in the
+browser by the locally bundled `uqr` module. The bearer URI is not sent to an
+external QR service.
+
 This is a pure funding voucher: it does not select a username. The wallet asks
 the recipient to choose a currently available, non-contested name during the
 claim flow. In the legacy invitation format, the optional `du` field identifies

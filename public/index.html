@@ -568,6 +568,27 @@
         .expiry.expired {
             color: #ff6b6b;
         }
+        .invitation-qr {
+            align-items: center;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 18px auto;
+        }
+        .invitation-qr img {
+            background: #fff;
+            border-radius: 10px;
+            display: block;
+            height: auto;
+            max-width: 250px;
+            padding: 8px;
+            width: min(100%, 250px);
+        }
+        .invitation-qr figcaption {
+            color: #888;
+            font-size: 0.78rem;
+            text-align: center;
+        }
         @media (max-width: 720px) {
             body {
                 padding: 14px;
@@ -694,6 +715,10 @@
                 <p class="description">Open this in Dash Wallet, then choose your username.</p>
                 <p class="expiry" id="invitationExpiry"></p>
                 <span id="invitationLink" hidden></span>
+                <figure class="invitation-qr" id="invitationQrPanel" hidden>
+                    <img id="invitationQr" alt="Scan invitation with Dash Wallet">
+                    <figcaption>Scan with Dash Wallet</figcaption>
+                </figure>
                 <div class="action-buttons">
                     <a class="btn" id="openInvitationBtn" href="#">Open in Dash Wallet</a>
                     <button class="btn-secondary" id="copyInvitationBtn">Copy Invitation</button>
@@ -777,7 +802,9 @@
         </footer>
     </div>
 
-    <script>
+    <script type="module">
+        import { renderSVG } from "/vendor/uqr.mjs";
+
         "use strict";
 
         const NETWORK_COPY = {
@@ -1002,6 +1029,8 @@
             $("openInvitationBtn").setAttribute("aria-disabled", "true");
             $("openInvitationBtn").removeAttribute("href");
             $("copyInvitationBtn").disabled = true;
+            $("invitationQrPanel").hidden = true;
+            $("invitationQr").removeAttribute("src");
         }
 
         async function requestInvitation() {
@@ -1036,6 +1065,13 @@
                 $("openInvitationBtn").href = data.invitation;
                 $("openInvitationBtn").removeAttribute("aria-disabled");
                 $("copyInvitationBtn").disabled = false;
+                const invitationQrSvg = renderSVG(data.invitation, {
+                    border: 4,
+                    ecc: "M",
+                });
+                $("invitationQr").src =
+                    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(invitationQrSvg)}`;
+                $("invitationQrPanel").hidden = false;
                 card.classList.add("show-results", "success");
                 clearInterval(invitationExpiryTimer);
                 $("invitationExpiry").classList.remove("expired");
