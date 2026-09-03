@@ -82,10 +82,10 @@
         // refuse to redeem an invitation below 0.03, so smaller vouchers are
         // unspendable by anyone today.
         "INVITATION_AMOUNT_SATS": "3000000",
+        // Mint up to 20 at a time so a queue at an event never waits on a
+        // ChainLock. Each visitor still takes exactly one per request.
         "INVITATION_INVENTORY_TARGET": "20",
-        // Batch size one request may take. Raised for in-person onboarding at
-        // events; the whole batch shares one Turnstile solve.
-        "INVITATION_MAX_PER_REQUEST": "20",
+        "INVITATION_MAX_PER_REQUEST": "1",
         "INVITATION_TTL_SECS": "3600",
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",
@@ -145,7 +145,7 @@
         "INVITATIONS_ENABLED": "0",
         "INVITATION_AMOUNT_SATS": "3000000",
         "INVITATION_INVENTORY_TARGET": "10",
-        "INVITATION_MAX_PER_REQUEST": "20",
+        "INVITATION_MAX_PER_REQUEST": "1",
         "INVITATION_TTL_SECS": "3600",
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",
