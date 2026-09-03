@@ -117,14 +117,21 @@ export interface MaintenanceResult {
 export interface InvitationIssueRequest {
   ipHash: string;
   deviceHash: string;
+  /** Vouchers wanted; clamped to `invitations.maxPerRequest`. Default 1. */
+  count?: number;
+}
+
+export interface IssuedInvitation {
+  uri: string;
+  txid: string;
+  expiresAt: number;
 }
 
 export type InvitationIssueResult =
   | {
       ok: true;
-      uri: string;
-      txid: string;
-      expiresAt: number;
+      /** At least one entry; fewer than requested when inventory ran short. */
+      invitations: IssuedInvitation[];
       replay: boolean;
     }
   | { ok: false; code: "rate_limited"; retryAfter: number }
@@ -149,6 +156,7 @@ interface InvitationRow {
   cipher_hex: string;
   iv_hex: string;
   prospective_identity_id: string;
+  amount_sats: number | null;
   state: string;
   chain_locked_height: number | null;
   device_hash: string | null;
@@ -162,6 +170,12 @@ function utcDay(now: number): string {
 
 function outpointKey(txid: string, vout: number): string {
   return `${txid}:${vout}`;
+}
+
+/** The credit output of an invitation asset lock: everything not fee or change. */
+function voucherAmount(built: BuiltTx): number {
+  const change = built.ownOutputs.reduce((sum, out) => sum + out.satoshis, 0);
+  return built.totalIn - built.fee - change;
 }
 
 /**
@@ -249,6 +263,39 @@ export class Treasury extends DurableObject<Env> {
       CREATE INDEX IF NOT EXISTS invitation_hits_lookup
         ON invitation_hits (kind, value_hash, created_at);
     `);
+
+    const columns = new Set(
+      this.ctx.storage.sql
+        .exec<{ name: string }>(`PRAGMA table_info(invitation_inventory)`)
+        .toArray()
+        .map((row) => row.name),
+    );
+    if (!columns.has("amount_sats")) {
+      this.ctx.storage.sql.exec(
+        `ALTER TABLE invitation_inventory ADD COLUMN amount_sats INTEGER`,
+      );
+    }
+    this.backfillInvitationAmounts();
+  }
+
+  /**
+   * Vouchers minted before the amount was configurable carry no `amount_sats`.
+   * Recover it from the signed transaction, so issuance can tell a 0.003 DASH
+   * voucher — which no released wallet will redeem — from a 0.03 one.
+   */
+  private backfillInvitationAmounts(): void {
+    const sql = this.ctx.storage.sql;
+    for (const row of sql
+      .exec<{ id: string; built_json: string }>(
+        `SELECT id, built_json FROM invitation_inventory WHERE amount_sats IS NULL`,
+      )
+      .toArray()) {
+      sql.exec(
+        `UPDATE invitation_inventory SET amount_sats = ? WHERE id = ?`,
+        voucherAmount(JSON.parse(row.built_json) as BuiltTx),
+        row.id,
+      );
+    }
   }
 
   private key(): Promise<FaucetKey> {
@@ -655,13 +702,16 @@ export class Treasury extends DurableObject<Env> {
     };
   }
 
+  /** Inventory at the configured voucher amount; other denominations are inert. */
   private invitationCounts(): Snapshot["invitations"] {
     const rows = this.ctx.storage.sql
       .exec<{ state: string; n: number }>(
         `SELECT state, COUNT(*) AS n
            FROM invitation_inventory
           WHERE state IN ('broadcast_unknown', 'awaiting_chainlock', 'available', 'issued')
+            AND amount_sats = ?
           GROUP BY state`,
+        this.config.invitations.amountSats,
       )
       .toArray();
     const counts = new Map(rows.map((row) => [row.state, row.n]));
@@ -707,85 +757,98 @@ export class Treasury extends DurableObject<Env> {
   ): Promise<InvitationIssueResult> {
     const cfg = this.config.invitations;
     if (!cfg.enabled) return { ok: false, code: "unavailable" };
+    const count = Math.max(1, Math.min(input.count ?? 1, cfg.maxPerRequest));
 
     const now = Date.now();
     const sql = this.ctx.storage.sql;
     this.prune(now);
 
-    // A lost HTTP response must not burn a second voucher. Only the same signed
-    // device cookie can replay a still-live disclosure.
-    const prior = sql
-      .exec<InvitationRow>(
-        `SELECT * FROM invitation_inventory
-          WHERE state = 'issued' AND device_hash = ? AND issued_at > ?
-          ORDER BY issued_at DESC LIMIT 1`,
-        input.deviceHash,
-        now - cfg.ttlMs,
-      )
-      .toArray()[0];
-    if (prior) {
-      try {
-        const wif = await decryptWif(
-          { cipherHex: prior.cipher_hex, ivHex: prior.iv_hex },
-          cfg.secret,
-        );
-        return {
-          ok: true,
-          uri: invitationUri(prior.txid, wif),
-          txid: prior.txid,
-          expiresAt: prior.issued_at! + cfg.ttlMs,
-          replay: true,
-        };
-      } catch (err) {
-        console.error(`treasury: invitation replay decrypt failed: ${describeError(err)}`);
-        return { ok: false, code: "error", detail: "invitation could not be opened" };
-      }
-    }
-
-    let retryAfter = 0;
-    for (const [kind, valueHash] of [
-      ["ip", input.ipHash],
-      ["device", input.deviceHash],
-    ] as const) {
-      const hit = sql
-        .exec<{ oldest: number | null; n: number }>(
-          `SELECT MIN(created_at) AS oldest, COUNT(*) AS n
-             FROM invitation_hits
-            WHERE kind = ? AND value_hash = ? AND created_at > ?`,
-          kind,
-          valueHash,
-          now - cfg.rateWindowMs,
+    // Replay exists to protect the issuance window: without it, a lost HTTP
+    // response would lock a device out until the window elapsed. With the
+    // window disabled there is nothing to protect, and a repeat request must
+    // hand out fresh vouchers so one operator can issue batch after batch.
+    if (cfg.rateWindowMs > 0) {
+      const prior = sql
+        .exec<InvitationRow>(
+          `SELECT * FROM invitation_inventory
+            WHERE state = 'issued' AND device_hash = ? AND issued_at > ?
+            ORDER BY issued_at DESC`,
+          input.deviceHash,
+          now - cfg.ttlMs,
         )
-        .toArray()[0];
-      if (hit && hit.n > 0) {
-        retryAfter = Math.max(
-          retryAfter,
-          Math.max(
-            1,
-            Math.ceil(((hit.oldest ?? now) + cfg.rateWindowMs - now) / 1000),
-          ),
-        );
+        .toArray();
+      if (prior.length > 0) {
+        try {
+          const invitations: IssuedInvitation[] = [];
+          for (const row of prior) {
+            const wif = await decryptWif(
+              { cipherHex: row.cipher_hex, ivHex: row.iv_hex },
+              cfg.secret,
+            );
+            invitations.push({
+              uri: invitationUri(row.txid, wif),
+              txid: row.txid,
+              expiresAt: row.issued_at! + cfg.ttlMs,
+            });
+          }
+          return { ok: true, invitations, replay: true };
+        } catch (err) {
+          console.error(`treasury: invitation replay decrypt failed: ${describeError(err)}`);
+          return { ok: false, code: "error", detail: "invitation could not be opened" };
+        }
       }
+
+      let retryAfter = 0;
+      for (const [kind, valueHash] of [
+        ["ip", input.ipHash],
+        ["device", input.deviceHash],
+      ] as const) {
+        const hit = sql
+          .exec<{ oldest: number | null; n: number }>(
+            `SELECT MIN(created_at) AS oldest, COUNT(*) AS n
+               FROM invitation_hits
+              WHERE kind = ? AND value_hash = ? AND created_at > ?`,
+            kind,
+            valueHash,
+            now - cfg.rateWindowMs,
+          )
+          .toArray()[0];
+        if (hit && hit.n > 0) {
+          retryAfter = Math.max(
+            retryAfter,
+            Math.max(
+              1,
+              Math.ceil(((hit.oldest ?? now) + cfg.rateWindowMs - now) / 1000),
+            ),
+          );
+        }
+      }
+      if (retryAfter > 0) return { ok: false, code: "rate_limited", retryAfter };
     }
-    if (retryAfter > 0) return { ok: false, code: "rate_limited", retryAfter };
 
     // Retire any voucher an old holder claimed after it was recycled. The
     // subsequent UPDATE is still serialized with this check; only an external
     // holder can race us, which is the intentionally accepted bearer race.
-    for (;;) {
+    const invitations: IssuedInvitation[] = [];
+    while (invitations.length < count) {
       const row = sql
         .exec<InvitationRow>(
           `SELECT * FROM invitation_inventory
-            WHERE state = 'available' ORDER BY created_at LIMIT 1`,
+            WHERE state = 'available' AND amount_sats = ?
+            ORDER BY created_at LIMIT 1`,
+          cfg.amountSats,
         )
         .toArray()[0];
-      if (!row) return { ok: false, code: "unavailable" };
+      if (!row) break;
 
       const claimed = await platformIdentityExists(
         cfg.platformExplorerUrl,
         row.prospective_identity_id,
       );
-      if (claimed === null) return { ok: false, code: "platform_unavailable" };
+      if (claimed === null) {
+        if (invitations.length > 0) break;
+        return { ok: false, code: "platform_unavailable" };
+      }
       if (claimed) {
         sql.exec(
           `UPDATE invitation_inventory
@@ -810,6 +873,7 @@ export class Treasury extends DurableObject<Env> {
           now,
           row.id,
         );
+        if (invitations.length > 0) break;
         return { ok: false, code: "error", detail: "invitation could not be opened" };
       }
 
@@ -822,23 +886,25 @@ export class Treasury extends DurableObject<Env> {
         now,
         row.id,
       );
-      sql.exec(
-        `INSERT INTO invitation_hits (kind, value_hash, created_at) VALUES
-          ('ip', ?, ?), ('device', ?, ?)`,
-        input.ipHash,
-        now,
-        input.deviceHash,
-        now,
-      );
-
-      return {
-        ok: true,
+      invitations.push({
         uri: invitationUri(row.txid, wif),
         txid: row.txid,
         expiresAt: now + cfg.ttlMs,
-        replay: false,
-      };
+      });
     }
+
+    if (invitations.length === 0) return { ok: false, code: "unavailable" };
+
+    // A batch is one issuance as far as the window is concerned.
+    sql.exec(
+      `INSERT INTO invitation_hits (kind, value_hash, created_at) VALUES
+        ('ip', ?, ?), ('device', ?, ?)`,
+      input.ipHash,
+      now,
+      input.deviceHash,
+      now,
+    );
+    return { ok: true, invitations, replay: false };
   }
 
   async maintainInvitations(): Promise<InvitationMaintenanceResult> {
@@ -855,6 +921,7 @@ export class Treasury extends DurableObject<Env> {
     const now = Date.now();
     const sql = this.ctx.storage.sql;
     this.prune(now);
+    this.backfillInvitationAmounts();
     let recycled = 0;
     let claimed = 0;
     let advanced = 0;
@@ -1005,14 +1072,15 @@ export class Treasury extends DurableObject<Env> {
     this.ctx.storage.sql.exec(
       `INSERT INTO invitation_inventory
         (id, txid, built_json, cipher_hex, iv_hex,
-         prospective_identity_id, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, 'broadcast_unknown', ?, ?)`,
+         prospective_identity_id, amount_sats, state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'broadcast_unknown', ?, ?)`,
       id,
       built.txid,
       JSON.stringify(built),
       encrypted.cipherHex,
       encrypted.ivHex,
       prospectiveIdentityId(built.txid, 0),
+      cfg.amountSats,
       now,
       now,
     );

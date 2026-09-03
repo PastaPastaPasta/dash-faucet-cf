@@ -60,7 +60,9 @@ export default defineConfig({
                 INVITATION_NETWORK: "mainnet",
                 INVITATION_FAUCET_WIF: "XBHddvWWiMu3nZhhpTXBQWJMmdz5JNKJD85b9fgKAckCoSri4D8g",
                 INVITATION_SECRET: "test-invitation-secret",
-                INVITATION_INVENTORY_TARGET: "1",
+                // Small, but enough that one batch request can drain it.
+                INVITATION_INVENTORY_TARGET: "3",
+                INVITATION_MAX_PER_REQUEST: "3",
                 INVITATION_PLATFORM_EXPLORER_URL: "https://platform.test",
                 DRY_RUN: "0",
               },

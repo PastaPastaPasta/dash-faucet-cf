@@ -6,7 +6,7 @@ container, and no tunnel to keep alive. The only external dependencies are
 public block explorers, and it fails over between several of them.
 
 It can also run an optional identity-invitation faucet. That path pre-creates
-ChainLocked 0.003 DASH asset locks and gives a wallet everything it needs to
+ChainLocked 0.03 DASH asset locks and gives a wallet everything it needs to
 claim one Platform identity and non-contested DPNS name.
 
 This replaces the FastAPI + `dashd` + CAP + `cloudflared` stack in
@@ -144,19 +144,32 @@ invitations side by side without sharing coins or Durable Object state.
 ```bash
 curl -X POST https://faucet.example/api/invitation-faucet \
   -H 'content-type: application/json' \
-  -d '{"turnstileToken":"..."}'
+  -d '{"turnstileToken":"...","count":2}'
 ```
 
 ```json
 {
+  "invitations": [
+    { "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null", "txid": "...", "expiresAt": 1787000000000 },
+    { "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null", "txid": "...", "expiresAt": 1787000000000 }
+  ],
+  "count": 2,
+  "requested": 2,
   "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null",
   "txid": "...",
-  "amount": 0.003,
+  "amount": 0.03,
   "expiresAt": 1787000000000,
   "replay": false,
   "network": "mainnet"
 }
 ```
+
+`count` is optional (default 1) and is rejected with `400` above
+`INVITATION_MAX_PER_REQUEST`. One Turnstile solve covers the whole batch. When
+fewer vouchers are ChainLocked than requested, the response carries what was
+available and `count` < `requested`; a batch is `503` only when nothing is
+ready. The top-level `invitation`/`txid`/`expiresAt` fields describe the first
+entry and exist for clients written against the single-voucher response.
 
 The Treasury builds version-3/type-8 asset-lock transactions in advance and
 does not make them available until Dash Core reports that their containing
@@ -173,10 +186,13 @@ claim flow. In the legacy invitation format, the optional `du` field identifies
 the inviter for contact bootstrap; using it for the recipient's desired name
 would be incorrect.
 
-Each normalized IP and signed `HttpOnly` device cookie gets one issuance per
-seven days. The IP and device values are stored only as keyed HMACs. Repeating
-a request from the same device during its reservation returns the same
-invitation instead of consuming another one.
+With `INVITATION_RATE_WINDOW_SECS` set, each normalized IP and signed
+`HttpOnly` device cookie gets one issuance (single or batch) per window. The IP
+and device values are stored only as keyed HMACs. Repeating a request from the
+same device during its reservation then returns the same invitations instead of
+consuming more, so a lost response cannot lock the device out. With the window
+at `0` there is nothing to protect and every request takes fresh vouchers,
+which is what an operator onboarding a queue of people at an event needs.
 
 An invitation is a bearer private key. The WIF is AES-GCM encrypted at rest and
 is returned only in the no-store API response. After 60 minutes, maintenance
@@ -187,12 +203,13 @@ recipient may both have the key, and whichever wallet claims the asset lock
 first wins. The browser clearly marks the reservation expired at 60 minutes;
 the cron may take up to its next run to recycle it.
 
-Compatibility note: current Android releases structurally require a `du` field
-and still gate non-contested invitation claims at 0.03 DASH in the username UI,
-even though the protocol-side invitation minimum is 0.003 DASH. Android must
-accept inviter-less links and use the 0.003-DASH invitation floor before these
-faucet vouchers can be claimed there. The faucet deliberately does not increase
-the real-money voucher tenfold to accommodate that stale UI check.
+Compatibility note: the protocol-side invitation minimum is 0.003 DASH, but
+released Dash Wallets gate non-contested invitation claims at 0.03 DASH in the
+username UI, so the voucher defaults to 0.03 (`INVITATION_AMOUNT_SATS`).
+Inventory is tracked per amount: vouchers minted at an older amount are neither
+counted nor issued, and maintenance mints replacements at the current one.
+Current Android releases also structurally require a `du` field and must accept
+inviter-less links before these vouchers can be claimed there.
 
 ### `POST /cap/{v1,hard}/challenge` · `POST /cap/{v1,hard}/redeem`
 
@@ -291,7 +308,9 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `CAP_HARD_C` / `CAP_HARD_S` / `CAP_HARD_D` | Escalated shape served at `/cap/hard/`. Browser-only, so the SDK's 64M bound does not apply; capped at 1B instead |
 | `INVITATIONS_ENABLED` | `1` enables the identity-invitation API and UI |
 | `INVITATION_NETWORK` | Optional network for invitation asset locks; defaults to `NETWORK` |
+| `INVITATION_AMOUNT_SATS` | Voucher value in duffs (default 3000000 / 0.03 DASH, the floor released wallets redeem) |
 | `INVITATION_INVENTORY_TARGET` | Number of ready or preparing invitations to keep on hand (default 10) |
+| `INVITATION_MAX_PER_REQUEST` | Vouchers one request may take at once (default 1) |
 | `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
 | `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days); `0` disables it |
 | `INVITATION_PLATFORM_EXPLORER_URL` | Platform Explorer base URL for invitation claim checks |

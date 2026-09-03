@@ -78,7 +78,14 @@
         // use their own mainnet actor, key, chain providers and inventory.
         "INVITATIONS_ENABLED": "1",
         "INVITATION_NETWORK": "mainnet",
-        "INVITATION_INVENTORY_TARGET": "10",
+        // 0.03 DASH. The protocol floor is 0.003, but released Dash Wallets
+        // refuse to redeem an invitation below 0.03, so smaller vouchers are
+        // unspendable by anyone today.
+        "INVITATION_AMOUNT_SATS": "3000000",
+        "INVITATION_INVENTORY_TARGET": "20",
+        // Batch size one request may take. Raised for in-person onboarding at
+        // events; the whole batch shares one Turnstile solve.
+        "INVITATION_MAX_PER_REQUEST": "20",
         "INVITATION_TTL_SECS": "3600",
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",
@@ -136,7 +143,9 @@
         // Keep disabled until the parallel mainnet invitation backend is
         // connected behind the testnet faucet's public frontend.
         "INVITATIONS_ENABLED": "0",
+        "INVITATION_AMOUNT_SATS": "3000000",
         "INVITATION_INVENTORY_TARGET": "10",
+        "INVITATION_MAX_PER_REQUEST": "20",
         "INVITATION_TTL_SECS": "3600",
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",

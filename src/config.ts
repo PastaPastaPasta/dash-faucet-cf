@@ -50,7 +50,9 @@ export interface Env {
   DRY_RUN?: string;
   INVITATIONS_ENABLED?: string;
   INVITATION_NETWORK?: string;
+  INVITATION_AMOUNT_SATS?: string;
   INVITATION_INVENTORY_TARGET?: string;
+  INVITATION_MAX_PER_REQUEST?: string;
   INVITATION_TTL_SECS?: string;
   INVITATION_RATE_WINDOW_SECS?: string;
   PLATFORM_EXPLORER_URL?: string;
@@ -97,9 +99,15 @@ export interface FaucetConfig {
     enabled: boolean;
     /** May differ from the ordinary faucet network. */
     network: NetworkName;
-    /** Fixed onboarding voucher value: 0.003 DASH. */
+    /**
+     * Voucher value. Defaults to 0.03 DASH: the protocol floor is 0.003, but
+     * released Dash Wallets gate non-contested invitation claims at 0.03, so
+     * a smaller voucher cannot be redeemed by anyone today.
+     */
     amountSats: number;
     inventoryTarget: number;
+    /** Vouchers one request may take at once. */
+    maxPerRequest: number;
     ttlMs: number;
     rateWindowMs: number;
     platformExplorerUrl: string;
@@ -271,6 +279,23 @@ export function resolveConfig(env: Env): FaucetConfig {
     );
   }
 
+  const invitationAmountSats = int(
+    "INVITATION_AMOUNT_SATS",
+    env.INVITATION_AMOUNT_SATS,
+    3_000_000,
+  );
+  if (invitationAmountSats <= 0) {
+    throw new Error("INVITATION_AMOUNT_SATS must be positive");
+  }
+  const invitationMaxPerRequest = int(
+    "INVITATION_MAX_PER_REQUEST",
+    env.INVITATION_MAX_PER_REQUEST,
+    1,
+  );
+  if (invitationMaxPerRequest < 1) {
+    throw new Error("INVITATION_MAX_PER_REQUEST must be at least 1");
+  }
+
   return {
     network,
     providers: PROVIDERS[network],
@@ -299,12 +324,13 @@ export function resolveConfig(env: Env): FaucetConfig {
     invitations: {
       enabled: invitationsEnabled,
       network: invitationNetwork,
-      amountSats: 300_000,
+      amountSats: invitationAmountSats,
       inventoryTarget: int(
         "INVITATION_INVENTORY_TARGET",
         env.INVITATION_INVENTORY_TARGET,
         10,
       ),
+      maxPerRequest: invitationMaxPerRequest,
       ttlMs: int("INVITATION_TTL_SECS", env.INVITATION_TTL_SECS, 60 * 60) * 1000,
       rateWindowMs:
         int(

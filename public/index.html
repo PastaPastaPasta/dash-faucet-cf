@@ -589,6 +589,61 @@
             font-size: 0.78rem;
             text-align: center;
         }
+        .invitation-count {
+            align-items: center;
+            color: #aaa;
+            display: inline-flex;
+            font-size: 0.9rem;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .invitation-count select {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.95rem;
+            padding: 6px 10px;
+        }
+        .invitation-list {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            margin: 18px 0 0;
+        }
+        .invitation-item {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 14px 12px 12px;
+            text-align: center;
+        }
+        .invitation-item .invitation-qr {
+            margin: 6px auto;
+        }
+        .invitation-item .invitation-qr img {
+            max-width: 190px;
+        }
+        .invitation-item h3 {
+            color: #ccc;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin: 0 0 4px;
+        }
+        .invitation-item .action-buttons {
+            justify-content: center;
+            margin-top: 8px;
+        }
+        .invitation-item .action-buttons .btn,
+        .invitation-item .action-buttons .btn-secondary {
+            flex: 1 1 auto;
+            font-size: 0.9rem;
+            justify-content: center;
+            padding: 9px 14px;
+        }
+        .invitation-list.expired img {
+            filter: grayscale(1) opacity(0.25);
+        }
         @media (max-width: 720px) {
             body {
                 padding: 14px;
@@ -697,7 +752,7 @@
                 <div class="network-kicker mainnet" id="invitationNetworkKicker"><span class="network-dot"></span><span id="invitationNetworkLabel">Mainnet · Real DASH</span></div>
                 <h2>Create a Dash Identity</h2>
                 <p class="description">
-                    Get an invitation with <span id="invitationAmountDisplay">0.003</span>
+                    Get an invitation with <span id="invitationAmountDisplay">0.03</span>
                     DASH for one identity and non-contested name. You will choose
                     the name in Dash Wallet.
                 </p>
@@ -705,23 +760,22 @@
                     <span class="spinner"></span>
                     <span class="btn-text">Get Invitation</span>
                 </button>
+                <label class="invitation-count" id="invitationCountRow" hidden>
+                    How many?
+                    <select id="invitationCount" aria-label="Number of invitations"></select>
+                </label>
                 <p class="availability-line" id="invitationAvailability">Checking availability…</p>
                 <div class="turnstile-holder" id="invitationTurnstileHolder"></div>
                 <div class="error" id="invitationErrorBox"></div>
             </div>
 
             <div class="results-view">
-                <h2 style="color: #28a745;">Invitation Ready</h2>
-                <p class="description">Open this in Dash Wallet, then choose your username.</p>
+                <h2 style="color: #28a745;" id="invitationResultTitle">Invitation Ready</h2>
+                <p class="description" id="invitationResultHint">Open this in Dash Wallet, then choose your username.</p>
                 <p class="expiry" id="invitationExpiry"></p>
-                <span id="invitationLink" hidden></span>
-                <figure class="invitation-qr" id="invitationQrPanel" hidden>
-                    <img id="invitationQr" alt="Scan invitation with Dash Wallet">
-                    <figcaption>Scan with Dash Wallet</figcaption>
-                </figure>
+                <div class="invitation-list" id="invitationList"></div>
                 <div class="action-buttons">
-                    <a class="btn" id="openInvitationBtn" href="#">Open in Dash Wallet</a>
-                    <button class="btn-secondary" id="copyInvitationBtn">Copy Invitation</button>
+                    <button class="btn-secondary" id="moreInvitationsBtn">Get More</button>
                 </div>
             </div>
         </div>
@@ -1024,13 +1078,97 @@
 
             clearInterval(invitationExpiryTimer);
             invitationExpiryTimer = null;
-            expiry.textContent = "Reservation expired. This invitation may be given to someone else.";
+            expiry.textContent = "Reservation expired. These invitations may be given to someone else.";
             expiry.classList.add("expired");
-            $("openInvitationBtn").setAttribute("aria-disabled", "true");
-            $("openInvitationBtn").removeAttribute("href");
-            $("copyInvitationBtn").disabled = true;
-            $("invitationQrPanel").hidden = true;
-            $("invitationQr").removeAttribute("src");
+            const list = $("invitationList");
+            list.classList.add("expired");
+            for (const link of list.querySelectorAll("a.btn")) {
+                link.setAttribute("aria-disabled", "true");
+                link.removeAttribute("href");
+            }
+            for (const button of list.querySelectorAll("button")) {
+                button.disabled = true;
+            }
+        }
+
+        /** One QR card per voucher; a single voucher gets the whole width. */
+        function renderInvitationList(entries) {
+            const list = $("invitationList");
+            list.replaceChildren();
+            list.classList.remove("expired");
+            list.style.gridTemplateColumns = entries.length === 1 ? "1fr" : "";
+            entries.forEach((entry, index) => {
+                const item = document.createElement("article");
+                item.className = "invitation-item";
+
+                if (entries.length > 1) {
+                    const title = document.createElement("h3");
+                    title.textContent = `Invitation ${index + 1} of ${entries.length}`;
+                    item.appendChild(title);
+                }
+
+                const link = document.createElement("span");
+                link.hidden = true;
+                link.textContent = entry.invitation;
+                item.appendChild(link);
+
+                const figure = document.createElement("figure");
+                figure.className = "invitation-qr";
+                const img = document.createElement("img");
+                img.alt = "Scan invitation with Dash Wallet";
+                const svg = renderSVG(entry.invitation, { border: 4, ecc: "M" });
+                img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+                const caption = document.createElement("figcaption");
+                caption.textContent = "Scan with Dash Wallet";
+                figure.append(img, caption);
+                item.appendChild(figure);
+
+                const actions = document.createElement("div");
+                actions.className = "action-buttons";
+                const open = document.createElement("a");
+                open.className = "btn";
+                open.href = entry.invitation;
+                open.textContent = "Open in Dash Wallet";
+                const copy = document.createElement("button");
+                copy.className = "btn-secondary";
+                copy.textContent = "Copy";
+                copy.addEventListener("click", () => copyFrom(link, copy));
+                actions.append(open, copy);
+                item.appendChild(actions);
+
+                list.appendChild(item);
+            });
+        }
+
+        function resetInvitationCard() {
+            const card = $("invitationCard");
+            card.classList.remove("show-results", "success");
+            $("invitationErrorBox").classList.remove("visible");
+            clearInterval(invitationExpiryTimer);
+            invitationExpiryTimer = null;
+            $("invitationList").replaceChildren();
+        }
+
+        /** Offer 1..max vouchers per request; hidden when the server allows only one. */
+        function configureInvitationCount(max) {
+            const row = $("invitationCountRow");
+            const select = $("invitationCount");
+            const limit = Math.max(1, Number(max) || 1);
+            if (limit === 1) {
+                row.hidden = true;
+                select.replaceChildren();
+                return;
+            }
+            const previous = Number(select.value) || 1;
+            select.replaceChildren();
+            for (let n = 1; n <= limit; n += 1) {
+                const option = document.createElement("option");
+                option.value = String(n);
+                option.textContent = String(n);
+                select.appendChild(option);
+            }
+            select.value = String(Math.min(previous, limit));
+            row.hidden = false;
         }
 
         async function requestInvitation() {
@@ -1038,6 +1176,10 @@
             const btn = $("invitationBtn");
             const btnText = btn.querySelector(".btn-text");
             const errorBox = $("invitationErrorBox");
+
+            const count = $("invitationCountRow").hidden
+                ? 1
+                : Number($("invitationCount").value) || 1;
 
             btn.classList.add("loading");
             btn.disabled = true;
@@ -1049,7 +1191,7 @@
                 const response = await fetch("/api/invitation-faucet", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ turnstileToken }),
+                    body: JSON.stringify({ turnstileToken, count }),
                 });
                 const data = await response.json().catch(() => ({}));
                 if (!response.ok) {
@@ -1061,17 +1203,19 @@
                     throw new Error(message);
                 }
 
-                $("invitationLink").textContent = data.invitation;
-                $("openInvitationBtn").href = data.invitation;
-                $("openInvitationBtn").removeAttribute("aria-disabled");
-                $("copyInvitationBtn").disabled = false;
-                const invitationQrSvg = renderSVG(data.invitation, {
-                    border: 4,
-                    ecc: "M",
-                });
-                $("invitationQr").src =
-                    `data:image/svg+xml;charset=utf-8,${encodeURIComponent(invitationQrSvg)}`;
-                $("invitationQrPanel").hidden = false;
+                // Servers predating batch issuance return only the single fields.
+                const entries = Array.isArray(data.invitations) && data.invitations.length
+                    ? data.invitations
+                    : [{ invitation: data.invitation, txid: data.txid, expiresAt: data.expiresAt }];
+                renderInvitationList(entries);
+                const n = entries.length;
+                $("invitationResultTitle").textContent =
+                    n === 1 ? "Invitation Ready" : `${n} Invitations Ready`;
+                $("invitationResultHint").textContent = n === 1
+                    ? "Open this in Dash Wallet, then choose your username."
+                    : `Each QR code is a separate invitation${
+                        data.requested > n ? ` (only ${n} of ${data.requested} were available)` : ""
+                      }. Give one to each person; each is claimed once.`;
                 card.classList.add("show-results", "success");
                 clearInterval(invitationExpiryTimer);
                 $("invitationExpiry").classList.remove("expired");
@@ -1252,10 +1396,11 @@
             return presentation;
         }
 
-        async function copyFrom(targetId, btn) {
+        async function copyFrom(target, btn) {
             const original = btn.textContent;
+            const source = typeof target === "string" ? $(target) : target;
             try {
-                await navigator.clipboard.writeText($(targetId).textContent);
+                await navigator.clipboard.writeText(source.textContent);
                 btn.textContent = "Copied!";
                 btn.classList.add("copied");
                 setTimeout(() => {
@@ -1350,6 +1495,7 @@
                     $("invitationCard").hidden = false;
                     $("featureGrid").classList.add("has-invitations");
                     $("invitationAmountDisplay").textContent = data.invitationAmount;
+                    configureInvitationCount(data.invitationMaxPerRequest);
                     $("identityNote").hidden = true;
 
                     const invitationNetwork = data.invitationNetwork || data.network;
@@ -1401,9 +1547,7 @@
             if (e.key === "Enter") requestCoreFaucet();
         });
         $("invitationBtn").addEventListener("click", requestInvitation);
-        $("copyInvitationBtn").addEventListener("click", () =>
-            copyFrom("invitationLink", $("copyInvitationBtn"))
-        );
+        $("moreInvitationsBtn").addEventListener("click", resetInvitationCard);
         for (const btn of document.querySelectorAll("[data-copy]")) {
             btn.addEventListener("click", () => copyFrom(btn.dataset.copy, btn));
         }

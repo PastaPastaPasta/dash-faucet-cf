@@ -87,13 +87,29 @@ describe("proof tiers", () => {
 });
 
 describe("invitation configuration", () => {
-  it("is disabled by default and fixes the voucher at 0.003 DASH", () => {
+  it("is disabled by default and defaults the voucher to 0.03 DASH, one per request", () => {
     const cfg = resolveConfig(env());
     expect(cfg.invitations.enabled).toBe(false);
     expect(cfg.invitations.network).toBe("testnet");
-    expect(cfg.invitations.amountSats).toBe(300_000);
+    // Not the 0.003 protocol floor: released wallets refuse anything below 0.03.
+    expect(cfg.invitations.amountSats).toBe(3_000_000);
+    expect(cfg.invitations.maxPerRequest).toBe(1);
     expect(cfg.invitations.ttlMs).toBe(60 * 60 * 1000);
     expect(cfg.invitations.rateWindowMs).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("lets a deployment retune the voucher amount and batch size", () => {
+    const cfg = resolveConfig(
+      env({ INVITATION_AMOUNT_SATS: "300000", INVITATION_MAX_PER_REQUEST: "20" }),
+    );
+    expect(cfg.invitations.amountSats).toBe(300_000);
+    expect(cfg.invitations.maxPerRequest).toBe(20);
+    expect(() => resolveConfig(env({ INVITATION_AMOUNT_SATS: "0" }))).toThrow(
+      /INVITATION_AMOUNT_SATS/,
+    );
+    expect(() => resolveConfig(env({ INVITATION_MAX_PER_REQUEST: "0" }))).toThrow(
+      /INVITATION_MAX_PER_REQUEST/,
+    );
   });
 
   it("requires the encryption secret and Turnstile when enabled", () => {

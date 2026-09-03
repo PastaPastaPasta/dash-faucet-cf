@@ -128,6 +128,8 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       invitationNetwork: cfg.invitations.network,
       invitationAmount: toDash(cfg.invitations.amountSats),
       invitationExpiresIn: Math.floor(cfg.invitations.ttlMs / 1000),
+      invitationMaxPerRequest: cfg.invitations.maxPerRequest,
+      invitationRateWindow: Math.floor(cfg.invitations.rateWindowMs / 1000),
       invitationInventory: invitationSnap?.invitations ?? {
         available: 0,
         preparing: 0,
@@ -351,7 +353,7 @@ function invitationFailure(result: InvitationFailure): Response {
     case "rate_limited":
       return errorJson(
         429,
-        "One invitation is allowed per IP and device every seven days",
+        "This IP or device already received an invitation in the current window",
         { retryAfter: result.retryAfter },
         { "Retry-After": String(result.retryAfter) },
       );
@@ -373,11 +375,25 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
     return errorJson(503, "Invitation captcha is not configured");
   }
 
-  let body: { turnstileToken?: unknown };
+  let body: { turnstileToken?: unknown; count?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return errorJson(400, "Request body must be JSON");
+  }
+
+  const max = cfg.invitations.maxPerRequest;
+  let count = 1;
+  if (body.count !== undefined) {
+    if (
+      typeof body.count !== "number" ||
+      !Number.isInteger(body.count) ||
+      body.count < 1 ||
+      body.count > max
+    ) {
+      return errorJson(400, `count must be an integer from 1 to ${max}`, { max });
+    }
+    count = body.count;
   }
 
   const ip = clientIp(request);
@@ -405,15 +421,26 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   const result = await invitationTreasury(env).issueInvitation({
     ipHash: hashInvitationSignal(cfg.invitations.secret, "ip", ip),
     deviceHash: hashInvitationSignal(cfg.invitations.secret, "device", device.id),
+    count,
   });
   if (!result.ok) return invitationFailure(result);
 
+  const first = result.invitations[0];
   return json(
     {
-      invitation: result.uri,
-      txid: result.txid,
+      invitations: result.invitations.map((entry) => ({
+        invitation: entry.uri,
+        txid: entry.txid,
+        expiresAt: entry.expiresAt,
+      })),
+      count: result.invitations.length,
+      requested: count,
+      // Single-voucher fields, kept for clients written against the original
+      // one-invitation response: they describe the first entry above.
+      invitation: first.uri,
+      txid: first.txid,
       amount: toDash(cfg.invitations.amountSats),
-      expiresAt: result.expiresAt,
+      expiresAt: first.expiresAt,
       replay: result.replay,
       network: cfg.invitations.network,
     },
