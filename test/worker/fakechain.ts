@@ -38,6 +38,8 @@ export class FakeChain {
   siteverifyHostname = "faucet.test";
   siteverifyAction = "invitation_faucet";
   readonly platformIdentities = new Set<string>();
+  /** When true, Platform Explorer answers every identity lookup with a 503. */
+  platformDown = false;
 
   install(): void {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>
@@ -173,6 +175,7 @@ export class FakeChain {
 
     // --- Platform Explorer ---------------------------------------------------
     if (url.startsWith("https://platform.test/identity/")) {
+      if (this.platformDown) return new Response("unavailable", { status: 503 });
       const id = decodeURIComponent(url.split("/identity/")[1]);
       return this.platformIdentities.has(id)
         ? this.json({ identifier: id })

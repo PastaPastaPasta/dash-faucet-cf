@@ -752,6 +752,17 @@ export class Treasury extends DurableObject<Env> {
     return this.serialize(() => this.issueInvitationLocked(input));
   }
 
+  private async openVoucher(
+    row: InvitationRow,
+    expiresAt: number,
+  ): Promise<IssuedInvitation> {
+    const wif = await decryptWif(
+      { cipherHex: row.cipher_hex, ivHex: row.iv_hex },
+      this.config.invitations.secret,
+    );
+    return { uri: invitationUri(row.txid, wif), txid: row.txid, expiresAt };
+  }
+
   private async issueInvitationLocked(
     input: InvitationIssueRequest,
   ): Promise<InvitationIssueResult> {
@@ -781,15 +792,7 @@ export class Treasury extends DurableObject<Env> {
         try {
           const invitations: IssuedInvitation[] = [];
           for (const row of prior) {
-            const wif = await decryptWif(
-              { cipherHex: row.cipher_hex, ivHex: row.iv_hex },
-              cfg.secret,
-            );
-            invitations.push({
-              uri: invitationUri(row.txid, wif),
-              txid: row.txid,
-              expiresAt: row.issued_at! + cfg.ttlMs,
-            });
+            invitations.push(await this.openVoucher(row, row.issued_at! + cfg.ttlMs));
           }
           return { ok: true, invitations, replay: true };
         } catch (err) {
@@ -829,71 +832,82 @@ export class Treasury extends DurableObject<Env> {
     // Retire any voucher an old holder claimed after it was recycled. The
     // subsequent UPDATE is still serialized with this check; only an external
     // holder can race us, which is the intentionally accepted bearer race.
+    //
+    // Candidates are checked against Platform in parallel: this whole method
+    // holds the actor's lock, so twenty sequential explorer round-trips would
+    // stall every other request behind one batch.
     const invitations: IssuedInvitation[] = [];
-    while (invitations.length < count) {
-      const row = sql
+    let explorerDown = false;
+    let decryptFailed = false;
+    while (invitations.length < count && !explorerDown) {
+      const rows = sql
         .exec<InvitationRow>(
           `SELECT * FROM invitation_inventory
             WHERE state = 'available' AND amount_sats = ?
-            ORDER BY created_at LIMIT 1`,
+            ORDER BY created_at LIMIT ?`,
           cfg.amountSats,
+          count - invitations.length,
         )
-        .toArray()[0];
-      if (!row) break;
+        .toArray();
+      if (rows.length === 0) break;
 
-      const claimed = await platformIdentityExists(
-        cfg.platformExplorerUrl,
-        row.prospective_identity_id,
+      const claims = await Promise.all(
+        rows.map((row) =>
+          platformIdentityExists(cfg.platformExplorerUrl, row.prospective_identity_id),
+        ),
       );
-      if (claimed === null) {
-        if (invitations.length > 0) break;
-        return { ok: false, code: "platform_unavailable" };
-      }
-      if (claimed) {
+      for (const [i, row] of rows.entries()) {
+        const claimed = claims[i];
+        if (claimed === null) {
+          // Left 'available'; stop rather than re-select it on the next pass.
+          explorerDown = true;
+          continue;
+        }
+        if (claimed) {
+          sql.exec(
+            `UPDATE invitation_inventory
+                SET state = 'claimed', cipher_hex = '', iv_hex = '', updated_at = ?
+              WHERE id = ?`,
+            now,
+            row.id,
+          );
+          continue;
+        }
+
+        let opened: IssuedInvitation;
+        try {
+          opened = await this.openVoucher(row, now + cfg.ttlMs);
+        } catch (err) {
+          console.error(`treasury: invitation decrypt failed: ${describeError(err)}`);
+          sql.exec(
+            `UPDATE invitation_inventory SET state = 'failed', updated_at = ? WHERE id = ?`,
+            now,
+            row.id,
+          );
+          decryptFailed = true;
+          continue;
+        }
+
         sql.exec(
           `UPDATE invitation_inventory
-              SET state = 'claimed', cipher_hex = '', iv_hex = '', updated_at = ?
+              SET state = 'issued', device_hash = ?, issued_at = ?, updated_at = ?
             WHERE id = ?`,
+          input.deviceHash,
+          now,
           now,
           row.id,
         );
-        continue;
+        invitations.push(opened);
       }
-
-      let wif: string;
-      try {
-        wif = await decryptWif(
-          { cipherHex: row.cipher_hex, ivHex: row.iv_hex },
-          cfg.secret,
-        );
-      } catch (err) {
-        console.error(`treasury: invitation decrypt failed: ${describeError(err)}`);
-        sql.exec(
-          `UPDATE invitation_inventory SET state = 'failed', updated_at = ? WHERE id = ?`,
-          now,
-          row.id,
-        );
-        if (invitations.length > 0) break;
-        return { ok: false, code: "error", detail: "invitation could not be opened" };
-      }
-
-      sql.exec(
-        `UPDATE invitation_inventory
-            SET state = 'issued', device_hash = ?, issued_at = ?, updated_at = ?
-          WHERE id = ?`,
-        input.deviceHash,
-        now,
-        now,
-        row.id,
-      );
-      invitations.push({
-        uri: invitationUri(row.txid, wif),
-        txid: row.txid,
-        expiresAt: now + cfg.ttlMs,
-      });
     }
 
-    if (invitations.length === 0) return { ok: false, code: "unavailable" };
+    if (invitations.length === 0) {
+      if (explorerDown) return { ok: false, code: "platform_unavailable" };
+      if (decryptFailed) {
+        return { ok: false, code: "error", detail: "invitation could not be opened" };
+      }
+      return { ok: false, code: "unavailable" };
+    }
 
     // A batch is one issuance as far as the window is concerned.
     sql.exec(

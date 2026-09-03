@@ -224,6 +224,13 @@ function int(name: string, raw: string | undefined, fallback?: number): number {
   return n;
 }
 
+/** Like `int`, but zero is not a meaningful value for this setting. */
+function positiveInt(name: string, raw: string | undefined, fallback: number): number {
+  const value = int(name, raw, fallback);
+  if (value < 1) throw new Error(`config ${name} must be at least 1`);
+  return value;
+}
+
 function networkName(name: string, raw: string): NetworkName {
   if (raw !== "mainnet" && raw !== "testnet") {
     throw new Error(`${name} must be "mainnet" or "testnet", got ${raw}`);
@@ -279,23 +286,6 @@ export function resolveConfig(env: Env): FaucetConfig {
     );
   }
 
-  const invitationAmountSats = int(
-    "INVITATION_AMOUNT_SATS",
-    env.INVITATION_AMOUNT_SATS,
-    3_000_000,
-  );
-  if (invitationAmountSats <= 0) {
-    throw new Error("INVITATION_AMOUNT_SATS must be positive");
-  }
-  const invitationMaxPerRequest = int(
-    "INVITATION_MAX_PER_REQUEST",
-    env.INVITATION_MAX_PER_REQUEST,
-    1,
-  );
-  if (invitationMaxPerRequest < 1) {
-    throw new Error("INVITATION_MAX_PER_REQUEST must be at least 1");
-  }
-
   return {
     network,
     providers: PROVIDERS[network],
@@ -324,13 +314,21 @@ export function resolveConfig(env: Env): FaucetConfig {
     invitations: {
       enabled: invitationsEnabled,
       network: invitationNetwork,
-      amountSats: invitationAmountSats,
+      amountSats: positiveInt(
+        "INVITATION_AMOUNT_SATS",
+        env.INVITATION_AMOUNT_SATS,
+        3_000_000,
+      ),
       inventoryTarget: int(
         "INVITATION_INVENTORY_TARGET",
         env.INVITATION_INVENTORY_TARGET,
         10,
       ),
-      maxPerRequest: invitationMaxPerRequest,
+      maxPerRequest: positiveInt(
+        "INVITATION_MAX_PER_REQUEST",
+        env.INVITATION_MAX_PER_REQUEST,
+        1,
+      ),
       ttlMs: int("INVITATION_TTL_SECS", env.INVITATION_TTL_SECS, 60 * 60) * 1000,
       rateWindowMs:
         int(

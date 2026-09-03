@@ -1107,11 +1107,6 @@
                     item.appendChild(title);
                 }
 
-                const link = document.createElement("span");
-                link.hidden = true;
-                link.textContent = entry.invitation;
-                item.appendChild(link);
-
                 const figure = document.createElement("figure");
                 figure.className = "invitation-qr";
                 const img = document.createElement("img");
@@ -1132,7 +1127,7 @@
                 const copy = document.createElement("button");
                 copy.className = "btn-secondary";
                 copy.textContent = "Copy";
-                copy.addEventListener("click", () => copyFrom(link, copy));
+                copy.addEventListener("click", () => copyText(entry.invitation, copy));
                 actions.append(open, copy);
                 item.appendChild(actions);
 
@@ -1154,13 +1149,10 @@
             const row = $("invitationCountRow");
             const select = $("invitationCount");
             const limit = Math.max(1, Number(max) || 1);
-            if (limit === 1) {
-                row.hidden = true;
-                select.replaceChildren();
-                return;
-            }
             const previous = Number(select.value) || 1;
             select.replaceChildren();
+            row.hidden = limit === 1;
+            if (limit === 1) return;
             for (let n = 1; n <= limit; n += 1) {
                 const option = document.createElement("option");
                 option.value = String(n);
@@ -1168,7 +1160,6 @@
                 select.appendChild(option);
             }
             select.value = String(Math.min(previous, limit));
-            row.hidden = false;
         }
 
         async function requestInvitation() {
@@ -1177,9 +1168,8 @@
             const btnText = btn.querySelector(".btn-text");
             const errorBox = $("invitationErrorBox");
 
-            const count = $("invitationCountRow").hidden
-                ? 1
-                : Number($("invitationCount").value) || 1;
+            // The picker is emptied whenever it is hidden, so this reads 1 then.
+            const count = Number($("invitationCount").value) || 1;
 
             btn.classList.add("loading");
             btn.disabled = true;
@@ -1209,13 +1199,14 @@
                     : [{ invitation: data.invitation, txid: data.txid, expiresAt: data.expiresAt }];
                 renderInvitationList(entries);
                 const n = entries.length;
+                const shortfall = data.requested > n
+                    ? ` Only ${n} of ${data.requested} requested were available.`
+                    : "";
                 $("invitationResultTitle").textContent =
                     n === 1 ? "Invitation Ready" : `${n} Invitations Ready`;
                 $("invitationResultHint").textContent = n === 1
-                    ? "Open this in Dash Wallet, then choose your username."
-                    : `Each QR code is a separate invitation${
-                        data.requested > n ? ` (only ${n} of ${data.requested} were available)` : ""
-                      }. Give one to each person; each is claimed once.`;
+                    ? `Open this in Dash Wallet, then choose your username.${shortfall}`
+                    : `Each QR code is a separate invitation. Give one to each person; each is claimed once.${shortfall}`;
                 card.classList.add("show-results", "success");
                 clearInterval(invitationExpiryTimer);
                 $("invitationExpiry").classList.remove("expired");
@@ -1396,11 +1387,14 @@
             return presentation;
         }
 
-        async function copyFrom(target, btn) {
+        function copyFrom(targetId, btn) {
+            return copyText($(targetId).textContent, btn);
+        }
+
+        async function copyText(text, btn) {
             const original = btn.textContent;
-            const source = typeof target === "string" ? $(target) : target;
             try {
-                await navigator.clipboard.writeText(source.textContent);
+                await navigator.clipboard.writeText(text);
                 btn.textContent = "Copied!";
                 btn.classList.add("copied");
                 setTimeout(() => {

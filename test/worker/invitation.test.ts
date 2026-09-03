@@ -82,6 +82,7 @@ beforeEach(async () => {
   chain.siteverifyHostname = "faucet.test";
   chain.siteverifyAction = "invitation_faucet";
   chain.platformIdentities.clear();
+  chain.platformDown = false;
   env.TURNSTILE_SECRET = "turnstile-secret";
   chain.install();
 });
@@ -201,6 +202,33 @@ describe("invitation inventory", () => {
     expect(short.body.count).toBe(1);
     expect(short.body.requested).toBe(3);
     expect(short.body.invitations).toHaveLength(1);
+  });
+
+  it("retires already-claimed vouchers mid-batch and fails closed when Platform is down", async () => {
+    await prepareInvitation();
+    const oldest = await runInDurableObject(invitationTreasury(), (_instance, state) =>
+      state.storage.sql
+        .exec<{ prospective_identity_id: string }>(
+          `SELECT prospective_identity_id FROM invitation_inventory ORDER BY created_at LIMIT 1`,
+        )
+        .toArray()[0].prospective_identity_id,
+    );
+    // Someone redeemed the oldest voucher's key after it was recycled: the
+    // batch must skip it and still fill from the rest.
+    chain.platformIdentities.add(oldest);
+    const batch = await postInvitation("203.0.113.10", undefined, 3);
+    expect(batch.response.status).toBe(200);
+    expect(batch.body.count).toBe(2);
+    expect(batch.body.requested).toBe(3);
+
+    // Nothing can be issued safely without the claim check.
+    await ageIssuedInvitation();
+    expect((await invitationTreasury().maintainInvitations()).action).toBe("minted");
+    chain.platformDown = true;
+    const down = await postInvitation("198.51.100.50", undefined, 2);
+    expect(down.response.status).toBe(503);
+    expect(down.body.error).toContain("Platform availability");
+    expect((await invitationTreasury().snapshot()).invitations.issued).toBe(0);
   });
 
   it("ignores vouchers minted at a different amount and backfills legacy rows", async () => {

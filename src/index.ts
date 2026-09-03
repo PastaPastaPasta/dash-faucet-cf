@@ -383,17 +383,15 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   }
 
   const max = cfg.invitations.maxPerRequest;
-  let count = 1;
-  if (body.count !== undefined) {
-    if (
-      typeof body.count !== "number" ||
-      !Number.isInteger(body.count) ||
-      body.count < 1 ||
-      body.count > max
-    ) {
-      return errorJson(400, `count must be an integer from 1 to ${max}`, { max });
-    }
-    count = body.count;
+  // `=== undefined`, not `??`: an explicit null is a malformed request.
+  const count = body.count === undefined ? 1 : body.count;
+  if (
+    typeof count !== "number" ||
+    !Number.isInteger(count) ||
+    count < 1 ||
+    count > max
+  ) {
+    return errorJson(400, `count must be an integer from 1 to ${max}`, { max });
   }
 
   const ip = clientIp(request);
