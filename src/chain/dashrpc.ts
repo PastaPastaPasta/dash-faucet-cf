@@ -1,4 +1,10 @@
-import { ChainProvider, ProviderError, USER_AGENT, Utxo } from "./types";
+import {
+  ChainLockStatus,
+  ChainProvider,
+  ProviderError,
+  USER_AGENT,
+  Utxo,
+} from "./types";
 
 interface RpcResponse<T> {
   result: T | null;
@@ -110,5 +116,39 @@ export class DashRpcProvider implements ChainProvider {
 
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {
     return this.call<string>("sendrawtransaction", [rawHex], signal);
+  }
+
+  async getChainLockStatus(
+    txid: string,
+    signal: AbortSignal,
+  ): Promise<ChainLockStatus> {
+    let transaction: {
+      height?: number;
+      confirmations?: number;
+      chainlock?: boolean;
+    };
+    try {
+      transaction = await this.call("getrawtransaction", [txid, true], signal);
+    } catch (err) {
+      if (err instanceof RpcError && err.code === -5) {
+        return { known: false, height: null, chainLocked: false };
+      }
+      throw err;
+    }
+
+    const height =
+      typeof transaction.height === "number" &&
+      (transaction.confirmations ?? 0) > 0
+        ? transaction.height
+        : null;
+    if (height === null) {
+      return { known: true, height: null, chainLocked: false };
+    }
+
+    return {
+      known: true,
+      height,
+      chainLocked: transaction.chainlock === true,
+    };
   }
 }

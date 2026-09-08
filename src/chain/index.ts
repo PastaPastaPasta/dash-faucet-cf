@@ -5,6 +5,7 @@ import { HyphenProvider } from "./hyphen";
 import { InsightProvider } from "./insight";
 import {
   BroadcastFailure,
+  ChainLockStatus,
   ChainProvider,
   Utxo,
   classifyBroadcastError,
@@ -21,6 +22,8 @@ const TIMEOUT_MS = 2500;
  * resolving that ambiguity is expensive, so it is worth waiting to avoid it.
  */
 const BROADCAST_TIMEOUT_MS = 8000;
+/** Core's verbose transaction lookup is slower than the lightweight reads. */
+const CHAINLOCK_TIMEOUT_MS = 10_000;
 /** A provider further behind the best tip than this is not trusted for reads. */
 const MAX_LAG_BLOCKS = 10;
 
@@ -205,5 +208,25 @@ export class ChainClient {
       answered = true;
     }
     return answered ? false : null;
+  }
+
+  /** ChainLock status from the first Core RPC provider that can answer. */
+  async getChainLockStatus(txid: string): Promise<ChainLockStatus> {
+    const capable = this.providers.filter((provider) => provider.getChainLockStatus);
+    const errors: string[] = [];
+    for (const provider of capable) {
+      try {
+        return await provider.getChainLockStatus!(
+          txid,
+          this.signal(CHAINLOCK_TIMEOUT_MS),
+        );
+      } catch (err) {
+        errors.push(describeError(err));
+      }
+    }
+    throw new AllProvidersFailedError(
+      "getChainLockStatus",
+      errors.length > 0 ? errors : ["no Core RPC provider configured"],
+    );
   }
 }

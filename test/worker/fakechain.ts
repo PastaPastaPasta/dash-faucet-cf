@@ -1,4 +1,5 @@
 import DashKeys from "dashkeys";
+import DashTx from "dashtx";
 import { vi } from "vitest";
 
 export interface Coin {
@@ -34,6 +35,11 @@ export class FakeChain {
    */
   readonly siteverifyTokens: string[] = [];
   siteverifySucceeds = true;
+  siteverifyHostname = "faucet.test";
+  siteverifyAction = "invitation_faucet";
+  readonly platformIdentities = new Set<string>();
+  /** When true, Platform Explorer answers every identity lookup with a 503. */
+  platformDown = false;
 
   install(): void {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>
@@ -46,7 +52,8 @@ export class FakeChain {
   }
 
   private async scriptFor(address: string): Promise<string> {
-    const parts = await DashKeys.decode(address, { version: "testnet" });
+    const version = address.startsWith("X") ? "mainnet" : "testnet";
+    const parts = await DashKeys.decode(address, { version });
     return `76a914${parts.pubKeyHash}88ac`;
   }
 
@@ -75,6 +82,8 @@ export class FakeChain {
       this.siteverifyTokens.push(String(form.get("response") ?? ""));
       return this.json({
         success: this.siteverifySucceeds,
+        hostname: this.siteverifyHostname,
+        action: this.siteverifyAction,
         "error-codes": this.siteverifySucceeds ? [] : ["invalid-input-response"],
       });
     }
@@ -82,6 +91,10 @@ export class FakeChain {
     // --- broadcast -----------------------------------------------------------
     if (url.includes("/insight-api/tx/send")) {
       this.broadcastAttempts.push(String(init.body));
+      if (this.broadcast.kind === "accept") {
+        const raw = String(JSON.parse(String(init.body)).rawtx);
+        this.known.add(await DashTx.getId(raw));
+      }
       return this.broadcastResponse(false);
     }
     if (url.includes("digitalcash") || url.endsWith("trpc") || url.includes("//r")) {
@@ -91,6 +104,9 @@ export class FakeChain {
           return this.json({ result: this.height, error: null, id: 1 });
         case "sendrawtransaction":
           this.broadcastAttempts.push(String(init.body));
+          if (this.broadcast.kind === "accept") {
+            this.known.add(await DashTx.getId(body.params[0]));
+          }
           return this.broadcastResponse(true);
         case "getaddressutxos": {
           const address = body.params[0].addresses[0];
@@ -109,7 +125,18 @@ export class FakeChain {
         }
         case "getrawtransaction": {
           const txid = body.params[0];
-          if (this.knows(txid)) return this.json({ result: { txid }, error: null, id: 1 });
+          if (this.knows(txid)) {
+            return this.json({
+              result: {
+                txid,
+                height: this.height - 5,
+                confirmations: 6,
+                chainlock: true,
+              },
+              error: null,
+              id: 1,
+            });
+          }
           return this.json({
             result: null,
             error: { code: -5, message: "No such mempool or blockchain transaction" },
@@ -146,6 +173,14 @@ export class FakeChain {
         : new Response("not found", { status: 404 });
     }
 
+    // --- Platform Explorer ---------------------------------------------------
+    if (url.startsWith("https://platform.test/identity/")) {
+      if (this.platformDown) return new Response("unavailable", { status: 503 });
+      const id = decodeURIComponent(url.split("/identity/")[1]);
+      return this.platformIdentities.has(id)
+        ? this.json({ identifier: id })
+        : this.json({ message: "not found" }, 404);
+    }
     return new Response("unexpected request: " + url, { status: 500 });
   }
 

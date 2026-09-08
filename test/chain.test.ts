@@ -130,6 +130,27 @@ describe("outgoing requests", () => {
   });
 });
 
+describe("DashRpcProvider ChainLocks", () => {
+  it("reads the transaction's authoritative chainlock flag", async () => {
+    mockFetch((_url, init) => {
+      const request = JSON.parse(String(init.body));
+      expect(request.method).toBe("getrawtransaction");
+      return ok({
+        result: { height: 123, confirmations: 2, chainlock: true },
+        error: null,
+        id: 1,
+      });
+    });
+    const { DashRpcProvider } = await import("../src/chain/dashrpc");
+    await expect(
+      new DashRpcProvider("https://r").getChainLockStatus(
+        "aa".repeat(32),
+        AbortSignal.timeout(1000),
+      ),
+    ).resolves.toEqual({ known: true, height: 123, chainLocked: true });
+  });
+});
+
 describe("ChainClient failover", () => {
   it("falls through to the next provider when one errors", async () => {
     mockFetch((url) => {

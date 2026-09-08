@@ -19,7 +19,7 @@
             padding: 20px;
         }
         .container {
-            max-width: 600px;
+            max-width: 920px;
             margin: 0 auto;
         }
         header {
@@ -34,6 +34,17 @@
         .subtitle {
             color: #888;
             font-size: 1.1rem;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 20px;
+            align-items: stretch;
+        }
+        .feature-grid:not(.has-invitations) #coreFaucetCard {
+            grid-column: 1 / -1;
+            width: min(100%, 600px);
+            justify-self: center;
         }
         .card {
             background: rgba(255, 255, 255, 0.05);
@@ -58,6 +69,9 @@
         .btn:hover {
             background: #0070b8;
             transform: translateY(-2px);
+        }
+        a.btn {
+            text-decoration: none;
         }
         .btn:disabled {
             background: #555;
@@ -104,6 +118,10 @@
             background: #28a745;
             color: white;
         }
+        .copy-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.45;
+        }
         .error {
             background: rgba(220, 53, 69, 0.2);
             border: 1px solid #dc3545;
@@ -123,6 +141,7 @@
             padding: 30px;
             border: 1px solid rgba(255, 255, 255, 0.1);
             transition: border-color 0.3s ease, box-shadow 0.3s ease;
+            min-width: 0;
         }
         .feature-card:hover {
             border-color: rgba(0, 141, 228, 0.3);
@@ -182,6 +201,31 @@
             margin-bottom: 10px;
             font-size: 1.4rem;
         }
+        .network-kicker {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #888;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+        }
+        .network-dot {
+            background: #008de4;
+            border-radius: 50%;
+            box-shadow: 0 0 8px rgba(0, 141, 228, 0.75);
+            height: 7px;
+            width: 7px;
+        }
+        .network-kicker.mainnet {
+            color: #f0ad4e;
+        }
+        .network-kicker.mainnet .network-dot {
+            background: #f0ad4e;
+            box-shadow: 0 0 8px rgba(240, 173, 78, 0.65);
+        }
         .feature-card .description {
             color: #aaa;
             margin-bottom: 20px;
@@ -190,6 +234,11 @@
         .feature-card .card-bottom {
             margin-top: auto;
             padding-top: 20px;
+        }
+        .availability-line {
+            color: #888;
+            font-size: 0.82rem;
+            margin-top: 12px;
         }
         /* Initial view and results view toggle */
         .initial-view, .results-view {
@@ -264,26 +313,152 @@
             font-size: 0.85rem;
             margin-bottom: 10px;
         }
-        .footer-fund {
+        .treasury-panel {
+            margin-top: 20px;
+        }
+        .treasury-heading {
+            align-items: flex-start;
             display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .treasury-heading h2 {
+            color: #fff;
+            font-size: 1.25rem;
+            margin-bottom: 5px;
+        }
+        .treasury-heading p {
+            color: #888;
+            font-size: 0.88rem;
+        }
+        .live-pill {
+            background: rgba(40, 167, 69, 0.14);
+            border: 1px solid rgba(40, 167, 69, 0.4);
+            border-radius: 999px;
+            color: #72d58a;
+            flex: 0 0 auto;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            padding: 5px 10px;
+            text-transform: uppercase;
+        }
+        .treasury-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+        .treasury-card {
+            background: rgba(0, 0, 0, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 10px;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .treasury-card-mainnet {
+            border-color: rgba(240, 173, 78, 0.24);
+        }
+        .treasury-card-top {
+            padding: 18px 18px 14px;
+        }
+        .treasury-card-title {
             align-items: center;
-            justify-content: center;
+            display: flex;
+            justify-content: space-between;
             gap: 10px;
-            color: #666;
-            font-size: 0.8rem;
+        }
+        .treasury-card-title h3 {
+            color: #ddd;
+            font-size: 0.92rem;
+        }
+        .network-badge {
+            background: rgba(0, 141, 228, 0.13);
+            border: 1px solid rgba(0, 141, 228, 0.35);
+            border-radius: 999px;
+            color: #53b8f6;
+            font-size: 0.65rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            padding: 4px 8px;
+            text-transform: uppercase;
+        }
+        .network-badge.mainnet {
+            background: rgba(240, 173, 78, 0.12);
+            border-color: rgba(240, 173, 78, 0.4);
+            color: #f4c46a;
+        }
+        .treasury-balance {
+            color: #fff;
+            font-size: 1.65rem;
+            font-variant-numeric: tabular-nums;
+            font-weight: 650;
+            letter-spacing: -0.03em;
+            margin-top: 15px;
+        }
+        .treasury-balance span {
+            color: #888;
+            font-size: 0.82rem;
+            font-weight: 600;
+            letter-spacing: 0;
+            margin-left: 3px;
+        }
+        .treasury-detail {
+            color: #777;
+            font-size: 0.78rem;
+            margin-top: 4px;
+        }
+        .inventory-row {
+            display: flex;
             flex-wrap: wrap;
+            gap: 6px 12px;
+            margin-top: 12px;
         }
-        .footer-fund-address {
-            font-family: 'Monaco', 'Consolas', monospace;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 0.75rem;
+        .inventory-item {
             color: #aaa;
+            font-size: 0.75rem;
         }
-        .footer-fund .copy-btn {
+        .inventory-item strong {
+            color: #fff;
+            font-variant-numeric: tabular-nums;
+        }
+        .funding-address {
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 14px 18px 16px;
+        }
+        .funding-address-header {
+            align-items: center;
+            display: flex;
+            justify-content: space-between;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+        .funding-address-label {
+            color: #777;
+            font-size: 0.7rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+        }
+        .funding-address code {
+            color: #bbb;
+            display: block;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.73rem;
+            line-height: 1.45;
+            overflow-wrap: anywhere;
+        }
+        .funding-address .copy-btn {
             padding: 4px 10px;
             font-size: 0.7rem;
+        }
+        .network-warning {
+            color: #777;
+            font-size: 0.68rem;
+            margin-top: 8px;
+        }
+        .network-warning strong {
+            color: #aaa;
         }
         .footer-github {
             margin-top: 15px;
@@ -382,6 +557,130 @@
             --cap-spinner-background-color: rgba(255, 255, 255, 0.15);
             --cap-widget-width: 100%;
         }
+        [hidden] {
+            display: none !important;
+        }
+        .expiry {
+            color: #f0ad4e;
+            margin: 12px 0;
+            font-size: 0.9rem;
+        }
+        .expiry.expired {
+            color: #ff6b6b;
+        }
+        .invitation-qr {
+            align-items: center;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin: 18px auto;
+        }
+        .invitation-qr img {
+            background: #fff;
+            border-radius: 10px;
+            display: block;
+            height: auto;
+            max-width: 250px;
+            padding: 8px;
+            width: min(100%, 250px);
+        }
+        .invitation-qr figcaption {
+            color: #888;
+            font-size: 0.78rem;
+            text-align: center;
+        }
+        .invitation-count {
+            align-items: center;
+            color: #aaa;
+            display: inline-flex;
+            font-size: 0.9rem;
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .invitation-count select {
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #fff;
+            font-size: 0.95rem;
+            padding: 6px 10px;
+        }
+        .invitation-list {
+            display: grid;
+            gap: 14px;
+            grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+            margin: 18px 0 0;
+        }
+        .invitation-item {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            padding: 14px 12px 12px;
+            text-align: center;
+        }
+        .invitation-item .invitation-qr {
+            margin: 6px auto;
+        }
+        .invitation-item .invitation-qr img {
+            max-width: 190px;
+        }
+        .invitation-item h3 {
+            color: #ccc;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin: 0 0 4px;
+        }
+        .invitation-item .action-buttons {
+            justify-content: center;
+            margin-top: 8px;
+        }
+        .invitation-item .action-buttons .btn,
+        .invitation-item .action-buttons .btn-secondary {
+            flex: 1 1 auto;
+            font-size: 0.9rem;
+            justify-content: center;
+            padding: 9px 14px;
+        }
+        .invitation-list.expired img {
+            filter: grayscale(1) opacity(0.25);
+        }
+        @media (max-width: 720px) {
+            body {
+                padding: 14px;
+            }
+            header {
+                padding: 28px 0;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+            .feature-grid,
+            .treasury-grid {
+                grid-template-columns: 1fr;
+            }
+            .feature-card,
+            .card {
+                padding: 22px;
+            }
+            .treasury-card {
+                padding: 0;
+            }
+            .input-row {
+                align-items: stretch;
+                flex-direction: column;
+            }
+            .input-row .btn,
+            .feature-card .btn {
+                justify-content: center;
+                width: 100%;
+            }
+            .action-buttons .btn,
+            .action-buttons .btn-secondary {
+                flex: 1 1 100%;
+                justify-content: center;
+                text-align: center;
+            }
+        }
     </style>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
@@ -392,10 +691,12 @@
             <p class="subtitle" id="pageSubtitle">Get DASH for development and testing</p>
         </header>
 
+        <main class="feature-grid" id="featureGrid">
         <!-- Core Faucet Section -->
         <div class="feature-card" id="coreFaucetCard">
             <!-- Initial View -->
             <div class="initial-view">
+                <div class="network-kicker" id="coreNetworkKicker"><span class="network-dot"></span><span id="coreNetworkLabel">Testnet</span></div>
                 <h2 id="initialHeading">Get DASH</h2>
                 <p class="description">
                     Receive <span id="coreFaucetAmountDisplay">…</span> <span class="coin-name">DASH</span> to your address.
@@ -421,8 +722,8 @@
                 </div>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
-                    <strong>Hourly limit reached</strong>
-                    <p>Solve a longer proof-of-work challenge to keep going. It runs
+                    <strong id="capTitle">Hourly limit reached</strong>
+                    <p id="capDescription">Solve a longer proof-of-work challenge to keep going. It runs
                        in the background and takes roughly 30&ndash;90 seconds; leave
                        this tab open.</p>
                     <div class="hard-cap-holder" id="hardCapHolder"></div>
@@ -445,20 +746,104 @@
             </div>
         </div>
 
+        <!-- Platform invitation faucet (enabled by server configuration). -->
+        <div class="feature-card" id="invitationCard" hidden>
+            <div class="initial-view">
+                <div class="network-kicker mainnet" id="invitationNetworkKicker"><span class="network-dot"></span><span id="invitationNetworkLabel">Mainnet · Real DASH</span></div>
+                <h2>Create a Dash Identity</h2>
+                <p class="description">
+                    Get an invitation with <span id="invitationAmountDisplay">0.03</span>
+                    DASH for one identity and non-contested name. You will choose
+                    the name in Dash Wallet.
+                </p>
+                <button class="btn" id="invitationBtn">
+                    <span class="spinner"></span>
+                    <span class="btn-text">Get Invitation</span>
+                </button>
+                <label class="invitation-count" id="invitationCountRow" hidden>
+                    How many?
+                    <select id="invitationCount" aria-label="Number of invitations"></select>
+                </label>
+                <p class="availability-line" id="invitationAvailability">Checking availability…</p>
+                <div class="turnstile-holder" id="invitationTurnstileHolder"></div>
+                <div class="error" id="invitationErrorBox"></div>
+            </div>
+
+            <div class="results-view">
+                <h2 style="color: #28a745;" id="invitationResultTitle">Invitation Ready</h2>
+                <p class="description" id="invitationResultHint">Open this in Dash Wallet, then choose your username.</p>
+                <p class="expiry" id="invitationExpiry"></p>
+                <div class="invitation-list" id="invitationList"></div>
+                <div class="action-buttons">
+                    <button class="btn-secondary" id="moreInvitationsBtn">Get More</button>
+                </div>
+            </div>
+        </div>
+        </main>
+
         <!-- Identity Creation Note -->
-        <div class="info-box">
+        <div class="info-box" id="identityNote">
             <strong>Need a Platform Identity?</strong>
             <p>To create a Dash Platform identity, visit the <a id="bridgeLink" href="https://bridge.thepasta.org" target="_blank" rel="noopener noreferrer">Dash Bridge</a>.</p>
         </div>
 
+        <section class="card treasury-panel" id="treasuryPanel" hidden>
+            <div class="treasury-heading">
+                <div>
+                    <h2>Faucet reserves</h2>
+                    <p>Two networks, two separate treasuries. Fund the address for the service you want to support.</p>
+                </div>
+                <span class="live-pill">Live</span>
+            </div>
+            <div class="treasury-grid">
+                <article class="treasury-card">
+                    <div class="treasury-card-top">
+                        <div class="treasury-card-title">
+                            <h3>Testnet faucet</h3>
+                            <span class="network-badge" id="coreNetworkBadge">Testnet</span>
+                        </div>
+                        <div class="treasury-balance"><strong id="coreTreasuryBalance">—</strong> <span id="coreTreasuryCurrency">tDASH</span></div>
+                        <p class="treasury-detail" id="coreTreasuryDetail">Loading payout status…</p>
+                    </div>
+                    <div class="funding-address">
+                        <div class="funding-address-header">
+                            <span class="funding-address-label">Funding address</span>
+                            <button class="copy-btn" id="coreFundingCopy" data-copy="depositAddress">Copy</button>
+                        </div>
+                        <code id="depositAddress">—</code>
+                        <p class="network-warning">Send <strong id="coreNetworkWarning">testnet DASH only</strong> to this address.</p>
+                    </div>
+                </article>
+
+                <article class="treasury-card treasury-card-mainnet" id="invitationTreasuryCard" hidden>
+                    <div class="treasury-card-top">
+                        <div class="treasury-card-title">
+                            <h3>Identity invitations</h3>
+                            <span class="network-badge mainnet" id="invitationNetworkBadge">Mainnet · Real DASH</span>
+                        </div>
+                        <div class="treasury-balance"><strong id="invitationTreasuryBalance">—</strong> <span id="invitationTreasuryCurrency">DASH</span></div>
+                        <p class="treasury-detail">Spendable balance; locked invitations are counted below.</p>
+                        <div class="inventory-row" id="invitationInventory">
+                            <span class="inventory-item"><strong id="invitationAvailable">—</strong> ready</span>
+                            <span class="inventory-item"><strong id="invitationPreparing">—</strong> preparing</span>
+                            <span class="inventory-item"><strong id="invitationIssued">—</strong> reserved</span>
+                        </div>
+                    </div>
+                    <div class="funding-address">
+                        <div class="funding-address-header">
+                            <span class="funding-address-label">Funding address</span>
+                            <button class="copy-btn" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
+                        </div>
+                        <code id="invitationDepositAddress">—</code>
+                        <p class="network-warning">Send <strong id="invitationNetworkWarning">real mainnet DASH only</strong> to this address.</p>
+                    </div>
+                </article>
+            </div>
+        </section>
+
         <footer class="site-footer">
             <div class="footer-status" id="statusBar">
                 Loading faucet status...
-            </div>
-            <div class="footer-fund" id="fundingSection" style="display: none;">
-                <span>Help fund this faucet:</span>
-                <span class="footer-fund-address" id="depositAddress"></span>
-                <button class="copy-btn" data-copy="depositAddress">Copy</button>
             </div>
             <div class="footer-github">
                 <a href="https://github.com/PastaPastaPasta/dash-faucet" target="_blank" rel="noopener noreferrer">
@@ -471,17 +856,19 @@
         </footer>
     </div>
 
-    <script>
+    <script type="module">
+        import { renderSVG } from "/vendor/uqr.mjs";
+
         "use strict";
 
         const NETWORK_COPY = {
             testnet: {
                 title: "Dash Testnet Faucet",
                 subtitle: "Get testnet DASH for development and testing",
-                coin: "tDash",
-                action: "Get tDash",
+                coin: "tDASH",
+                action: "Get tDASH",
                 heading: "Get Testnet DASH",
-                sent: "tDash Sent!",
+                sent: "tDASH Sent!",
                 placeholder: "Enter your testnet Dash address (y...)",
                 bridge: "https://bridge.thepasta.org",
             },
@@ -512,12 +899,15 @@
 
         let coinName = "tDash";
         let turnstileSiteKey = "";
-        let turnstileWidgetId = null;
+        const turnstileWidgetIds = { core: null, invitation: null };
+        let capEndpoint = "";
         let hardCapEndpoint = "";
         let capScriptPromise = null;
         let capWidget = null;
-        /** True while the widget's worker pool is grinding on a hard challenge. */
+        /** True while the widget's worker pool is solving a challenge. */
         let capSolving = false;
+        let coreRequestPending = false;
+        let invitationExpiryTimer = null;
 
         const $ = (id) => document.getElementById(id);
 
@@ -552,7 +942,7 @@
          * Fetch the widget on first need only.
          *
          * Turnstile is the default path and is both stronger and cheaper in a
-         * browser, so a visitor who never hits the hourly limit should not pay
+         * browser, so a visitor whose CAPTCHA succeeds below the limit need not pay
          * for a third-party script — nor for the WASM blob it pulls in behind
          * it. A failed load clears the promise so a later attempt can retry.
          */
@@ -575,25 +965,26 @@
         }
 
         /**
-         * Render the escalated challenge and wire its solved token back into the
-         * request that was just rejected.
-         *
-         * `solve()` is deliberately never called for the visitor: the widget's
-         * own click-to-start UI is the consent step for spending a minute of
-         * their CPU. Re-entrant while a widget is live, so a second 429 cannot
-         * replace one mid-solve; `disposeCapWidget` is what ends its life.
+         * Use a short automatic solve when Turnstile fails on testnet. The hard
+         * tier still requires a click before spending a minute of the user's CPU.
          */
-        async function showHardCaptcha() {
+        async function showPowCaptcha(tier = "hard", autoStart = false) {
             const progress = $("hardCapProgress");
             $("hardCapBox").classList.add("visible");
             if (capWidget) return;
+            $("capTitle").textContent = tier === "hard"
+                ? "Hourly limit reached" : "Verifying with proof of work";
+            $("capDescription").textContent = tier === "hard"
+                ? "Solve a longer proof-of-work challenge to keep going. It runs in the background and takes roughly 30–90 seconds; leave this tab open."
+                : "A short proof-of-work challenge replaces the CAPTCHA. " +
+                    (autoStart ? "It runs automatically; leave this tab open." : "Click the challenge below to try again.");
 
             progress.textContent = "Loading challenge…";
             await loadCapWidgetScript();
             await customElements.whenDefined("cap-widget");
 
             capWidget = document.createElement("cap-widget");
-            capWidget.setAttribute("data-cap-api-endpoint", hardCapEndpoint);
+            capWidget.setAttribute("data-cap-api-endpoint", tier === "hard" ? hardCapEndpoint : capEndpoint);
             // Leave one core free so the page stays responsive mid-solve.
             capWidget.setAttribute(
                 "data-cap-worker-count",
@@ -623,32 +1014,54 @@
             capWidget.addEventListener("solve", (event) => {
                 capSolving = false;
                 progress.textContent = "Solved — sending…";
-                requestCoreFaucet({ capToken: event.detail.token });
+                requestCoreFaucet({ capToken: event.detail.token }, tier);
             });
 
             $("hardCapHolder").appendChild(capWidget);
             progress.textContent = "";
+            if (autoStart) {
+                capSolving = true;
+                $("coreFaucetBtn").disabled = true;
+                // The widget reports solve failures through its error event.
+                void capWidget.solve();
+            }
+        }
+
+        function clearTurnstile(kind) {
+            const id = turnstileWidgetIds[kind];
+            turnstileWidgetIds[kind] = null;
+            if (id !== null && window.turnstile) {
+                try { window.turnstile.remove(id); } catch { /* Already unavailable. */ }
+            }
         }
 
         /**
          * Resolve a Turnstile token, rendering the widget on first use.
-         * Resolves to null when no site key is configured, in which case the
-         * server skips verification too.
+         * Testnet falls back quickly if Turnstile needs interaction or stalls.
          */
-        function solveTurnstile() {
-            if (!turnstileSiteKey) return Promise.resolve(null);
+        function solveTurnstile(kind = "core") {
+            const invitation = kind === "invitation";
+            if (!turnstileSiteKey) {
+                return invitation
+                    ? Promise.reject(new Error("Invitation captcha is not configured"))
+                    : Promise.resolve(null);
+            }
             if (typeof window.turnstile === "undefined") {
                 return Promise.reject(new Error("Captcha failed to load — please reload the page"));
             }
 
             return new Promise((resolve, reject) => {
+                let settled = false;
                 const settle = (fn, value) => {
+                    if (settled) return;
+                    settled = true;
                     clearTimeout(timer);
                     fn(value);
                 };
+                const canFallback = !invitation && !!capEndpoint;
                 const timer = setTimeout(
                     () => settle(reject, new Error("Captcha timed out — please try again")),
-                    60000
+                    canFallback ? 8000 : 60000
                 );
 
                 const opts = {
@@ -660,27 +1073,197 @@
                         settle(reject, new Error("Captcha failed — please try again")),
                     "timeout-callback": () =>
                         settle(reject, new Error("Captcha timed out — please try again")),
+                    "expired-callback": () =>
+                        settle(reject, new Error("Captcha expired — please try again")),
+                    "unsupported-callback": () =>
+                        settle(reject, new Error("Captcha is not supported")),
                 };
-
-                if (turnstileWidgetId === null) {
-                    turnstileWidgetId = window.turnstile.render($("turnstileHolder"), opts);
-                } else {
-                    window.turnstile.reset(turnstileWidgetId);
+                if (invitation) opts.action = "invitation_faucet";
+                if (canFallback) {
+                    opts["before-interactive-callback"] = () =>
+                        settle(reject, new Error("Using proof of work"));
                 }
-                window.turnstile.execute(turnstileWidgetId, opts);
+
+                try {
+                    clearTurnstile(kind);
+                    const holder = invitation
+                        ? $("invitationTurnstileHolder")
+                        : $("turnstileHolder");
+                    turnstileWidgetIds[kind] = window.turnstile.render(holder, opts);
+                    if (!settled) window.turnstile.execute(turnstileWidgetIds[kind], opts);
+                } catch (error) {
+                    settle(reject, error);
+                }
             });
+        }
+
+        function updateInvitationCountdown(expiresAt) {
+            const expiry = $("invitationExpiry");
+            const remaining = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+            if (remaining > 0) {
+                expiry.textContent = `Reserved for you for ${formatDuration(remaining)}. Claim it before then.`;
+                return;
+            }
+
+            clearInterval(invitationExpiryTimer);
+            invitationExpiryTimer = null;
+            expiry.textContent = "Reservation expired. These invitations may be given to someone else.";
+            expiry.classList.add("expired");
+            const list = $("invitationList");
+            list.classList.add("expired");
+            for (const link of list.querySelectorAll("a.btn")) {
+                link.setAttribute("aria-disabled", "true");
+                link.removeAttribute("href");
+            }
+            for (const button of list.querySelectorAll("button")) {
+                button.disabled = true;
+            }
+        }
+
+        /** One QR card per voucher; a single voucher gets the whole width. */
+        function renderInvitationList(entries) {
+            const list = $("invitationList");
+            list.replaceChildren();
+            list.classList.remove("expired");
+            list.style.gridTemplateColumns = entries.length === 1 ? "1fr" : "";
+            entries.forEach((entry, index) => {
+                const item = document.createElement("article");
+                item.className = "invitation-item";
+
+                if (entries.length > 1) {
+                    const title = document.createElement("h3");
+                    title.textContent = `Invitation ${index + 1} of ${entries.length}`;
+                    item.appendChild(title);
+                }
+
+                const figure = document.createElement("figure");
+                figure.className = "invitation-qr";
+                const img = document.createElement("img");
+                img.alt = "Scan invitation with Dash Wallet";
+                const svg = renderSVG(entry.invitation, { border: 4, ecc: "M" });
+                img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+                const caption = document.createElement("figcaption");
+                caption.textContent = "Scan with Dash Wallet";
+                figure.append(img, caption);
+                item.appendChild(figure);
+
+                const actions = document.createElement("div");
+                actions.className = "action-buttons";
+                const open = document.createElement("a");
+                open.className = "btn";
+                open.href = entry.invitation;
+                open.textContent = "Open in Dash Wallet";
+                const copy = document.createElement("button");
+                copy.className = "btn-secondary";
+                copy.textContent = "Copy";
+                copy.addEventListener("click", () => copyText(entry.invitation, copy));
+                actions.append(open, copy);
+                item.appendChild(actions);
+
+                list.appendChild(item);
+            });
+        }
+
+        function resetInvitationCard() {
+            const card = $("invitationCard");
+            card.classList.remove("show-results", "success");
+            $("invitationErrorBox").classList.remove("visible");
+            clearInterval(invitationExpiryTimer);
+            invitationExpiryTimer = null;
+            $("invitationList").replaceChildren();
+        }
+
+        /** Offer 1..max vouchers per request; hidden when the server allows only one. */
+        function configureInvitationCount(max) {
+            const row = $("invitationCountRow");
+            const select = $("invitationCount");
+            const limit = Math.max(1, Number(max) || 1);
+            const previous = Number(select.value) || 1;
+            select.replaceChildren();
+            row.hidden = limit === 1;
+            if (limit === 1) return;
+            for (let n = 1; n <= limit; n += 1) {
+                const option = document.createElement("option");
+                option.value = String(n);
+                option.textContent = String(n);
+                select.appendChild(option);
+            }
+            select.value = String(Math.min(previous, limit));
+        }
+
+        async function requestInvitation() {
+            const card = $("invitationCard");
+            const btn = $("invitationBtn");
+            const btnText = btn.querySelector(".btn-text");
+            const errorBox = $("invitationErrorBox");
+
+            // The picker is emptied whenever it is hidden, so this reads 1 then.
+            const count = Number($("invitationCount").value) || 1;
+
+            btn.classList.add("loading");
+            btn.disabled = true;
+            errorBox.classList.remove("visible");
+            try {
+                btnText.textContent = "Verifying...";
+                const turnstileToken = await solveTurnstile("invitation");
+                btnText.textContent = "Creating...";
+                const response = await fetch("/api/invitation-faucet", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ turnstileToken, count }),
+                });
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    let message = data.error || data.detail?.error || "Invitation request failed";
+                    const retryAfter = data.retryAfter ?? data.detail?.retryAfter;
+                    if (response.status === 429 && retryAfter) {
+                        message += ` — try again in ${formatDuration(retryAfter)}.`;
+                    }
+                    throw new Error(message);
+                }
+
+                // Servers predating batch issuance return only the single fields.
+                const entries = Array.isArray(data.invitations) && data.invitations.length
+                    ? data.invitations
+                    : [{ invitation: data.invitation, txid: data.txid, expiresAt: data.expiresAt }];
+                renderInvitationList(entries);
+                const n = entries.length;
+                const shortfall = data.requested > n
+                    ? ` Only ${n} of ${data.requested} requested were available.`
+                    : "";
+                $("invitationResultTitle").textContent =
+                    n === 1 ? "Invitation Ready" : `${n} Invitations Ready`;
+                $("invitationResultHint").textContent = n === 1
+                    ? `Open this in Dash Wallet, then choose your username.${shortfall}`
+                    : `Each QR code is a separate invitation. Give one to each person; each is claimed once.${shortfall}`;
+                card.classList.add("show-results", "success");
+                clearInterval(invitationExpiryTimer);
+                $("invitationExpiry").classList.remove("expired");
+                updateInvitationCountdown(data.expiresAt);
+                if (data.expiresAt > Date.now()) {
+                    invitationExpiryTimer = setInterval(
+                        () => updateInvitationCountdown(data.expiresAt),
+                        1000
+                    );
+                }
+            } catch (error) {
+                errorBox.textContent = error.message;
+                errorBox.classList.add("visible");
+            } finally {
+                clearTurnstile("invitation");
+                btn.classList.remove("loading");
+                btn.disabled = false;
+                btnText.textContent = "Get Invitation";
+            }
         }
 
         /**
          * Send one faucet request.
          *
-         * With no `proof`, this is the normal path: Turnstile, which is
-         * invisible and instant. `proof` is only set by the escalation retry
-         * after a 429, and carries the solved hard capToken — a browser must
-         * never take the soft proof-of-work tier, which is both weaker and
-         * slower here than Turnstile.
+         * Try Turnstile first, then soft PoW on testnet if it fails. A rate-limit
+         * response can offer the hard tier after either initial proof.
          */
-        async function requestCoreFaucet(proof) {
+        async function requestCoreFaucet(proof, proofTier) {
             const card = $("coreFaucetCard");
             const btn = $("coreFaucetBtn");
             const addressInput = $("addressInput");
@@ -689,7 +1272,7 @@
             // A hard solve is minutes of work the user has already started; a
             // stray click or Enter must not discard it and fall back to a fresh
             // Turnstile attempt. The widget's own solve callback is exempt.
-            if (capSolving && !proof) return;
+            if (coreRequestPending || (capSolving && !proof)) return;
 
             const address = addressInput.value.trim();
             if (!address) {
@@ -699,6 +1282,7 @@
 
             btn.classList.add("loading");
             btn.disabled = true;
+            coreRequestPending = true;
             $("coreErrorBox").classList.remove("visible");
 
             try {
@@ -706,11 +1290,20 @@
                 if (proof) {
                     body = { address, ...proof };
                 } else {
+                    disposeCapWidget();
                     hideHardCaptcha();
                     btnText.textContent = "Verifying...";
-                    const turnstileToken = await solveTurnstile();
                     body = { address };
-                    if (turnstileToken) body.turnstileToken = turnstileToken;
+                    try {
+                        const turnstileToken = await solveTurnstile();
+                        if (turnstileToken) body.turnstileToken = turnstileToken;
+                        else if (capEndpoint) throw new Error("Using proof of work");
+                    } catch (error) {
+                        if (!capEndpoint) throw error;
+                        clearTurnstile("core");
+                        await showPowCaptcha("soft", true);
+                        return;
+                    }
                 }
 
                 btnText.textContent = "Sending...";
@@ -725,17 +1318,22 @@
                 if (proof) disposeCapWidget();
 
                 if (!response.ok) {
+                    if (!proof && capEndpoint && data.requiresProofOfWork) {
+                        clearTurnstile("core");
+                        await showPowCaptcha("soft", true);
+                        return;
+                    }
                     // The server sets requiresHardCaptcha only when a stronger
                     // proof would actually raise this client's own ceiling — not,
                     // for instance, when the global daily budget is what ran out.
-                    // `!proof` stops a solve that still got a 429 from looping.
+                    // A hard solve must not loop back into another escalation.
                     const escalate =
                         response.status === 429 &&
-                        !proof &&
+                        proofTier !== "hard" &&
                         hardCapEndpoint &&
                         (data.requiresHardCaptcha || data.detail?.requiresHardCaptcha);
                     if (escalate) {
-                        await showHardCaptcha();
+                        await showPowCaptcha();
                         return;
                     }
 
@@ -773,14 +1371,13 @@
                 // response never got to burn its widget above.
                 if (proof) {
                     disposeCapWidget();
-                    showHardCaptcha().catch((err) => showError(err.message));
+                    await showPowCaptcha(proofTier).catch((err) => showError(err.message));
                 }
             } finally {
-                if (turnstileWidgetId !== null && window.turnstile) {
-                    window.turnstile.reset(turnstileWidgetId);
-                }
+                clearTurnstile("core");
+                coreRequestPending = false;
                 btn.classList.remove("loading");
-                btn.disabled = false;
+                btn.disabled = capSolving;
                 btnText.textContent = "Send";
             }
         }
@@ -792,10 +1389,50 @@
             return `${Math.ceil(minutes / 60)}h`;
         }
 
-        async function copyFrom(targetId, btn) {
+        function formatBalance(value) {
+            const amount = Number(value);
+            if (!Number.isFinite(amount)) return "Unavailable";
+            return amount.toLocaleString(undefined, {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 8,
+            });
+        }
+
+        function networkPresentation(network) {
+            return network === "mainnet"
+                ? {
+                    badge: "Mainnet · Real DASH",
+                    currency: "DASH",
+                    warning: "real mainnet DASH only",
+                }
+                : {
+                    badge: "Testnet",
+                    currency: "tDASH",
+                    warning: "testnet DASH only",
+                };
+        }
+
+        function applyNetworkPresentation(prefix, network) {
+            const presentation = networkPresentation(network);
+            const kicker = $(`${prefix}NetworkKicker`);
+            const badge = $(`${prefix}NetworkBadge`);
+            $(`${prefix}NetworkLabel`).textContent = presentation.badge;
+            kicker.classList.toggle("mainnet", network === "mainnet");
+            badge.textContent = presentation.badge;
+            badge.classList.toggle("mainnet", network === "mainnet");
+            $(`${prefix}TreasuryCurrency`).textContent = presentation.currency;
+            $(`${prefix}NetworkWarning`).textContent = presentation.warning;
+            return presentation;
+        }
+
+        function copyFrom(targetId, btn) {
+            return copyText($(targetId).textContent, btn);
+        }
+
+        async function copyText(text, btn) {
             const original = btn.textContent;
             try {
-                await navigator.clipboard.writeText($(targetId).textContent);
+                await navigator.clipboard.writeText(text);
                 btn.textContent = "Copied!";
                 btn.classList.add("copied");
                 setTimeout(() => {
@@ -853,29 +1490,80 @@
                 applyNetworkCopy(data.network);
 
                 const balance = parseFloat(data.balance);
-                // Quote the tier this page actually uses, not the soft-tier
-                // number `rateLimitPerHour` reports for native clients.
+                // Quote the default tier; fallback PoW uses the soft allowance.
                 const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
                 const parts = [
-                    `Balance: ${balance.toFixed(4)} DASH`,
-                    `Rate Limit: ${limit}/hour`,
-                    `Block: ${Number(data.blockHeight).toLocaleString()}`,
+                    "Faucets online",
+                    `Core rate limit: ${limit}/hour`,
+                    `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                 ];
-                if (data.status === "low_balance") parts.unshift("⚠️ Low balance");
-                $("statusBar").textContent = parts.join(" | ");
+                if (data.status === "low_balance") parts[0] = "⚠️ Testnet faucet low balance";
+                $("statusBar").textContent = parts.join(" · ");
 
                 if (data.depositAddress) {
                     $("depositAddress").textContent = data.depositAddress;
-                    $("fundingSection").style.display = "flex";
+                } else {
+                    $("coreFundingCopy").disabled = true;
                 }
                 if (data.coreFaucetAmount) {
                     $("coreFaucetAmountDisplay").textContent = data.coreFaucetAmount;
                 }
+                const corePresentation = applyNetworkPresentation("core", data.network);
+                $("coreTreasuryBalance").textContent = formatBalance(balance);
+                $("coreTreasuryDetail").textContent =
+                    `${data.coreFaucetAmount} ${corePresentation.currency} per request` +
+                    (Number.isFinite(Number(data.availableUtxos))
+                        ? ` · ${Number(data.availableUtxos).toLocaleString()} spendable outputs`
+                        : "");
+                $("treasuryPanel").hidden = false;
                 if (data.turnstileSiteKey) {
                     turnstileSiteKey = data.turnstileSiteKey;
                 }
                 if (data.hardCapEndpoint) {
                     hardCapEndpoint = data.hardCapEndpoint;
+                }
+                capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
+                if (data.invitationsEnabled) {
+                    $("invitationCard").hidden = false;
+                    $("featureGrid").classList.add("has-invitations");
+                    $("invitationAmountDisplay").textContent = data.invitationAmount;
+                    configureInvitationCount(data.invitationMaxPerRequest);
+                    $("identityNote").hidden = true;
+
+                    const invitationNetwork = data.invitationNetwork || data.network;
+                    const inventory = data.invitationInventory || {};
+                    const available = Number(inventory.available) || 0;
+                    const preparing = Number(inventory.preparing) || 0;
+                    const issued = Number(inventory.issued) || 0;
+                    applyNetworkPresentation("invitation", invitationNetwork);
+                    $("invitationTreasuryCard").hidden = false;
+                    $("invitationTreasuryBalance").textContent =
+                        formatBalance(data.invitationBalance);
+                    $("invitationDepositAddress").textContent =
+                        data.invitationDepositAddress || "Unavailable";
+                    $("invitationFundingCopy").disabled = !data.invitationDepositAddress;
+                    $("invitationAvailable").textContent = available.toLocaleString();
+                    $("invitationPreparing").textContent = preparing.toLocaleString();
+                    $("invitationIssued").textContent = issued.toLocaleString();
+
+                    if (data.invitationError) {
+                        $("invitationAvailability").textContent = "Invitation treasury unavailable";
+                    } else if (available > 0) {
+                        $("invitationAvailability").textContent =
+                            `${available.toLocaleString()} invitation${available === 1 ? "" : "s"} ready now`;
+                    } else if (preparing > 0) {
+                        $("invitationAvailability").textContent =
+                            `${preparing.toLocaleString()} invitation${preparing === 1 ? "" : "s"} preparing`;
+                    } else if (Number(data.invitationBalance) > 0) {
+                        $("invitationAvailability").textContent = "Inventory is refilling";
+                    } else {
+                        $("invitationAvailability").textContent = "Inventory empty · funding required";
+                    }
+
+                    document.title = "Dash Faucets";
+                    $("pageTitle").textContent = "Dash Faucets";
+                    $("pageSubtitle").textContent =
+                        "Testnet coins and real-DASH identity invitations";
                 }
             } catch (err) {
                 $("statusBar").textContent = "Could not load faucet status";
@@ -890,6 +1578,8 @@
         $("addressInput").addEventListener("keydown", (e) => {
             if (e.key === "Enter") requestCoreFaucet();
         });
+        $("invitationBtn").addEventListener("click", requestInvitation);
+        $("moreInvitationsBtn").addEventListener("click", resetInvitationCard);
         for (const btn of document.querySelectorAll("[data-copy]")) {
             btn.addEventListener("click", () => copyFrom(btn.dataset.copy, btn));
         }

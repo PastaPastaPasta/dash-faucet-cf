@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { canEscalate, capTier, resolveConfig, type Env } from "../src/config";
+import {
+  canEscalate,
+  capTier,
+  resolveConfig,
+  resolveInvitationTreasuryConfig,
+  type Env,
+} from "../src/config";
 import { FAUCET } from "./fixtures";
 
 /** The minimum a deployment must set; everything else has a default. */
@@ -77,5 +83,75 @@ describe("proof tiers", () => {
     // ...or when there is no proof-of-work captcha to escalate to at all.
     const noPow = resolveConfig(env({ CAP_SECRET: "" }));
     expect(canEscalate(noPow, "turnstile")).toBe(false);
+  });
+});
+
+describe("invitation configuration", () => {
+  it("is disabled by default and defaults the voucher to 0.03 DASH, one per request", () => {
+    const cfg = resolveConfig(env());
+    expect(cfg.invitations.enabled).toBe(false);
+    expect(cfg.invitations.network).toBe("testnet");
+    // Not the 0.003 protocol floor: released wallets refuse anything below 0.03.
+    expect(cfg.invitations.amountSats).toBe(3_000_000);
+    expect(cfg.invitations.maxPerRequest).toBe(1);
+    expect(cfg.invitations.ttlMs).toBe(60 * 60 * 1000);
+    expect(cfg.invitations.rateWindowMs).toBe(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it("lets a deployment retune the voucher amount and batch size", () => {
+    const cfg = resolveConfig(
+      env({ INVITATION_AMOUNT_SATS: "300000", INVITATION_MAX_PER_REQUEST: "20" }),
+    );
+    expect(cfg.invitations.amountSats).toBe(300_000);
+    expect(cfg.invitations.maxPerRequest).toBe(20);
+    expect(() => resolveConfig(env({ INVITATION_AMOUNT_SATS: "0" }))).toThrow(
+      /INVITATION_AMOUNT_SATS/,
+    );
+    expect(() => resolveConfig(env({ INVITATION_MAX_PER_REQUEST: "0" }))).toThrow(
+      /INVITATION_MAX_PER_REQUEST/,
+    );
+  });
+
+  it("requires the encryption secret and Turnstile when enabled", () => {
+    expect(() => resolveConfig(env({ INVITATIONS_ENABLED: "1" }))).toThrow(
+      /INVITATION_SECRET/,
+    );
+    const cfg = resolveConfig(
+      env({
+        INVITATIONS_ENABLED: "1",
+        INVITATION_SECRET: "secret",
+        TURNSTILE_SITE_KEY: "site",
+        TURNSTILE_SECRET: "turnstile",
+      }),
+    );
+    expect(cfg.invitations.enabled).toBe(true);
+    expect(cfg.invitations.inventoryTarget).toBe(10);
+  });
+
+  it("requires and isolates a separate key for cross-network invitations", () => {
+    const parallel = {
+      INVITATIONS_ENABLED: "1",
+      INVITATION_NETWORK: "mainnet",
+      INVITATION_SECRET: "secret",
+    };
+    expect(() => resolveConfig(env(parallel))).toThrow(/INVITATION_FAUCET_WIF/);
+
+    const input = env({
+      ...parallel,
+      INVITATION_FAUCET_WIF: FAUCET.mainnet.wif,
+      INVITATION_PLATFORM_EXPLORER_URL: "https://platform.example",
+    });
+    const publicConfig = resolveConfig(input);
+    expect(publicConfig.network).toBe("testnet");
+    expect(publicConfig.wif).toBe(FAUCET.testnet.wif);
+    expect(publicConfig.invitations).toMatchObject({
+      network: "mainnet",
+      platformExplorerUrl: "https://platform.example",
+    });
+
+    const invitationConfig = resolveInvitationTreasuryConfig(input);
+    expect(invitationConfig.network).toBe("mainnet");
+    expect(invitationConfig.wif).toBe(FAUCET.mainnet.wif);
+    expect(invitationConfig.providers[0]).toMatchObject({ kind: "hyphen" });
   });
 });

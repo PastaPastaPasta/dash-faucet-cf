@@ -55,7 +55,11 @@ const DUMMY_PKH = "00".repeat(20);
  * Uses the max (padded-signature) appraisal so selection never comes up short
  * after signing.
  */
-function feeCeiling(numInputs: number, numOutputs: number): number {
+function feeCeiling(
+  numInputs: number,
+  numOutputs: number,
+  extraPayloadBytes = 0,
+): number {
   const inputs: TxInput[] = Array.from({ length: numInputs }, () => ({
     txid: "00".repeat(32),
     outputIndex: 0,
@@ -66,7 +70,14 @@ function feeCeiling(numInputs: number, numOutputs: number): number {
     satoshis: 1,
     pubKeyHash: DUMMY_PKH,
   }));
-  return DashTx.appraise({ inputs, outputs }).max;
+  // Special transactions append CompactSize(payload length) + payload after
+  // locktime. Invitation payloads are well below 253 bytes, so the prefix is
+  // one byte. Appraise intentionally uses full P2PKH outputs for the ceiling;
+  // the asset lock's OP_RETURN is smaller, making this conservative.
+  return (
+    DashTx.appraise({ inputs, outputs }).max +
+    (extraPayloadBytes > 0 ? 1 + extraPayloadBytes : 0)
+  );
 }
 
 function keyUtilsFor(key: FaucetKey): KeyUtils {
@@ -99,11 +110,17 @@ function toTxInput(u: Utxo): TxInput {
  * signature, which keeps the request inside the Workers CPU budget and keeps
  * each pool coin on its own independent mempool chain.
  */
-export function selectInputs(utxos: Utxo[], target: number, numOutputs = 2): Utxo[] {
+export function selectInputs(
+  utxos: Utxo[],
+  target: number,
+  numOutputs = 2,
+  extraPayloadBytes = 0,
+): Utxo[] {
   const ascending = [...utxos].sort((a, b) => a.satoshis - b.satoshis);
 
   const single = ascending.find(
-    (u) => u.satoshis >= target + feeCeiling(1, numOutputs),
+    (u) =>
+      u.satoshis >= target + feeCeiling(1, numOutputs, extraPayloadBytes),
   );
   if (single) return [single];
 
@@ -112,14 +129,86 @@ export function selectInputs(utxos: Utxo[], target: number, numOutputs = 2): Utx
   for (const u of [...ascending].reverse()) {
     picked.push(u);
     sum += u.satoshis;
-    if (sum >= target + feeCeiling(picked.length, numOutputs)) return picked;
+    if (
+      sum >= target + feeCeiling(picked.length, numOutputs, extraPayloadBytes)
+    ) {
+      return picked;
+    }
   }
 
   const available = utxos.reduce((acc, u) => acc + u.satoshis, 0);
   throw new InsufficientFundsError(
     available,
-    target + feeCeiling(Math.max(1, utxos.length), numOutputs),
+    target +
+      feeCeiling(Math.max(1, utxos.length), numOutputs, extraPayloadBytes),
   );
+}
+
+function uint64LeHex(value: number): string {
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setBigUint64(0, BigInt(value), true);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+/** Version-1 asset-lock payload containing one P2PKH credit output. */
+export function assetLockPayload(
+  publicKeyHash: string,
+  satoshis: number,
+): string {
+  if (!/^[0-9a-f]{40}$/i.test(publicKeyHash)) {
+    throw new Error("asset lock public key hash must be 20 bytes");
+  }
+  const p2pkh = `76a914${publicKeyHash.toLowerCase()}88ac`;
+  // payload version | output count | value | script length | script
+  return `0101${uint64LeHex(satoshis)}19${p2pkh}`;
+}
+
+/**
+ * Build a v3/type-8 asset lock with an exact voucher credit output and normal
+ * P2PKH change back to the faucet.
+ */
+export async function buildInvitationAssetLock(opts: {
+  key: FaucetKey;
+  utxos: Utxo[];
+  voucherPublicKeyHash: string;
+  satoshis: number;
+}): Promise<BuiltTx> {
+  const { key, utxos, voucherPublicKeyHash, satoshis } = opts;
+  const extraPayload = assetLockPayload(voucherPublicKeyHash, satoshis);
+  const selected = selectInputs(utxos, satoshis, 2, extraPayload.length / 2);
+  const totalIn = selected.reduce((sum, input) => sum + input.satoshis, 0);
+  const fee = feeCeiling(selected.length, 2, extraPayload.length / 2);
+  const changeSats = totalIn - satoshis - fee;
+
+  const outputs: TxOutput[] = [{ satoshis, memo: "" }];
+  if (changeSats > DashTx.LEGACY_DUST) {
+    outputs.push({ satoshis: changeSats, pubKeyHash: key.pubKeyHash });
+  } else if (changeSats < 0) {
+    throw new InsufficientFundsError(totalIn, satoshis + fee);
+  }
+
+  const inputs = selected.map(toTxInput);
+  inputs.sort(DashTx.sortInputs);
+  outputs.sort(DashTx.sortOutputs);
+
+  const dashTx = DashTx.create(keyUtilsFor(key));
+  const signed = await dashTx.hashAndSignAll({
+    version: 3,
+    type: 8,
+    inputs,
+    outputs,
+    locktime: 0,
+    extraPayload,
+  });
+
+  const burn = signed.outputs.find(
+    (output) => output.memo === "" && output.satoshis === satoshis,
+  );
+  if (!burn || signed.extraPayload !== extraPayload) {
+    throw new Error("refusing to broadcast malformed invitation asset lock");
+  }
+
+  return finish(signed, key, totalIn);
 }
 
 async function finish(

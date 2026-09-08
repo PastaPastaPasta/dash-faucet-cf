@@ -16,18 +16,23 @@
 
   // Inherited by every environment.
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["Treasury"] }
+    { "tag": "v1", "new_sqlite_classes": ["Treasury"] },
+    { "tag": "v2", "new_sqlite_classes": ["InvitationTreasury"] }
   ],
 
   "env": {
     "testnet": {
       "assets": { "directory": "./public", "binding": "ASSETS" },
       "routes": [
-        { "pattern": "faucet.dashhq.org", "custom_domain": true }
+        { "pattern": "faucet.dashhq.org", "custom_domain": true },
+        { "pattern": "faucet.thepasta.org", "custom_domain": true }
       ],
       "triggers": { "crons": ["*/10 * * * *"] },
       "durable_objects": {
-        "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
+        "bindings": [
+          { "name": "TREASURY", "class_name": "Treasury" },
+          { "name": "INVITATION_TREASURY", "class_name": "InvitationTreasury" }
+        ]
       },
       "unsafe": {
         "bindings": [
@@ -69,12 +74,29 @@
         "CAP_HARD_C": "50",
         "CAP_HARD_S": "32",
         "CAP_HARD_D": "6",
+        // The public service remains a testnet DASH faucet, while invitations
+        // use their own mainnet actor, key, chain providers and inventory.
+        "INVITATIONS_ENABLED": "1",
+        "INVITATION_NETWORK": "mainnet",
+        // 0.03 DASH. The protocol floor is 0.003, but released Dash Wallets
+        // refuse to redeem an invitation below 0.03, so smaller vouchers are
+        // unspendable by anyone today.
+        "INVITATION_AMOUNT_SATS": "3000000",
+        // Mint up to 20 at a time so a queue at an event never waits on a
+        // ChainLock. Each visitor still takes exactly one per request.
+        "INVITATION_INVENTORY_TARGET": "20",
+        "INVITATION_MAX_PER_REQUEST": "1",
+        "INVITATION_TTL_SECS": "3600",
+        // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
+        "INVITATION_RATE_WINDOW_SECS": "0",
+        "INVITATION_PLATFORM_EXPLORER_URL": "https://platform-explorer.pshenmic.dev",
         "DRY_RUN": "0"
       }
     },
 
     "mainnet": {
       "assets": { "directory": "./public", "binding": "ASSETS" },
+      "workers_dev": false,
       "triggers": { "crons": ["*/10 * * * *"] },
       "durable_objects": {
         "bindings": [{ "name": "TREASURY", "class_name": "Treasury" }]
@@ -104,7 +126,7 @@
         "POOL_MIN": "8",
         "POOL_TARGET": "20",
         "POOL_UTXO_SATS": "1000000",
-        "TURNSTILE_SITE_KEY": "",
+        "TURNSTILE_SITE_KEY": "0x4AAAAAAEc7OCY_Mbh19FLS",
         // cap.js proof-of-work challenge for native clients. Must stay inside
         // the Swift SDK's guard: c,s in 1..256, d in 1..6, c * 16^d <= 64M.
         // 100 * 16^4 = 6.55M, the shape the old CAP server served.
@@ -118,6 +140,16 @@
         "CAP_HARD_C": "50",
         "CAP_HARD_S": "32",
         "CAP_HARD_D": "6",
+        // Keep disabled until the parallel mainnet invitation backend is
+        // connected behind the testnet faucet's public frontend.
+        "INVITATIONS_ENABLED": "0",
+        "INVITATION_AMOUNT_SATS": "3000000",
+        "INVITATION_INVENTORY_TARGET": "10",
+        "INVITATION_MAX_PER_REQUEST": "1",
+        "INVITATION_TTL_SECS": "3600",
+        // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
+        "INVITATION_RATE_WINDOW_SECS": "0",
+        "PLATFORM_EXPLORER_URL": "https://platform-explorer.pshenmic.dev",
         "DRY_RUN": "0"
       }
     }

@@ -5,6 +5,10 @@ signs and broadcasts payouts itself, so there is no Dash Core node, no captcha
 container, and no tunnel to keep alive. The only external dependencies are
 public block explorers, and it fails over between several of them.
 
+It can also run an optional identity-invitation faucet. That path pre-creates
+ChainLocked 0.03 DASH asset locks and gives a wallet everything it needs to
+claim one Platform identity and non-contested DPNS name.
+
 This replaces the FastAPI + `dashd` + CAP + `cloudflared` stack in
 [`PastaPastaPasta/dash-faucet`](https://github.com/PastaPastaPasta/dash-faucet).
 
@@ -21,6 +25,8 @@ Browser ──► Worker (src/index.ts)   ◄── native clients (cap.js proof
             Chain layer (src/chain/) ──► hyphen ┐
                                       ──► insight ├─ ordered failover
                                       ──► dashrpc ┘
+              │
+              └──► Platform Explorer (identity claim checks)
 ```
 
 Transactions are built and signed in the Worker with
@@ -30,7 +36,7 @@ Transactions are built and signed in the Worker with
 — three zero-dependency libraries that run unmodified on `workerd`, plus
 [`@noble/hashes`](https://www.npmjs.com/package/@noble/hashes) for the
 synchronous SHA-256/HMAC the proof-of-work captcha needs. The whole Worker is
-~45 KiB gzipped, against a 3 MiB free-plan limit.
+~52 KiB gzipped, against a 3 MiB free-plan limit.
 
 ### Why a Durable Object
 
@@ -111,7 +117,13 @@ clients both work:
               "requiresHardCaptcha": true } }
 ```
 
-Send `turnstileToken` from the browser, or `capToken` from a native client.
+Send `turnstileToken` or a solved proof-of-work `capToken`.
+The testnet browser automatically falls back to the short PoW challenge if
+Turnstile cannot load, fails, requires interaction, or stalls for eight seconds.
+Testnet CAPTCHA rejections include `requiresProofOfWork: true`, so the browser
+also falls back when server-side Turnstile verification fails. A valid PoW is
+still required, and uses the soft-tier rate limit. Mainnet invitations continue
+to require Turnstile.
 They are separate credentials verified by separate code paths; a `capToken` is
 never forwarded to Turnstile. `hardCapToken` is accepted as an alias for
 `capToken`, for old web clients — it is only a field name and claims nothing
@@ -126,6 +138,84 @@ absent when the daily budget is what ran out, since no proof of work moves that.
 
 Requesting the same address twice in one UTC day returns the original `txid`
 with `replay: true` rather than paying again.
+
+### `POST /api/invitation-faucet`
+
+Enabled only when `INVITATIONS_ENABLED=1`. It requires a Turnstile token bound
+to the `invitation_faucet` action; proof-of-work tokens are not accepted. The
+invitation treasury can use a different network and key from the ordinary
+faucet, so the deployed service dispenses testnet DASH and real-DASH identity
+invitations side by side without sharing coins or Durable Object state.
+
+```bash
+curl -X POST https://faucet.example/api/invitation-faucet \
+  -H 'content-type: application/json' \
+  -d '{"turnstileToken":"...","count":2}'
+```
+
+```json
+{
+  "invitations": [
+    { "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null", "txid": "...", "expiresAt": 1787000000000 },
+    { "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null", "txid": "...", "expiresAt": 1787000000000 }
+  ],
+  "count": 2,
+  "requested": 2,
+  "invitation": "dashpay://invite?assetlocktx=...&pk=...&islock=null",
+  "txid": "...",
+  "amount": 0.03,
+  "expiresAt": 1787000000000,
+  "replay": false,
+  "network": "mainnet"
+}
+```
+
+`count` is optional (default 1) and is rejected with `400` above
+`INVITATION_MAX_PER_REQUEST`. One Turnstile solve covers the whole batch. When
+fewer vouchers are ChainLocked than requested, the response carries what was
+available and `count` < `requested`; a batch is `503` only when nothing is
+ready. The top-level `invitation`/`txid`/`expiresAt` fields describe the first
+entry and exist for clients written against the single-voucher response.
+
+The Treasury builds version-3/type-8 asset-lock transactions in advance and
+does not make them available until Dash Core reports that their containing
+block is ChainLocked. The wallet reconstructs a `ChainAssetLockProof` from the
+transaction; no InstantLock payload is required.
+
+The web result displays the invitation as a QR code generated entirely in the
+browser by the locally bundled `uqr` module. The bearer URI is not sent to an
+external QR service.
+
+This is a pure funding voucher: it does not select a username. The wallet asks
+the recipient to choose a currently available, non-contested name during the
+claim flow. In the legacy invitation format, the optional `du` field identifies
+the inviter for contact bootstrap; using it for the recipient's desired name
+would be incorrect.
+
+With `INVITATION_RATE_WINDOW_SECS` set, each normalized IP and signed
+`HttpOnly` device cookie gets one issuance (single or batch) per window. The IP
+and device values are stored only as keyed HMACs. Repeating a request from the
+same device during its reservation then returns the same invitations instead of
+consuming more, so a lost response cannot lock the device out. With the window
+at `0` there is nothing to protect and every request takes fresh vouchers,
+which is what an operator onboarding a queue of people at an event needs.
+
+An invitation is a bearer private key. The WIF is AES-GCM encrypted at rest and
+is returned only in the no-store API response. After 60 minutes, maintenance
+checks the prospective identity ID. A claimed invitation is retired and its
+encrypted key erased; an unclaimed one goes back into inventory. This recovery
+is intentionally simple and racy: after expiry, the old recipient and a new
+recipient may both have the key, and whichever wallet claims the asset lock
+first wins. The browser clearly marks the reservation expired at 60 minutes;
+the cron may take up to its next run to recycle it.
+
+Compatibility note: the protocol-side invitation minimum is 0.003 DASH, but
+released Dash Wallets gate non-contested invitation claims at 0.03 DASH in the
+username UI, so the voucher defaults to 0.03 (`INVITATION_AMOUNT_SATS`).
+Inventory is tracked per amount: vouchers minted at an older amount are neither
+counted nor issued, and maintenance mints replacements at the current one.
+Current Android releases also structurally require a `du` field and must accept
+inviter-less links before these vouchers can be claimed there.
 
 ### `POST /cap/{v1,hard}/challenge` · `POST /cap/{v1,hard}/redeem`
 
@@ -199,10 +289,15 @@ strictly more expensive than `CAP_*`, which is the one misconfiguration that
 would silently promote every native solve to the escalated allowance.
 
 The browser side uses [`@cap.js/widget`](https://capjs.js.org) — pinned by
-version and SRI, loaded only after a `429`, and left to its own click-to-start
-UI, since a WASM Web Worker pool chewing through 839M hashes is a minute of the
-visitor's CPU. Each capToken is single-use, so one hard solve buys exactly one
-payout.
+version and SRI, loaded when testnet Turnstile fails or after a `429`. The short
+fallback starts automatically. The hard tier keeps its click-to-start UI,
+since a WASM Web Worker pool chewing through 839M hashes is a minute of the
+visitor's CPU. Each capToken is single-use, so one solve buys exactly one payout.
+The soft fallback can still escalate to the hard tier when the server offers it.
+
+Run `npm run test:browser` for browser CAPTCHA regression tests (install Chromium
+with `npx playwright install chromium` first). These mock the CAPTCHA providers;
+`npm test` covers real PoW verification, replay protection, and rate tiers.
 
 ## Configuration
 
@@ -222,10 +317,20 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `TURNSTILE_SITE_KEY` | Public key, served to the UI |
 | `CAP_C` / `CAP_S` / `CAP_D` | Soft proof-of-work shape. Rejected at startup unless `c,s ∈ 1..256`, `d ∈ 1..6` and `c × 16^d ≤ 64M` — the bounds the Swift SDK enforces client-side |
 | `CAP_HARD_C` / `CAP_HARD_S` / `CAP_HARD_D` | Escalated shape served at `/cap/hard/`. Browser-only, so the SDK's 64M bound does not apply; capped at 1B instead |
+| `INVITATIONS_ENABLED` | `1` enables the identity-invitation API and UI |
+| `INVITATION_NETWORK` | Optional network for invitation asset locks; defaults to `NETWORK` |
+| `INVITATION_AMOUNT_SATS` | Voucher value in duffs (default 3000000 / 0.03 DASH, the floor released wallets redeem) |
+| `INVITATION_INVENTORY_TARGET` | Number of ready or preparing invitations to keep on hand (default 10) |
+| `INVITATION_MAX_PER_REQUEST` | Vouchers one request may take at once (default 1) |
+| `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
+| `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days); `0` disables it |
+| `INVITATION_PLATFORM_EXPLORER_URL` | Platform Explorer base URL for invitation claim checks |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
 | `CAP_SECRET` | **secret** — HMAC key for the proof-of-work captcha; blank disables it |
+| `INVITATION_SECRET` | **secret** — encrypts bearer WIFs and HMACs IP/device signals; required when invitations are enabled |
+| `INVITATION_FAUCET_WIF` | **secret** — separate invitation hot key; required when `INVITATION_NETWORK` differs from `NETWORK` |
 
 ### Security
 
@@ -233,6 +338,13 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 float thin and top it up from cold storage. `DAILY_BUDGET_SATS` is enforced in
 the Durable Object and is the hard ceiling on what a single day can cost you,
 regardless of how the limits above it are defeated.
+
+Invitation asset locks are irreversible once broadcast and are intentionally
+outside `DAILY_BUDGET_SATS`; control their maximum cost with a thin faucet
+balance and a small `INVITATION_INVENTORY_TARGET`. Enabling invitations also
+requires a non-empty Turnstile site key and secret. Keep `INVITATION_SECRET`
+stable and backed up for as long as unclaimed inventory exists—losing or
+rotating it makes those stored WIFs unrecoverable.
 
 ## Development
 
@@ -248,14 +360,40 @@ node scripts/verify-testnet.mjs  # end-to-end against live testnet explorers
 
 ### Deploy
 
+GitHub Actions validates pushes and pull requests with type checks, unit/Worker
+tests, browser tests, and a Wrangler build. After validation, pushes to `master`
+automatically deploy the testnet Worker and its static assets, then check both
+public hostnames. Deployments run one at a time and skip superseded revisions.
+Feature branches and pull requests only run validation.
+
+One-time setup in this repository's **Settings → Secrets and variables → Actions**:
+
+- Add the Actions secret `CLOUDFLARE_API_TOKEN`. Use Cloudflare's **Edit Cloudflare
+  Workers** API-token template, scoped to the existing faucet account and the
+  `dashhq.org` and `thepasta.org` zones used by its custom domains.
+- Add the Actions variable `CLOUDFLARE_ACCOUNT_ID` for that account.
+
+Existing Worker secrets remain in Cloudflare; GitHub does not need the wallet
+keys or CAPTCHA secrets. To retry a deployment after updating credentials, use
+**Actions → Validate and deploy faucet → Run workflow**, selecting `master`.
+The workflow deploys only the `testnet` Wrangler environment, which also hosts
+the invitation faucet.
+
+For an initial setup or a manual deployment from an authenticated local shell:
+
 ```bash
 npx wrangler secret put FAUCET_WIF --env testnet
 npx wrangler secret put TURNSTILE_SECRET --env testnet
 npx wrangler secret put CAP_SECRET --env testnet   # any high-entropy string
+npx wrangler secret put INVITATION_SECRET --env testnet
+npx wrangler secret put INVITATION_FAUCET_WIF --env testnet
 npm run deploy:testnet
 ```
 
-Same for `--env mainnet` / `npm run deploy:mainnet`.
+The production testnet Worker uses `FAUCET_WIF` for tDASH payouts and
+`INVITATION_FAUCET_WIF` for its isolated mainnet invitation actor. Both public
+hostnames point to that Worker. The separate `mainnet` Wrangler environment is
+kept disabled and unrouted; it is not the public invitation backend.
 
 ## Notes
 
