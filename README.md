@@ -360,6 +360,27 @@ node scripts/verify-testnet.mjs  # end-to-end against live testnet explorers
 
 ### Deploy
 
+GitHub Actions validates pushes and pull requests with type checks, unit/Worker
+tests, browser tests, and a Wrangler build. After validation, pushes to `master`
+automatically deploy the testnet Worker and its static assets, then check both
+public hostnames. Deployments run one at a time and skip superseded revisions.
+Feature branches and pull requests only run validation.
+
+One-time setup in this repository's **Settings → Secrets and variables → Actions**:
+
+- Add the Actions secret `CLOUDFLARE_API_TOKEN`. Use Cloudflare's **Edit Cloudflare
+  Workers** API-token template, scoped to the existing faucet account and the
+  `dashhq.org` and `thepasta.org` zones used by its custom domains.
+- Add the Actions variable `CLOUDFLARE_ACCOUNT_ID` for that account.
+
+Existing Worker secrets remain in Cloudflare; GitHub does not need the wallet
+keys or CAPTCHA secrets. To retry a deployment after updating credentials, use
+**Actions → Validate and deploy faucet → Run workflow**, selecting `master`.
+The workflow deploys only the `testnet` Wrangler environment, which also hosts
+the invitation faucet.
+
+For an initial setup or a manual deployment from an authenticated local shell:
+
 ```bash
 npx wrangler secret put FAUCET_WIF --env testnet
 npx wrangler secret put TURNSTILE_SECRET --env testnet
