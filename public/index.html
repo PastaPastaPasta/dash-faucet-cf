@@ -722,8 +722,8 @@
                 </div>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
-                    <strong>Hourly limit reached</strong>
-                    <p>Solve a longer proof-of-work challenge to keep going. It runs
+                    <strong id="capTitle">Hourly limit reached</strong>
+                    <p id="capDescription">Solve a longer proof-of-work challenge to keep going. It runs
                        in the background and takes roughly 30&ndash;90 seconds; leave
                        this tab open.</p>
                     <div class="hard-cap-holder" id="hardCapHolder"></div>
@@ -900,11 +900,13 @@
         let coinName = "tDash";
         let turnstileSiteKey = "";
         const turnstileWidgetIds = { core: null, invitation: null };
+        let capEndpoint = "";
         let hardCapEndpoint = "";
         let capScriptPromise = null;
         let capWidget = null;
-        /** True while the widget's worker pool is grinding on a hard challenge. */
+        /** True while the widget's worker pool is solving a challenge. */
         let capSolving = false;
+        let coreRequestPending = false;
         let invitationExpiryTimer = null;
 
         const $ = (id) => document.getElementById(id);
@@ -940,7 +942,7 @@
          * Fetch the widget on first need only.
          *
          * Turnstile is the default path and is both stronger and cheaper in a
-         * browser, so a visitor who never hits the hourly limit should not pay
+         * browser, so a visitor whose CAPTCHA succeeds below the limit need not pay
          * for a third-party script — nor for the WASM blob it pulls in behind
          * it. A failed load clears the promise so a later attempt can retry.
          */
@@ -963,25 +965,26 @@
         }
 
         /**
-         * Render the escalated challenge and wire its solved token back into the
-         * request that was just rejected.
-         *
-         * `solve()` is deliberately never called for the visitor: the widget's
-         * own click-to-start UI is the consent step for spending a minute of
-         * their CPU. Re-entrant while a widget is live, so a second 429 cannot
-         * replace one mid-solve; `disposeCapWidget` is what ends its life.
+         * Use a short automatic solve when Turnstile fails on testnet. The hard
+         * tier still requires a click before spending a minute of the user's CPU.
          */
-        async function showHardCaptcha() {
+        async function showPowCaptcha(tier = "hard", autoStart = false) {
             const progress = $("hardCapProgress");
             $("hardCapBox").classList.add("visible");
             if (capWidget) return;
+            $("capTitle").textContent = tier === "hard"
+                ? "Hourly limit reached" : "Verifying with proof of work";
+            $("capDescription").textContent = tier === "hard"
+                ? "Solve a longer proof-of-work challenge to keep going. It runs in the background and takes roughly 30–90 seconds; leave this tab open."
+                : "A short proof-of-work challenge replaces the CAPTCHA. " +
+                    (autoStart ? "It runs automatically; leave this tab open." : "Click the challenge below to try again.");
 
             progress.textContent = "Loading challenge…";
             await loadCapWidgetScript();
             await customElements.whenDefined("cap-widget");
 
             capWidget = document.createElement("cap-widget");
-            capWidget.setAttribute("data-cap-api-endpoint", hardCapEndpoint);
+            capWidget.setAttribute("data-cap-api-endpoint", tier === "hard" ? hardCapEndpoint : capEndpoint);
             // Leave one core free so the page stays responsive mid-solve.
             capWidget.setAttribute(
                 "data-cap-worker-count",
@@ -1011,17 +1014,30 @@
             capWidget.addEventListener("solve", (event) => {
                 capSolving = false;
                 progress.textContent = "Solved — sending…";
-                requestCoreFaucet({ capToken: event.detail.token });
+                requestCoreFaucet({ capToken: event.detail.token }, tier);
             });
 
             $("hardCapHolder").appendChild(capWidget);
             progress.textContent = "";
+            if (autoStart) {
+                capSolving = true;
+                $("coreFaucetBtn").disabled = true;
+                // The widget reports solve failures through its error event.
+                void capWidget.solve();
+            }
+        }
+
+        function clearTurnstile(kind) {
+            const id = turnstileWidgetIds[kind];
+            turnstileWidgetIds[kind] = null;
+            if (id !== null && window.turnstile) {
+                try { window.turnstile.remove(id); } catch { /* Already unavailable. */ }
+            }
         }
 
         /**
          * Resolve a Turnstile token, rendering the widget on first use.
-         * Resolves to null when no site key is configured, in which case the
-         * server skips verification too.
+         * Testnet falls back quickly if Turnstile needs interaction or stalls.
          */
         function solveTurnstile(kind = "core") {
             const invitation = kind === "invitation";
@@ -1035,13 +1051,17 @@
             }
 
             return new Promise((resolve, reject) => {
+                let settled = false;
                 const settle = (fn, value) => {
+                    if (settled) return;
+                    settled = true;
                     clearTimeout(timer);
                     fn(value);
                 };
+                const canFallback = !invitation && !!capEndpoint;
                 const timer = setTimeout(
                     () => settle(reject, new Error("Captcha timed out — please try again")),
-                    60000
+                    canFallback ? 8000 : 60000
                 );
 
                 const opts = {
@@ -1053,18 +1073,27 @@
                         settle(reject, new Error("Captcha failed — please try again")),
                     "timeout-callback": () =>
                         settle(reject, new Error("Captcha timed out — please try again")),
+                    "expired-callback": () =>
+                        settle(reject, new Error("Captcha expired — please try again")),
+                    "unsupported-callback": () =>
+                        settle(reject, new Error("Captcha is not supported")),
                 };
                 if (invitation) opts.action = "invitation_faucet";
+                if (canFallback) {
+                    opts["before-interactive-callback"] = () =>
+                        settle(reject, new Error("Using proof of work"));
+                }
 
-                if (turnstileWidgetIds[kind] === null) {
+                try {
+                    clearTurnstile(kind);
                     const holder = invitation
                         ? $("invitationTurnstileHolder")
                         : $("turnstileHolder");
                     turnstileWidgetIds[kind] = window.turnstile.render(holder, opts);
-                } else {
-                    window.turnstile.reset(turnstileWidgetIds[kind]);
+                    if (!settled) window.turnstile.execute(turnstileWidgetIds[kind], opts);
+                } catch (error) {
+                    settle(reject, error);
                 }
-                window.turnstile.execute(turnstileWidgetIds[kind], opts);
             });
         }
 
@@ -1221,9 +1250,7 @@
                 errorBox.textContent = error.message;
                 errorBox.classList.add("visible");
             } finally {
-                if (turnstileWidgetIds.invitation !== null && window.turnstile) {
-                    window.turnstile.reset(turnstileWidgetIds.invitation);
-                }
+                clearTurnstile("invitation");
                 btn.classList.remove("loading");
                 btn.disabled = false;
                 btnText.textContent = "Get Invitation";
@@ -1233,13 +1260,10 @@
         /**
          * Send one faucet request.
          *
-         * With no `proof`, this is the normal path: Turnstile, which is
-         * invisible and instant. `proof` is only set by the escalation retry
-         * after a 429, and carries the solved hard capToken — a browser must
-         * never take the soft proof-of-work tier, which is both weaker and
-         * slower here than Turnstile.
+         * Try Turnstile first, then soft PoW on testnet if it fails. A rate-limit
+         * response can offer the hard tier after either initial proof.
          */
-        async function requestCoreFaucet(proof) {
+        async function requestCoreFaucet(proof, proofTier) {
             const card = $("coreFaucetCard");
             const btn = $("coreFaucetBtn");
             const addressInput = $("addressInput");
@@ -1248,7 +1272,7 @@
             // A hard solve is minutes of work the user has already started; a
             // stray click or Enter must not discard it and fall back to a fresh
             // Turnstile attempt. The widget's own solve callback is exempt.
-            if (capSolving && !proof) return;
+            if (coreRequestPending || (capSolving && !proof)) return;
 
             const address = addressInput.value.trim();
             if (!address) {
@@ -1258,6 +1282,7 @@
 
             btn.classList.add("loading");
             btn.disabled = true;
+            coreRequestPending = true;
             $("coreErrorBox").classList.remove("visible");
 
             try {
@@ -1265,11 +1290,20 @@
                 if (proof) {
                     body = { address, ...proof };
                 } else {
+                    disposeCapWidget();
                     hideHardCaptcha();
                     btnText.textContent = "Verifying...";
-                    const turnstileToken = await solveTurnstile();
                     body = { address };
-                    if (turnstileToken) body.turnstileToken = turnstileToken;
+                    try {
+                        const turnstileToken = await solveTurnstile();
+                        if (turnstileToken) body.turnstileToken = turnstileToken;
+                        else if (capEndpoint) throw new Error("Using proof of work");
+                    } catch (error) {
+                        if (!capEndpoint) throw error;
+                        clearTurnstile("core");
+                        await showPowCaptcha("soft", true);
+                        return;
+                    }
                 }
 
                 btnText.textContent = "Sending...";
@@ -1284,17 +1318,22 @@
                 if (proof) disposeCapWidget();
 
                 if (!response.ok) {
+                    if (!proof && capEndpoint && data.requiresProofOfWork) {
+                        clearTurnstile("core");
+                        await showPowCaptcha("soft", true);
+                        return;
+                    }
                     // The server sets requiresHardCaptcha only when a stronger
                     // proof would actually raise this client's own ceiling — not,
                     // for instance, when the global daily budget is what ran out.
-                    // `!proof` stops a solve that still got a 429 from looping.
+                    // A hard solve must not loop back into another escalation.
                     const escalate =
                         response.status === 429 &&
-                        !proof &&
+                        proofTier !== "hard" &&
                         hardCapEndpoint &&
                         (data.requiresHardCaptcha || data.detail?.requiresHardCaptcha);
                     if (escalate) {
-                        await showHardCaptcha();
+                        await showPowCaptcha();
                         return;
                     }
 
@@ -1332,14 +1371,13 @@
                 // response never got to burn its widget above.
                 if (proof) {
                     disposeCapWidget();
-                    showHardCaptcha().catch((err) => showError(err.message));
+                    await showPowCaptcha(proofTier).catch((err) => showError(err.message));
                 }
             } finally {
-                if (turnstileWidgetIds.core !== null && window.turnstile) {
-                    window.turnstile.reset(turnstileWidgetIds.core);
-                }
+                clearTurnstile("core");
+                coreRequestPending = false;
                 btn.classList.remove("loading");
-                btn.disabled = false;
+                btn.disabled = capSolving;
                 btnText.textContent = "Send";
             }
         }
@@ -1452,8 +1490,7 @@
                 applyNetworkCopy(data.network);
 
                 const balance = parseFloat(data.balance);
-                // Quote the tier this page actually uses, not the soft-tier
-                // number `rateLimitPerHour` reports for native clients.
+                // Quote the default tier; fallback PoW uses the soft allowance.
                 const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
                 const parts = [
                     "Faucets online",
@@ -1485,6 +1522,7 @@
                 if (data.hardCapEndpoint) {
                     hardCapEndpoint = data.hardCapEndpoint;
                 }
+                capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
                 if (data.invitationsEnabled) {
                     $("invitationCard").hidden = false;
                     $("featureGrid").classList.add("has-invitations");

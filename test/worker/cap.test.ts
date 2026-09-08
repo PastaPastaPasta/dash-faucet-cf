@@ -1,6 +1,6 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import DashKeys from "dashkeys";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeChain } from "./fakechain";
 import { FAUCET, RECIPIENT } from "../fixtures";
 import { CapParams, checkSolution, subChallenge } from "../../src/cap";
@@ -164,6 +164,32 @@ describe("cap.js endpoints", () => {
       "203.0.113.6",
     );
     expect(bad.status).toBe(400);
+    expect(bad.body.requiresProofOfWork).toBe(true);
+    expect(bad.body.detail.requiresProofOfWork).toBe(true);
+    const fallback = await post("/api/core-faucet", {
+      address: await address(80),
+      capToken: await mintCapToken(),
+    }, "203.0.113.6");
+    expect(fallback.status).toBe(200);
+    expect(chain.siteverifyTokens).toEqual(["web-token", "web-token"]);
+  });
+
+  it("offers PoW when Turnstile verification is unavailable", async () => {
+    env.TURNSTILE_SECRET = "turnstile-secret";
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("Turnstile unavailable"));
+    const failed = await post("/api/core-faucet", {
+      address: RECIPIENT.testnet.address,
+      turnstileToken: "web-token",
+    });
+    expect(failed.status).toBe(400);
+    expect(failed.body.error).toBe("Captcha verification unavailable");
+    expect(failed.body.requiresProofOfWork).toBe(true);
+    expect(chain.broadcastAttempts).toHaveLength(0);
+    const fallback = await post("/api/core-faucet", {
+      address: RECIPIENT.testnet.address,
+      capToken: await mintCapToken(),
+    });
+    expect(fallback.status).toBe(200);
   });
 
   it("rejects a replayed capToken", async () => {
@@ -196,6 +222,7 @@ describe("cap.js endpoints", () => {
     });
     expect(status).toBe(400);
     expect(body.error).toBe("Invalid captcha token");
+    expect(body.requiresProofOfWork).toBeUndefined();
   });
 
   it("rejects a redeem with a wrong nonce or the wrong solution count", async () => {

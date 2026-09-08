@@ -10,7 +10,8 @@
     "deploy:mainnet": "wrangler deploy --env mainnet",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
-    "verify": "node scripts/verify-testnet.mjs"
+    "verify": "node scripts/verify-testnet.mjs",
+    "test:browser": "playwright test test/browser"
   },
   "dependencies": {
     "@dashincubator/secp256k1": "^1.7.1-5",
@@ -21,6 +22,7 @@
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
     "@cloudflare/workers-types": "^5.20260825.1",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.0",
     "typescript": "~5.9.2",
     "uqr": "^0.1.3",

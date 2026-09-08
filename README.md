@@ -117,7 +117,13 @@ clients both work:
               "requiresHardCaptcha": true } }
 ```
 
-Send `turnstileToken` from the browser, or `capToken` from a native client.
+Send `turnstileToken` or a solved proof-of-work `capToken`.
+The testnet browser automatically falls back to the short PoW challenge if
+Turnstile cannot load, fails, requires interaction, or stalls for eight seconds.
+Testnet CAPTCHA rejections include `requiresProofOfWork: true`, so the browser
+also falls back when server-side Turnstile verification fails. A valid PoW is
+still required, and uses the soft-tier rate limit. Mainnet invitations continue
+to require Turnstile.
 They are separate credentials verified by separate code paths; a `capToken` is
 never forwarded to Turnstile. `hardCapToken` is accepted as an alias for
 `capToken`, for old web clients — it is only a field name and claims nothing
@@ -283,10 +289,15 @@ strictly more expensive than `CAP_*`, which is the one misconfiguration that
 would silently promote every native solve to the escalated allowance.
 
 The browser side uses [`@cap.js/widget`](https://capjs.js.org) — pinned by
-version and SRI, loaded only after a `429`, and left to its own click-to-start
-UI, since a WASM Web Worker pool chewing through 839M hashes is a minute of the
-visitor's CPU. Each capToken is single-use, so one hard solve buys exactly one
-payout.
+version and SRI, loaded when testnet Turnstile fails or after a `429`. The short
+fallback starts automatically. The hard tier keeps its click-to-start UI,
+since a WASM Web Worker pool chewing through 839M hashes is a minute of the
+visitor's CPU. Each capToken is single-use, so one solve buys exactly one payout.
+The soft fallback can still escalate to the hard tier when the server offers it.
+
+Run `npm run test:browser` for browser CAPTCHA regression tests (install Chromium
+with `npx playwright install chromium` first). These mock the CAPTCHA providers;
+`npm test` covers real PoW verification, replay protection, and rate tiers.
 
 ## Configuration
 

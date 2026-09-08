@@ -325,7 +325,15 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
   }
 
   const captcha = await verifyCaptcha(env, cfg, ip, body);
-  if (!captcha.ok) return errorJson(captcha.status, captcha.reason);
+  if (!captcha.ok) {
+    return errorJson(
+      captcha.status,
+      captcha.reason,
+      cfg.network === "testnet" && cfg.capSecret && !body.capToken && !body.hardCapToken
+        ? { requiresProofOfWork: true }
+        : {},
+    );
+  }
 
   const result = await treasury(env).payout({
     address,
