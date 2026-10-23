@@ -14,6 +14,7 @@ import { AddressError, addressToPubKeyHash } from "./keys";
 import {
   clientIp,
   errorJson,
+  isJsonObject,
   json,
   preflight,
   rawClientIp,
@@ -215,6 +216,9 @@ async function handleCapRedeem(request: Request, env: Env): Promise<Response> {
   } catch {
     return errorJson(400, "Request body must be JSON");
   }
+  if (!isJsonObject(body)) {
+    return errorJson(400, "Request body must be a JSON object");
+  }
 
   // The challenge shape comes from the token, not from config, so retuning
   // CAP_C/CAP_S/CAP_D cannot invalidate a solve that is already in flight.
@@ -299,6 +303,16 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     body = (await request.json()) as typeof body;
   } catch {
     return errorJson(400, "Request body must be JSON");
+  }
+  if (!isJsonObject(body)) {
+    return errorJson(400, "Request body must be a JSON object");
+  }
+  if (
+    [body.address, body.turnstileToken, body.capToken, body.hardCapToken].some(
+      (value) => value !== undefined && typeof value !== "string",
+    )
+  ) {
+    return errorJson(400, "Address and captcha tokens must be strings");
   }
 
   // Cheap first line of defence, before any work or outbound calls. Per-colo
@@ -388,6 +402,9 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
     body = (await request.json()) as typeof body;
   } catch {
     return errorJson(400, "Request body must be JSON");
+  }
+  if (!isJsonObject(body)) {
+    return errorJson(400, "Request body must be a JSON object");
   }
 
   const max = cfg.invitations.maxPerRequest;
