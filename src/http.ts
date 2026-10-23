@@ -6,6 +6,10 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
+export function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 export function json(
   body: unknown,
   status = 200,
