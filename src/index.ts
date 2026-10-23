@@ -270,7 +270,7 @@ async function verifyCaptcha(
     return { ok: true, tier: capTier(cfg, check.params) };
   }
 
-  if (body.turnstileToken) {
+  if (body.turnstileToken && cfg.turnstileSecret) {
     const outcome = await verifyTurnstile(cfg.turnstileSecret, body.turnstileToken, ip);
     if (!outcome.ok) {
       const reason = outcome.reason ?? "Captcha verification failed";
