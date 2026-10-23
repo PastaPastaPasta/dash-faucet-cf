@@ -249,6 +249,17 @@ describe("cap.js endpoints", () => {
     expect(status).toBe(400);
     expect(body.error).toBe("Captcha token required");
   });
+
+  it("does not let an unconfigured Turnstile credential bypass configured PoW", async () => {
+    const result = await post("/api/core-faucet", {
+      address: RECIPIENT.testnet.address,
+      turnstileToken: "anything-without-a-solve",
+    });
+    expect(result.status).toBe(400);
+    expect(result.body.requiresProofOfWork).toBe(true);
+    expect(chain.broadcastAttempts).toHaveLength(0);
+    expect(chain.siteverifyTokens).toEqual([]);
+  });
 });
 
 describe("proof-strength rate limit tiers", () => {
