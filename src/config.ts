@@ -493,8 +493,10 @@ export function resolveStarterConfig(env: Env, network: NetworkName): StarterCon
   } catch {
     throw new Error(`STARTER_ISSUER_URL_${suffix} is not a URL`);
   }
+  // http only for a local issuer (wrangler dev against an issuer on this machine), as the govhub web worker allows
+  const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
   if (
-    url.protocol !== "https:" ||
+    (url.protocol !== "https:" && !(local && url.protocol === "http:")) ||
     url.username ||
     url.password ||
     url.search ||

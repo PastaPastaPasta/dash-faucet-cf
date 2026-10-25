@@ -4,6 +4,7 @@ import {
   capTier,
   resolveConfig,
   resolveInvitationTreasuryConfig,
+  resolveStarterConfig,
   resolveStarterShared,
   MIN_STARTER_AMOUNT_SATS,
   type Env,
@@ -165,5 +166,23 @@ describe("starter configuration", () => {
       MIN_STARTER_AMOUNT_SATS,
     );
     expect(() => resolveStarterShared(env({ STARTER_AMOUNT_SATS: "224000" }))).toThrow(/at least 300000/);
+  });
+
+  it("wants an https issuer origin, or plain http on this machine only", () => {
+    const issuer = (url: string) =>
+      resolveStarterConfig(
+        env({
+          STARTER_NETWORKS: "testnet",
+          STARTER_ISSUER_ID_TESTNET: "9Jwa6v2Bwj9TtDmgJGn3KV9qqXprYZUBEkKzkxzx3HD8",
+          STARTER_ISSUER_URL_TESTNET: url,
+        }),
+        "testnet",
+      ).issuerUrl;
+    expect(issuer("https://gov-issuer-testnet.dashhq.org")).toBe("https://gov-issuer-testnet.dashhq.org");
+    expect(issuer("http://127.0.0.1:8789")).toBe("http://127.0.0.1:8789");
+    expect(issuer("http://localhost:8789")).toBe("http://localhost:8789");
+    for (const bad of ["http://gov-issuer-testnet.dashhq.org", "https://x.test/path", "https://u:p@x.test", "ftp://127.0.0.1"]) {
+      expect(() => issuer(bad), bad).toThrow(/https origin/);
+    }
   });
 });
