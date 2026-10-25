@@ -3,14 +3,19 @@ import {
   COIN,
   Env,
   FaucetConfig,
+  NetworkName,
   ProofTier,
   canEscalate,
   capTier,
   resolveConfig,
+  resolveStarterConfig,
+  resolveStarterShared,
+  starterNetworks,
+  starterSuffix,
 } from "./config";
 import { describeError } from "./errors";
 import { hashInvitationSignal, invitationDevice } from "./invitation";
-import { AddressError, addressToPubKeyHash } from "./keys";
+import { AddressError, addressToPubKeyHash, base58Decode, hexToBytes } from "./keys";
 import {
   clientIp,
   errorJson,
@@ -21,15 +26,31 @@ import {
   verifyTurnstile,
 } from "./http";
 import {
+  base64Decode,
+  getStarterKeys,
+  isU32,
+  KEY_LIST_MISS_REFRESH_MS,
+  starterTokenHash,
+  verifyStarterToken,
+  type StarterKey,
+} from "./starter";
+import {
+  STARTER_TREASURY_ID,
   TREASURY_ID,
   type InvitationIssueResult,
   type PayoutResult,
+  type StarterRedeemResult,
 } from "./treasury";
 
 // Only the Durable Object class may be re-exported here: workerd validates the
 // entry module's named exports and rejects anything that is not a handler or a
 // class, so constants have to live in the module that defines them.
-export { InvitationTreasury, Treasury } from "./treasury";
+export {
+  InvitationTreasury,
+  MainnetStarterTreasury,
+  TestnetStarterTreasury,
+  Treasury,
+} from "./treasury";
 
 function treasury(env: Env) {
   return env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
@@ -42,6 +63,13 @@ function invitationTreasury(env: Env) {
   return env.INVITATION_TREASURY.get(
     env.INVITATION_TREASURY.idFromName(TREASURY_ID),
   );
+}
+
+function starterTreasury(env: Env, network: NetworkName) {
+  const name = `STARTER_TREASURY_${starterSuffix(network)}` as const;
+  const namespace = env[name];
+  if (!namespace) throw new Error(`${name} binding is not configured`);
+  return namespace.get(namespace.idFromName(STARTER_TREASURY_ID));
 }
 
 function toDash(satoshis: number): number {
@@ -71,6 +99,9 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
   const device = cfg.invitations.enabled
     ? invitationDevice(request, cfg.invitations.secret)
     : undefined;
+
+  // Started first so it overlaps the tDASH snapshot. Never rejects.
+  const starter = starterStatus(env);
 
   let snap: Awaited<ReturnType<ReturnType<typeof treasury>["snapshot"]>>;
   try {
@@ -144,6 +175,7 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
           }
         : {}),
       ...(invitationError ? { invitationError } : {}),
+      starter: await starter,
     },
     low ? 503 : 200,
     device?.setCookie ? { "Set-Cookie": device.setCookie } : {},
@@ -477,6 +509,273 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   );
 }
 
+// ---- govhub starter credit ------------------------------------------------------
+
+const STARTER_STATUS_TIMEOUT_MS = 3_000;
+
+/**
+ * `starter` block of /api/status. Never throws: a bad starter setting, or a
+ * starter treasury that cannot be reached, shows up here as an `error` and
+ * leaves the rest of the status untouched.
+ */
+async function starterStatus(env: Env): Promise<Record<string, unknown>> {
+  let shared;
+  try {
+    shared = resolveStarterShared(env);
+  } catch (err) {
+    return { networks: [], error: describeError(err) };
+  }
+  const treasuries: Record<string, unknown> = {};
+  await Promise.all(
+    shared.networks.map(async (network) => {
+      let timer: ReturnType<typeof setTimeout> | null = null;
+      try {
+        // The snapshot queues behind any redemption in progress (it runs under
+        // the treasury's spending lock) and asks the explorers: never let that
+        // hold up /api/status.
+        const timeout = new Promise<"timeout">((resolve) => {
+          timer = setTimeout(() => resolve("timeout"), STARTER_STATUS_TIMEOUT_MS);
+        });
+        const snap = await Promise.race([starterTreasury(env, network).statusSnapshot(), timeout]);
+        if (snap === "timeout") {
+          treasuries[network] = { error: "timeout" };
+          return;
+        }
+        treasuries[network] = {
+          address: snap.address,
+          balance: toDash(snap.balanceSats),
+          balanceSats: snap.balanceSats,
+          poolUtxos: snap.poolUtxos,
+          spentTodaySats: snap.spentToday,
+          dailyBudgetSats: shared.dailyBudgetSats,
+        };
+      } catch (err) {
+        treasuries[network] = { error: describeError(err) };
+      } finally {
+        if (timer !== null) clearTimeout(timer);
+      }
+    }),
+  );
+  return {
+    networks: shared.networks,
+    amount: toDash(shared.amountSats),
+    amountSats: shared.amountSats,
+    ...(shared.networks.length ? { treasuries } : {}),
+  };
+}
+
+type StarterCode =
+  | "bad-request"
+  | "invalid-token"
+  | "unknown-key"
+  | "disabled"
+  | "rate-limited"
+  | "budget"
+  | "unavailable";
+
+const NO_STORE = { "Cache-Control": "no-store" };
+
+function starterError(
+  status: number,
+  code: StarterCode,
+  message: string,
+  extra: Record<string, unknown> = {},
+  headers: Record<string, string> = {},
+): Response {
+  return errorJson(status, message, { code, ...extra }, { ...NO_STORE, ...headers });
+}
+
+type StarterFailure = Extract<StarterRedeemResult, { ok: false }>;
+
+/** Exhaustive, like PAYOUT_FAILURES: a new treasury code fails to compile here. */
+function starterFailure(result: StarterFailure): Response {
+  switch (result.code) {
+    case "budget_exhausted":
+      return starterError(
+        429,
+        "budget",
+        "Starter daily budget exhausted",
+        { retryAfter: result.retryAfter },
+        { "Retry-After": String(result.retryAfter) },
+      );
+    case "self_pay":
+      return starterError(400, "bad-request", "That is the faucet's own address");
+    case "insufficient_funds":
+      return starterError(503, "unavailable", "Starter treasury has insufficient funds");
+    // Generic messages only on this route: treasury detail text can name
+    // configuration problems and is no business of a client's.
+    case "chain_unavailable":
+      return starterError(503, "unavailable", "Chain providers unavailable, please retry");
+    case "error":
+      return starterError(503, "unavailable", "Starter payout could not be made, please retry");
+  }
+}
+
+/** Largest signature accepted: RSA-3072. */
+const MAX_SIG_BYTES = 384;
+
+/**
+ * POST /api/starter: pay one verified govhub starter token.
+ *
+ * Privacy: nothing about the request is logged, and the treasury is handed
+ * only SHA-256(sig) and the pubKeyHash it pays — never the address string,
+ * the token itself or the client IP. Do not add console output here.
+ */
+async function handleStarter(request: Request, env: Env): Promise<Response> {
+  let body: Record<string, unknown>;
+  try {
+    const parsed: unknown = await request.json();
+    if (!isJsonObject(parsed)) {
+      return starterError(400, "bad-request", "Request body must be a JSON object");
+    }
+    body = parsed;
+  } catch {
+    return starterError(400, "bad-request", "Request body must be JSON");
+  }
+
+  let enabled: NetworkName[];
+  try {
+    enabled = starterNetworks(env);
+  } catch {
+    return starterError(503, "unavailable", "Starter credit is misconfigured");
+  }
+  const net = enabled.find((n) => n === body.network);
+  if (!net) {
+    return starterError(404, "disabled", "Starter credit is not enabled for that network");
+  }
+
+  const { epoch, address, msgPrefix: prefixB64, sig: sigB64 } = body;
+  if (
+    !isU32(epoch) ||
+    typeof address !== "string" ||
+    typeof prefixB64 !== "string" ||
+    typeof sigB64 !== "string" ||
+    sigB64.length > Math.ceil(MAX_SIG_BYTES / 3) * 4
+  ) {
+    return starterError(
+      400,
+      "bad-request",
+      "Expected network, epoch (u32), address, msgPrefix and sig (base64)",
+    );
+  }
+  let msgPrefix: Uint8Array;
+  let sig: Uint8Array;
+  try {
+    msgPrefix = base64Decode(prefixB64);
+    sig = base64Decode(sigB64);
+  } catch {
+    return starterError(400, "bad-request", "msgPrefix and sig must be base64");
+  }
+  if (msgPrefix.length !== 32) {
+    return starterError(400, "bad-request", "msgPrefix must be 32 bytes");
+  }
+
+  let cfg;
+  try {
+    cfg = resolveStarterConfig(env, net);
+  } catch {
+    return starterError(503, "unavailable", "Starter credit is misconfigured");
+  }
+
+  if (env.EDGE_LIMIT) {
+    const { success } = await env.EDGE_LIMIT.limit({ key: `starter:${clientIp(request)}` });
+    if (!success) {
+      return starterError(
+        429,
+        "rate-limited",
+        "Rate limit exceeded",
+        { retryAfter: 60 },
+        { "Retry-After": "60" },
+      );
+    }
+  }
+
+  let pubKeyHash: string;
+  try {
+    pubKeyHash = await addressToPubKeyHash(address, net);
+  } catch (err) {
+    if (err instanceof AddressError) return starterError(400, "bad-request", err.message);
+    throw err;
+  }
+
+  let key: StarterKey | undefined;
+  try {
+    key = (await getStarterKeys(cfg)).get(epoch);
+    // A new epoch's key may be newer than the cached list: look once more.
+    key ??= (await getStarterKeys(cfg, { maxAgeMs: KEY_LIST_MISS_REFRESH_MS })).get(epoch);
+  } catch {
+    return starterError(
+      503,
+      "unavailable",
+      "Starter issuer keys are unavailable, please retry",
+      { retryAfter: 30 },
+      { "Retry-After": "30" },
+    );
+  }
+  if (!key) {
+    return starterError(400, "unknown-key", "No starter key is accepted for that epoch");
+  }
+
+  const valid = await verifyStarterToken(
+    key,
+    {
+      network: net,
+      issuerId: base58Decode(cfg.issuerId),
+      pubKeyHash: hexToBytes(pubKeyHash),
+    },
+    msgPrefix,
+    sig,
+  );
+  if (!valid) {
+    return starterError(400, "invalid-token", "Starter token does not verify for this address");
+  }
+
+  let result: StarterRedeemResult;
+  try {
+    result = await starterTreasury(env, net).redeemStarter({
+      tokenHash: starterTokenHash(sig),
+      pubKeyHash,
+    });
+  } catch {
+    // Deliberately not echoed: it can name a misconfigured secret.
+    return starterError(503, "unavailable", "Starter treasury is unavailable, please retry");
+  }
+  if (!result.ok) return starterFailure(result);
+
+  return json(
+    {
+      txid: result.txid,
+      amount: toDash(result.satoshis),
+      amountSats: result.satoshis,
+      address: address.trim(),
+      network: net,
+      replay: result.replay,
+      ...(result.dryRun ? { dryRun: true } : {}),
+    },
+    200,
+    { ...NO_STORE, "Referrer-Policy": "no-referrer" },
+  );
+}
+
+/** Cron step for the starter pools. Never throws; one network cannot block another. */
+async function maintainStarters(env: Env): Promise<void> {
+  let networks: NetworkName[];
+  try {
+    networks = starterNetworks(env);
+  } catch (err) {
+    console.error(`starter maintenance skipped: ${describeError(err)}`);
+    return;
+  }
+  for (const network of networks) {
+    try {
+      const result = await starterTreasury(env, network).maintain();
+      console.log(`starter ${network} maintenance: ${result.action} — ${result.detail}`);
+    } catch (err) {
+      console.error(`starter ${network} maintenance failed: ${describeError(err)}`);
+    }
+  }
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
@@ -514,11 +813,33 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/api/invitation-faucet" && request.method === "POST") {
     return handleInvitation(request, env);
   }
+  if (url.pathname === "/api/starter" && request.method === "POST") {
+    return handleStarter(request, env);
+  }
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/")) {
     return errorJson(404, "Not found");
   }
   // Anything else is the static UI.
   return env.ASSETS.fetch(request);
+}
+
+/** The pre-existing cron jobs: invitation inventory, then the tDASH pool. */
+async function maintainCore(env: Env): Promise<void> {
+  const cfg = resolveConfig(env);
+  if (cfg.invitations.enabled) {
+    try {
+      const invitations = await invitationTreasury(env).maintainInvitations();
+      console.log(
+        `invitation maintenance: ${invitations.action} — ${invitations.detail}`,
+      );
+    } catch (err) {
+      // The real-DASH actor must not keep the existing tDASH faucet from
+      // maintaining its pool when an invitation provider is unavailable.
+      console.error(`invitation maintenance failed: ${describeError(err)}`);
+    }
+  }
+  const result = await treasury(env).maintain();
+  console.log(`treasury maintenance: ${result.action} — ${result.detail}`);
 }
 
 export default {
@@ -534,22 +855,15 @@ export default {
     }
   },
 
-  /** Cron: refresh the isolated invitation inventory, then the tDASH pool. */
+  /**
+   * Cron: refresh the isolated invitation inventory, then the tDASH pool, then
+   * (whatever happened above) the starter pools.
+   */
   async scheduled(_event: ScheduledController, env: Env): Promise<void> {
-    const cfg = resolveConfig(env);
-    if (cfg.invitations.enabled) {
-      try {
-        const invitations = await invitationTreasury(env).maintainInvitations();
-        console.log(
-          `invitation maintenance: ${invitations.action} — ${invitations.detail}`,
-        );
-      } catch (err) {
-        // The real-DASH actor must not keep the existing tDASH faucet from
-        // maintaining its pool when an invitation provider is unavailable.
-        console.error(`invitation maintenance failed: ${describeError(err)}`);
-      }
+    try {
+      await maintainCore(env);
+    } finally {
+      await maintainStarters(env);
     }
-    const result = await treasury(env).maintain();
-    console.log(`treasury maintenance: ${result.action} — ${result.detail}`);
   },
 };

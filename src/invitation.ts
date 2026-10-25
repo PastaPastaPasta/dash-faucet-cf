@@ -3,11 +3,10 @@ import { sha256 } from "@noble/hashes/sha2.js";
 import DashKeys from "dashkeys";
 import Secp256k1 from "@dashincubator/secp256k1";
 import type { NetworkName } from "./config";
-import { bytesToHex } from "./keys";
+import { BASE58, bytesToHex, hexToBytes } from "./keys";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const DEVICE_COOKIE = "dash_invite_device";
 const DEVICE_MAX_AGE_SECS = 30 * 24 * 60 * 60;
 
@@ -20,17 +19,6 @@ export interface VoucherKey {
   wif: string;
   privateKey: Uint8Array;
   publicKeyHash: string;
-}
-
-function hexToBytes(hex: string): Uint8Array {
-  if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) {
-    throw new Error("invalid hex");
-  }
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i += 1) {
-    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
 }
 
 function secretBytes(secret: string, purpose: string): Uint8Array {

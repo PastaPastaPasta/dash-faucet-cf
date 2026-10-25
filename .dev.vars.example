@@ -5,6 +5,7 @@
 #   npx wrangler secret put CAP_SECRET --env testnet
 #   npx wrangler secret put INVITATION_SECRET --env testnet
 #   npx wrangler secret put INVITATION_FAUCET_WIF --env testnet
+#   npx wrangler secret put STARTER_WIF_TESTNET --env testnet
 
 # WIF for the faucet's hot key. Must match the deployment's NETWORK.
 FAUCET_WIF=
@@ -26,3 +27,8 @@ INVITATION_SECRET=
 # Optional separate hot key when INVITATION_NETWORK differs from NETWORK.
 # The deployed testnet faucet uses a mainnet key here for real-DASH vouchers.
 INVITATION_FAUCET_WIF=
+
+# govhub starter treasury hot keys, one per network listed in STARTER_NETWORKS.
+# Each must be a key no other treasury uses.
+STARTER_WIF_TESTNET=
+STARTER_WIF_MAINNET=

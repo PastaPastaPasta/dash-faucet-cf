@@ -1,0 +1,13 @@
+{
+  "comment": "starter token v1 test vector (test-only RSA-2048 key, holds nothing): message = govhub-starter:v1 || net || issuerId || keyId || epoch BE || pubKeyHash; preparedMsg = msgPrefix || message; sig = RSABSSA-SHA384-PSS-Randomized",
+  "net": "testnet",
+  "netByte": 2,
+  "issuerId": "9Jwa6v2Bwj9TtDmgJGn3KV9qqXprYZUBEkKzkxzx3HD8",
+  "epoch": 2743,
+  "pubKeyHash": "0102030405060708090a0b0c0d0e0f1011121314",
+  "spki": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApI1XFYuNdtIR6/tHCyc+qI9N3F+JjgWWtqPzjyOztCgqWpA97u+6VEYoTTBDPf3I9ajlXysurM75ULjywTEJFdSxoP/gS36L5sluH7gNIkxnUmIVfeELZ4kRkIZ0xNzUGtEBpBThngFJ1vkPPJqQ5UBTIMa5HyzRU/V52Hw6RuxOSkZm9qBzYg+xIHyVHDU/T47ezNSrfaL1+/8j8FT860berWnGvTY1I+1kKZhHg98eI6YDhNfD797h2vDdIx8vV68Yt30vwmArWO8cw/NT4De5931KD0/OYqBZYjGoEJlOa/IVLcmo5no7Hsr5h5w62WoBTN7wk3BocLTxY95uIwIDAQAB",
+  "keyId": "0681ab699e639056b321875ffd97dea3fb286509036d6a976decf3a557ab5232",
+  "message": "676f766875622d737461727465723a7631027b76128dfb4c82f87980f96e3edc99f51677c8d746038cd7dfb03772c6f8c49f0681ab699e639056b321875ffd97dea3fb286509036d6a976decf3a557ab523200000ab70102030405060708090a0b0c0d0e0f1011121314",
+  "msgPrefix": "/IErQYgIw3/nWaD2OUOR099xYsdgwRnnIdrz1O4IOCk=",
+  "sig": "DboIGHbDf8G4J5G6A0s1j+cSOTn43JGuxhYcqrnSZEAyJxWusv1N2rnVrzLAj4bdtbxkTbngG9972HVwXRkzKL1xjIRvzFHyFbVV9Kvpoeg05E4/UwE1tW7k9ZnMJf2HbcfXFl8cl6qznIQBcC2H02pQTUhbFbDrQTO65EmWsM6k78qkhIW7zkDfAlsokT84WA3Q5YOmO/OQko/ptaF6EBcbAapNRWOX4iqZhYM+PvKw+8iERtns4bS32X//eUTY9o8i9e/9IgLNFqLFh/IILm/egSJxvsBel61Q2WKNwHV9GsiopuKh1pKYWo/Gh0D77dF8waQcHXaySh+sQThduw=="
+}

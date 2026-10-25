@@ -1,7 +1,8 @@
 /** Per-network configuration and env parsing. */
 
 import { capWork, type CapParams } from "./cap";
-import type { Treasury } from "./treasury";
+import { base58Decode } from "./keys";
+import type { StarterTreasury, Treasury } from "./treasury";
 
 export type NetworkName = "mainnet" | "testnet";
 
@@ -27,6 +28,9 @@ export interface Env {
   TREASURY: DurableObjectNamespace<Treasury>;
   /** Separate treasury for real-DASH invitation asset locks. */
   INVITATION_TREASURY?: DurableObjectNamespace<Treasury>;
+  /** Separate treasuries for govhub starter credits, one per network. */
+  STARTER_TREASURY_MAINNET?: DurableObjectNamespace<StarterTreasury>;
+  STARTER_TREASURY_TESTNET?: DurableObjectNamespace<StarterTreasury>;
   /** Cloudflare's built-in rate limiter. Optional so tests can omit it. */
   EDGE_LIMIT?: { limit(opts: { key: string }): Promise<{ success: boolean }> };
 
@@ -57,6 +61,17 @@ export interface Env {
   INVITATION_RATE_WINDOW_SECS?: string;
   PLATFORM_EXPLORER_URL?: string;
   INVITATION_PLATFORM_EXPLORER_URL?: string;
+  /** "", "mainnet", "testnet" or "mainnet,testnet". Blank disables starters. */
+  STARTER_NETWORKS?: string;
+  STARTER_ISSUER_ID_MAINNET?: string;
+  STARTER_ISSUER_ID_TESTNET?: string;
+  STARTER_ISSUER_URL_MAINNET?: string;
+  STARTER_ISSUER_URL_TESTNET?: string;
+  STARTER_AMOUNT_SATS?: string;
+  STARTER_DAILY_BUDGET_SATS?: string;
+  STARTER_POOL_MIN?: string;
+  STARTER_POOL_TARGET?: string;
+  STARTER_POOL_UTXO_SATS?: string;
 
   // secrets
   FAUCET_WIF: string;
@@ -64,6 +79,8 @@ export interface Env {
   CAP_SECRET?: string;
   INVITATION_SECRET?: string;
   INVITATION_FAUCET_WIF?: string;
+  STARTER_WIF_MAINNET?: string;
+  STARTER_WIF_TESTNET?: string;
 }
 
 export interface FaucetConfig {
@@ -369,6 +386,178 @@ export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
     providers: PROVIDERS[network],
     wif,
   };
+}
+
+// ---- govhub starter credits ----------------------------------------------------
+//
+// Resolved lazily, only by the starter route, the starter Durable Objects and
+// the starter cron step. resolveConfig never reads these, so a missing or bad
+// starter setting cannot break /api/status, payouts, invitations or the
+// tDASH pool: every caller catches and isolates the error.
+
+export function starterSuffix(network: NetworkName): "MAINNET" | "TESTNET" {
+  return network === "mainnet" ? "MAINNET" : "TESTNET";
+}
+
+export interface StarterShared {
+  networks: NetworkName[];
+  amountSats: number;
+  dailyBudgetSats: number;
+  poolMin: number;
+  poolTarget: number;
+  poolUtxoSats: number;
+}
+
+export interface StarterConfig {
+  network: NetworkName;
+  /** base58, exactly as the issuer reports it */
+  issuerId: string;
+  /** https origin, no trailing slash */
+  issuerUrl: string;
+}
+
+/** The networks starters are enabled for; [] when STARTER_NETWORKS is blank. */
+export function starterNetworks(env: Env): NetworkName[] {
+  const raw = (env.STARTER_NETWORKS ?? "").trim();
+  if (!raw) return [];
+  const networks: NetworkName[] = [];
+  for (const part of raw.split(",")) {
+    const network = networkName("STARTER_NETWORKS", part.trim());
+    if (!networks.includes(network)) networks.push(network);
+  }
+  return networks;
+}
+
+/**
+ * Smallest starter worth paying. The browser locks the whole payment for
+ * Platform credits, and Platform refuses an identity-create lock below about
+ * 221,500 duffs (govhub asks depositors for 224,000 with the asset lock's fee);
+ * anything under this floor would pay out money that can never become an
+ * identity.
+ */
+export const MIN_STARTER_AMOUNT_SATS = 300_000;
+
+export function resolveStarterShared(env: Env): StarterShared {
+  const amountSats = positiveInt("STARTER_AMOUNT_SATS", env.STARTER_AMOUNT_SATS, 600_000);
+  if (amountSats < MIN_STARTER_AMOUNT_SATS) {
+    throw new Error(
+      `STARTER_AMOUNT_SATS must be at least ${MIN_STARTER_AMOUNT_SATS} (one identity), got ${amountSats}`,
+    );
+  }
+  return {
+    networks: starterNetworks(env),
+    amountSats,
+    dailyBudgetSats: int(
+      "STARTER_DAILY_BUDGET_SATS",
+      env.STARTER_DAILY_BUDGET_SATS,
+      12_000_000,
+    ),
+    poolMin: int("STARTER_POOL_MIN", env.STARTER_POOL_MIN, 4),
+    poolTarget: int("STARTER_POOL_TARGET", env.STARTER_POOL_TARGET, 8),
+    poolUtxoSats: positiveInt(
+      "STARTER_POOL_UTXO_SATS",
+      env.STARTER_POOL_UTXO_SATS,
+      6_000_000,
+    ),
+  };
+}
+
+function starterEnabled(env: Env, network: NetworkName): StarterShared {
+  const shared = resolveStarterShared(env);
+  if (!shared.networks.includes(network)) {
+    throw new Error(`starter credit is not enabled for ${network}`);
+  }
+  return shared;
+}
+
+/** What the route needs to verify a token for `network`. */
+export function resolveStarterConfig(env: Env, network: NetworkName): StarterConfig {
+  starterEnabled(env, network);
+  const suffix = starterSuffix(network);
+
+  const issuerId = (env[`STARTER_ISSUER_ID_${suffix}`] ?? "").trim();
+  let idBytes: Uint8Array;
+  try {
+    idBytes = base58Decode(issuerId);
+  } catch {
+    throw new Error(`STARTER_ISSUER_ID_${suffix} is not a base58 identifier`);
+  }
+  if (idBytes.length !== 32) {
+    throw new Error(`STARTER_ISSUER_ID_${suffix} must decode to 32 bytes`);
+  }
+
+  const rawUrl = (env[`STARTER_ISSUER_URL_${suffix}`] ?? "").trim();
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    throw new Error(`STARTER_ISSUER_URL_${suffix} is not a URL`);
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    (url.pathname !== "/" && url.pathname !== "")
+  ) {
+    throw new Error(`STARTER_ISSUER_URL_${suffix} must be an https origin`);
+  }
+
+  return { network, issuerId, issuerUrl: url.origin };
+}
+
+/**
+ * Configuration for one starter Durable Object: its own network, providers,
+ * hot key, payout amount, daily budget and pool shape. Invitations are off.
+ */
+export function resolveStarterTreasuryConfig(
+  env: Env,
+  network: NetworkName,
+): FaucetConfig {
+  const base = resolveConfig(env);
+  const shared = starterEnabled(env, network);
+  const suffix = starterSuffix(network);
+  const wif = (env[`STARTER_WIF_${suffix}`] ?? "").trim();
+  if (!wif) throw new Error(`STARTER_WIF_${suffix} secret is not set`);
+  return {
+    ...base,
+    network,
+    providers: PROVIDERS[network],
+    payoutSats: shared.amountSats,
+    dailyBudgetSats: shared.dailyBudgetSats,
+    minBalanceSats: 0,
+    poolMin: shared.poolMin,
+    poolTarget: shared.poolTarget,
+    poolUtxoSats: shared.poolUtxoSats,
+    wif,
+    invitations: { ...base.invitations, enabled: false },
+  };
+}
+
+/**
+ * The other hot keys a starter key must not equal: two treasuries spending one
+ * address would select the same coins and conflict.
+ */
+export function otherHotKeys(
+  env: Env,
+): Array<{ name: string; wif: string; network: NetworkName }> {
+  const out: Array<{ name: string; wif: string; network: NetworkName }> = [];
+  if (env.FAUCET_WIF && (env.NETWORK === "mainnet" || env.NETWORK === "testnet")) {
+    out.push({ name: "FAUCET_WIF", wif: env.FAUCET_WIF, network: env.NETWORK });
+  }
+  const invitationNetwork = env.INVITATION_NETWORK || env.NETWORK;
+  if (
+    env.INVITATION_FAUCET_WIF &&
+    (invitationNetwork === "mainnet" || invitationNetwork === "testnet")
+  ) {
+    out.push({
+      name: "INVITATION_FAUCET_WIF",
+      wif: env.INVITATION_FAUCET_WIF,
+      network: invitationNetwork,
+    });
+  }
+  return out;
 }
 
 export const COIN = 100_000_000;

@@ -64,6 +64,19 @@ export default defineConfig({
                 INVITATION_INVENTORY_TARGET: "3",
                 INVITATION_MAX_PER_REQUEST: "3",
                 INVITATION_PLATFORM_EXPLORER_URL: "https://platform.test",
+                // govhub starter credit, testnet only. Deterministic test key
+                // (private key 0x5a x 32), distinct from FAUCET_WIF; holds nothing.
+                STARTER_NETWORKS: "testnet",
+                STARTER_WIF_TESTNET: "cQcLSPn5cGQSQrkyiuEsNfB3kB9Rvvj4CZh2Afh5AwoRGt1RFsr9",
+                STARTER_ISSUER_ID_TESTNET: "9Jwa6v2Bwj9TtDmgJGn3KV9qqXprYZUBEkKzkxzx3HD8",
+                // Served by FakeChain with keys the tests generate.
+                STARTER_ISSUER_URL_TESTNET: "https://issuer.test",
+                STARTER_AMOUNT_SATS: "600000",
+                // Three starters a day, so a test can reach the ceiling.
+                STARTER_DAILY_BUDGET_SATS: "1800000",
+                STARTER_POOL_MIN: "2",
+                STARTER_POOL_TARGET: "4",
+                STARTER_POOL_UTXO_SATS: "2000000",
                 DRY_RUN: "0",
               },
             },

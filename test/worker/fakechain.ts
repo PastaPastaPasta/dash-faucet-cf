@@ -29,6 +29,8 @@ export class FakeChain {
   /** Transactions the network will admit to knowing. */
   readonly known = new Set<string>();
   readonly broadcastAttempts: string[] = [];
+  /** Every address whose UTXOs an explorer was asked for, in order. */
+  readonly utxoReads: string[] = [];
   /**
    * Every token handed to Turnstile's siteverify. Recorded so a test can prove
    * that a proof-of-work capToken is never sent to Cloudflare.
@@ -40,6 +42,12 @@ export class FakeChain {
   readonly platformIdentities = new Set<string>();
   /** When true, Platform Explorer answers every identity lookup with a 503. */
   platformDown = false;
+  /**
+   * govhub starter issuers, by origin: the `/v1/starter/info` body each one
+   * serves. An origin missing here answers 503 (an unreachable issuer).
+   */
+  readonly issuers = new Map<string, unknown>();
+  readonly issuerFetches: string[] = [];
 
   install(): void {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>
@@ -88,6 +96,16 @@ export class FakeChain {
       });
     }
 
+    // --- govhub starter issuer ----------------------------------------------
+    if (url.endsWith("/v1/starter/info")) {
+      const origin = new URL(url).origin;
+      this.issuerFetches.push(origin);
+      const info = this.issuers.get(origin);
+      return info === undefined
+        ? new Response("unavailable", { status: 503 })
+        : this.json(info);
+    }
+
     // --- broadcast -----------------------------------------------------------
     if (url.includes("/insight-api/tx/send")) {
       this.broadcastAttempts.push(String(init.body));
@@ -110,6 +128,7 @@ export class FakeChain {
           return this.broadcastResponse(true);
         case "getaddressutxos": {
           const address = body.params[0].addresses[0];
+          this.utxoReads.push(address);
           const script = await this.scriptFor(address);
           return this.json({
             result: this.coins.map((c) => ({
@@ -154,6 +173,7 @@ export class FakeChain {
     }
     if (url.includes("/insight-api/addr/")) {
       const address = url.split("/insight-api/addr/")[1].split("/")[0];
+      this.utxoReads.push(address);
       const script = await this.scriptFor(address);
       return this.json(
         this.coins.map((c) => ({

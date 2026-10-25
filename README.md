@@ -96,6 +96,12 @@ Response shapes match the old Python faucet, so existing clients and the
 Returns `503` with `status: "low_balance"` when the balance is under
 `MIN_BALANCE_SATS`.
 
+It also carries a `starter` block (see [Starter credit](#starter-credit-govhub)):
+`{ "networks": [], "amount": 0.006, "amountSats": 600000 }` while disabled, plus
+`treasuries.<network>` with each starter treasury's `address` and `balanceSats`
+once enabled. A bad starter setting shows up there as `error` and never fails
+the rest of the status.
+
 ### `POST /api/core-faucet`
 
 ```bash
@@ -262,6 +268,121 @@ and even the hard tier's 839M is only tens of seconds for someone with real
 hardware. This is friction and cost, not a bot defence. The real limits are the
 per-IP rate limit and `DAILY_BUDGET_SATS`.
 
+## Starter credit (govhub)
+
+govhub gives one free "starter" (0.006 DASH by default) to each masternode,
+proved with its voting key, and to each governance proposal, proved with its
+payment address, so its owner can create a Platform identity. The govhub
+issuer checks eligibility and hands out a **blind-signed token**
+(RSABSSA-SHA384-PSS-Randomized, RFC 9474); this faucet redeems it by paying a
+plain P2PKH output to the browser's one-time funding address. The browser then
+builds the asset lock with its own key. The faucet never holds a key of the
+identity.
+
+### `POST /api/starter`
+
+```json
+{ "network": "testnet", "epoch": 2743, "address": "y...",
+  "msgPrefix": "<base64, 32 bytes>", "sig": "<base64>" }
+```
+
+```json
+{ "txid": "...", "amount": 0.006, "amountSats": 600000, "address": "y...",
+  "network": "testnet", "replay": false }
+```
+
+The token's pubKeyHash must be the address's hash160: a token copied in
+transit cannot pay anyone else. Sending the same token again returns the same
+`txid` with `replay: true` and never pays twice. Responses are
+`Cache-Control: no-store`. Errors use the usual shape plus a `code`:
+
+| Status | `code` | Meaning |
+|---|---|---|
+| 400 | `bad-request` | Malformed body or address |
+| 400 | `invalid-token` | The signature does not verify for this network, issuer, epoch key and address |
+| 400 | `unknown-key` | The issuer lists no key for `epoch` |
+| 404 | `disabled` | Starters are not enabled for `network` |
+| 429 | `budget` | The network's daily starter budget is spent (`retryAfter`, to UTC midnight); the token is not used up |
+| 429 | `rate-limited` | `EDGE_LIMIT` (per IP, key `starter:<ip>`) |
+| 503 | `unavailable` | Issuer key list unreachable, chain providers down, broadcast unresolved, insufficient funds or misconfiguration; retry with the same token |
+
+Verification uses WebCrypto only. The faucet rebuilds the 106-byte message
+`"govhub-starter:v1" || net || issuerId || keyId || epoch (u32 BE) || pubKeyHash`
+from its own config and the address it is about to pay, then checks a
+RSASSA-PSS (SHA-384, MGF1-SHA-384, salt 48) signature over `msgPrefix ||
+message`. It also requires the signature to be exactly as long as the modulus,
+`s < n`, and a 32-byte prefix. Keys come from
+`STARTER_ISSUER_URL_<N>/v1/starter/info`: the reported `network` and `issuerId`
+must match this faucet's, every `keyId` is recomputed as SHA-256(spki), keys must
+be RSA-2048/3072 with e = 65537, and the list is cached per isolate for five
+minutes (up to an hour while the issuer is unreachable). Taking the keys from
+the issuer is safe: the browser blinds only against the key it proved on
+Platform, so a key served here cannot tag anyone, and the issuer could mint
+tokens anyway. `test/vectors/starter-v1.json` is govhub's vector and pins both
+implementations.
+
+### Privacy model
+
+- The faucet sees a token and the address it pays, never the masternode or
+  proposal: the issuer signed the token blind, so neither service can link the
+  two.
+- Each network's starter treasury stores only `sha256(sig) -> txid` in a
+  `WITHOUT ROWID` table, plus the signed transaction only while its broadcast is
+  unresolved. That table has no timestamps, IPs or addresses, and starters
+  never write the tDASH faucet's per-address or per-IP tables. The coin ledger
+  every treasury inherits (`spent`, `pending`) does keep payout txids with a
+  `created_at`, like the other treasuries; that adds no link to a masternode or
+  proposal, since payout times are public on the network anyway.
+- The route logs nothing about a request: no address, token or IP.
+- Timing is the remaining link. One operator runs both the issuer and the faucet,
+  so a token redeemed right after it was issued could be correlated by time. The
+  browser's "redeem later" option exists for that.
+- Per-request invocation logs are turned off in `wrangler.jsonc`
+  (`observability.logs.invocation_logs: false`) for this reason. The setting
+  applies to the whole Worker, the tDASH faucet and invitations included;
+  console warnings and errors are still logged. Cloudflare's edge still sees
+  each request (IP, time), as for any site behind it.
+
+### Security
+
+`STARTER_WIF_<N>` is a hot key. Keep the treasury float thin and top it up as
+needed. `STARTER_DAILY_BUDGET_SATS` is enforced per network in the Durable
+Object and bounds the loss if the issuer's signing key is ever stolen: such a
+thief can mint tokens, but cannot take more than a day's budget per day. A
+starter key that equals `FAUCET_WIF` or `INVITATION_FAUCET_WIF` on the same
+network is refused, because two treasuries spending one address would select
+the same coins. That check only sees this Worker's own secrets: never reuse a key
+from another deployment (the separate `mainnet` Wrangler environment) either.
+
+A payout is recorded against the token, and its amount reserved from the daily
+budget, *before* it is broadcast. If the broadcast is ambiguous (a timeout), a
+retry with the same token, or the next cron run, rebroadcasts the same signed
+bytes, so it can only ever pay once. If a first broadcast is rejected outright by
+every relay, the record and the reservation are deleted and the token stays
+usable. A stored payout that is later rejected and that no explorer knows is
+never replaced from other coins: a replacement spends only the stored payout's
+own still-unspent inputs, so the two conflict; if none is left, the token stays
+`unavailable` for an operator to resolve. Starter txids are redacted from the
+Worker's logs.
+
+### Enabling
+
+Nothing is live until `STARTER_NETWORKS` lists a network. For testnet:
+
+1. `npx wrangler secret put STARTER_WIF_TESTNET --env testnet`, a fresh key
+   used for nothing else.
+2. In `wrangler.jsonc` (env `testnet`), set `STARTER_ISSUER_ID_TESTNET` (the
+   starter issuer identity, e.g. `9Jwa6v2Bwj9TtDmgJGn3KV9qqXprYZUBEkKzkxzx3HD8`)
+   and `STARTER_ISSUER_URL_TESTNET` (the issuer's https origin).
+3. Set `"STARTER_NETWORKS": "testnet"` and deploy. `GET /api/status` now shows
+   `starter.treasuries.testnet.address`. Fund it, and the cron splits the coin
+   into a pool of `STARTER_POOL_UTXO_SATS` coins.
+
+For mainnet, do the same with the `_MAINNET` names and add `mainnet` to the list
+(`"mainnet,testnet"`). One deployment serves both: each network has its own
+Durable Object (`STARTER_TREASURY_MAINNET` / `STARTER_TREASURY_TESTNET`), key,
+providers and budget.
+
 ## Proof-strength tiers
 
 The hourly per-IP limit scales with how strong a proof the client presented.
@@ -325,12 +446,19 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
 | `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days); `0` disables it |
 | `INVITATION_PLATFORM_EXPLORER_URL` | Platform Explorer base URL for invitation claim checks |
+| `STARTER_NETWORKS` | govhub starter credit: `""` (off, the default), `mainnet`, `testnet` or `mainnet,testnet` |
+| `STARTER_ISSUER_ID_MAINNET` / `_TESTNET` | Base58 starter issuer identity for that network (32 bytes) |
+| `STARTER_ISSUER_URL_MAINNET` / `_TESTNET` | https origin of the govhub issuer serving `/v1/starter/info` |
+| `STARTER_AMOUNT_SATS` | Starter payout in duffs (default 600000 / 0.006 DASH) |
+| `STARTER_DAILY_BUDGET_SATS` | Per-network daily ceiling on starter payouts (default 12000000 / 0.12 DASH) |
+| `STARTER_POOL_MIN` / `STARTER_POOL_TARGET` / `STARTER_POOL_UTXO_SATS` | Starter pool thresholds (defaults 4 / 8 / 6000000) |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
 | `CAP_SECRET` | **secret** — HMAC key for the proof-of-work captcha; blank disables it |
 | `INVITATION_SECRET` | **secret** — encrypts bearer WIFs and HMACs IP/device signals; required when invitations are enabled |
 | `INVITATION_FAUCET_WIF` | **secret** — separate invitation hot key; required when `INVITATION_NETWORK` differs from `NETWORK` |
+| `STARTER_WIF_MAINNET` / `_TESTNET` | **secret** — starter treasury hot key for that network; must differ from the other hot keys |
 
 ### Security
 

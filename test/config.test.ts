@@ -4,6 +4,8 @@ import {
   capTier,
   resolveConfig,
   resolveInvitationTreasuryConfig,
+  resolveStarterShared,
+  MIN_STARTER_AMOUNT_SATS,
   type Env,
 } from "../src/config";
 import { FAUCET } from "./fixtures";
@@ -153,5 +155,15 @@ describe("invitation configuration", () => {
     expect(invitationConfig.network).toBe("mainnet");
     expect(invitationConfig.wif).toBe(FAUCET.mainnet.wif);
     expect(invitationConfig.providers[0]).toMatchObject({ kind: "hyphen" });
+  });
+});
+
+describe("starter configuration", () => {
+  it("refuses a starter amount too small to create an identity", () => {
+    expect(resolveStarterShared(env()).amountSats).toBe(600_000);
+    expect(resolveStarterShared(env({ STARTER_AMOUNT_SATS: String(MIN_STARTER_AMOUNT_SATS) })).amountSats).toBe(
+      MIN_STARTER_AMOUNT_SATS,
+    );
+    expect(() => resolveStarterShared(env({ STARTER_AMOUNT_SATS: "224000" }))).toThrow(/at least 300000/);
   });
 });

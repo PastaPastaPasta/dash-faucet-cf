@@ -24,6 +24,41 @@ export function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
+export function hexToBytes(hex: string): Uint8Array {
+  if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) {
+    throw new Error("invalid hex");
+  }
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i += 1) {
+    bytes[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+/** Bitcoin base58 alphabet, as used by Platform identifiers. */
+export const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/** Base58 without a checksum (Platform identifiers). Throws on bad input. */
+export function base58Decode(text: string): Uint8Array {
+  if (typeof text !== "string" || text.length === 0) throw new Error("empty base58");
+  let value = 0n;
+  for (const ch of text) {
+    const digit = BASE58.indexOf(ch);
+    if (digit < 0) throw new Error("invalid base58 character");
+    value = value * 58n + BigInt(digit);
+  }
+  const body: number[] = [];
+  while (value > 0n) {
+    body.push(Number(value % 256n));
+    value /= 256n;
+  }
+  let zeros = 0;
+  while (zeros < text.length && text[zeros] === "1") zeros += 1;
+  const out = new Uint8Array(zeros + body.length);
+  for (let i = 0; i < body.length; i += 1) out[out.length - 1 - i] = body[i];
+  return out;
+}
+
 export async function loadFaucetKey(
   wif: string,
   network: NetworkName,
