@@ -1,7 +1,8 @@
 import DashKeys from "dashkeys";
 import DashTx from "dashtx";
 import { vi } from "vitest";
-import { grpcOk, grpcStatus, lengthDelimited, lengthPrefix, varint } from "../grpcweb";
+import { bytesToHex } from "../../src/keys";
+import { field1, grpcOk, grpcStatus, lengthDelimited, varintField } from "../grpcweb";
 
 export interface Coin {
   txid: string;
@@ -194,18 +195,14 @@ export class FakeChain {
     return new Response("unexpected request: " + url, { status: 500 });
   }
 
-  /**
-   * DAPI over grpc-web. Requests here carry at most one length-delimited
-   * field 1, so the request decoder only needs to skip the tag and length.
-   */
+  /** DAPI over grpc-web: one request frame, at most one field in it. */
   private async dapi(method: string, init: RequestInit): Promise<Response> {
-    const request = new Uint8Array(init.body as ArrayBuffer).subarray(5);
-    const field1 = request.length === 0 ? new Uint8Array(0) : request.subarray(lengthPrefix(request));
+    const payload = field1((init.body as Uint8Array).subarray(5));
     switch (method) {
       case "getBestBlockHeight":
-        return grpcOk([0x08, ...varint(this.height)]);
+        return grpcOk(varintField(1, this.height));
       case "broadcastTransaction": {
-        const hex = Array.from(field1, (b) => b.toString(16).padStart(2, "0")).join("");
+        const hex = bytesToHex(payload);
         this.broadcastAttempts.push({ relay: "dapi", hex });
         switch (this.broadcast.kind) {
           case "accept": {
@@ -221,13 +218,13 @@ export class FakeChain {
         }
       }
       case "getTransaction": {
-        const txid = new TextDecoder().decode(field1);
+        const txid = new TextDecoder().decode(payload);
         if (!this.knows(txid)) return grpcStatus(5, "Transaction not found");
         // GetTransactionResponse: 3 height, 4 confirmations, 6 is_chain_locked.
         return grpcOk([
-          0x18, ...varint(this.height - 5),
-          0x20, ...varint(6),
-          0x30, 1,
+          ...varintField(3, this.height - 5),
+          ...varintField(4, 6),
+          ...varintField(6, 1),
         ]);
       }
       default:

@@ -5,7 +5,7 @@ import { DapiProvider } from "../src/chain/dapi";
 import { HyphenProvider } from "../src/chain/hyphen";
 import { InsightProvider } from "../src/chain/insight";
 import type { ProviderSpec } from "../src/config";
-import { grpcOk, grpcStatus, lengthDelimited, varint } from "./grpcweb";
+import { grpcOk, grpcStatus, grpcTrailers, lengthDelimited, varintField } from "./grpcweb";
 
 const ADDR = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
 const SCRIPT = "76a9149290649ba520a35912dab1733b6f098587e432ef88ac";
@@ -24,7 +24,10 @@ function mockFetch(route: Route) {
 const ok = (body: unknown) =>
   new Response(JSON.stringify(body), { status: 200 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("InsightProvider", () => {
   it("normalises rows and drops unconfirmed outputs", async () => {
@@ -337,7 +340,7 @@ describe("DapiProvider", () => {
     let seen: { url: string; init: RequestInit } | undefined;
     mockFetch((url, init) => {
       seen = { url, init };
-      return grpcOk([0x08, ...varint(1_580_503)]);
+      return grpcOk(varintField(1, 1_580_503));
     });
     await expect(dapi().getHeight(signal())).resolves.toBe(1_580_503);
     expect(seen!.url).toBe(
@@ -360,6 +363,13 @@ describe("DapiProvider", () => {
     expect([...body!]).toEqual([0, 0, 0, 0, 5, 0x0a, 3, 0x01, 0x02, 0xff]);
   });
 
+  it("skips fields it does not read, even fixed-width ones", async () => {
+    // 2: fixed64, 3: fixed32 — neither is in today's response, both may come.
+    const extra = [0x11, 1, 2, 3, 4, 5, 6, 7, 8, 0x1d, 1, 2, 3, 4];
+    mockFetch(() => grpcOk([...extra, ...varintField(1, 42)]));
+    await expect(dapi().getHeight(signal())).resolves.toBe(42);
+  });
+
   it("surfaces Core's rejection text so the classifier can read it", async () => {
     mockFetch(() => grpcStatus(3, "invalid transaction: bad-txns-inputs-missingorspent"));
     const err = await dapi().broadcast("00", signal()).catch((e: Error) => e);
@@ -368,17 +378,46 @@ describe("DapiProvider", () => {
   });
 
   it("reads a status sent in the trailer frame, not just the headers", async () => {
-    const trailer = new TextEncoder().encode(
-      "grpc-status: 9\r\ngrpc-message: Transaction%20is%20rejected%3A%20dust\r\n",
+    mockFetch(() =>
+      grpcTrailers("grpc-status: 9\r\ngrpc-message: Transaction%20is%20rejected%3A%20dust\r\n"),
     );
-    const body = new Uint8Array(5 + trailer.length);
-    body[0] = 0x80;
-    new DataView(body.buffer).setUint32(1, trailer.length);
-    body.set(trailer, 5);
-    mockFetch(() => new Response(body, { status: 200 }));
     await expect(dapi().broadcast("00", signal())).rejects.toThrow(
       /grpc 9\): Transaction is rejected: dust/,
     );
+  });
+
+  it("keeps a grpc-message that is not valid percent-encoding as sent", async () => {
+    mockFetch(() => grpcTrailers("grpc-status: 9\r\ngrpc-message: 100% rejected\r\n"));
+    await expect(dapi().broadcast("00", signal())).rejects.toThrow(/grpc 9\): 100% rejected/);
+  });
+
+  it("never reads a reply without a grpc-status as success", async () => {
+    mockFetch(
+      () =>
+        new Response(new Uint8Array([0, 0, 0, 0, 2, 0x0a, 0]), {
+          status: 200,
+          headers: { "content-type": "application/grpc-web+proto" },
+        }),
+    );
+    const err = await dapi().broadcast("00", signal()).catch((e: Error) => e);
+    expect(String(err)).toMatch(/no grpc-status/);
+    expect(classifyBroadcastError(String(err))).toBe("ambiguous");
+  });
+
+  it("refuses a 200 that is not grpc-web at all", async () => {
+    mockFetch(() => new Response("<html>hello</html>", { status: 200 }));
+    await expect(dapi().broadcast("00", signal())).rejects.toThrow(/non-grpc-web/);
+  });
+
+  it("refuses a truncated frame", async () => {
+    mockFetch(
+      () =>
+        new Response(new Uint8Array([0, 0, 0, 0, 9, 0x08]), {
+          status: 200,
+          headers: { "content-type": "application/grpc-web+proto" },
+        }),
+    );
+    await expect(dapi().getHeight(signal())).rejects.toThrow(/truncated grpc-web frame/);
   });
 
   it("treats a gateway 5xx as a transport failure", async () => {
@@ -395,7 +434,9 @@ describe("DapiProvider", () => {
   });
 
   it("reads ChainLock status from getTransaction", async () => {
-    mockFetch(() => grpcOk([0x18, ...varint(1_580_000), 0x20, ...varint(3), 0x30, 1]));
+    mockFetch(() =>
+      grpcOk([...varintField(3, 1_580_000), ...varintField(4, 3), ...varintField(6, 1)]),
+    );
     await expect(dapi().getChainLockStatus(TX, signal())).resolves.toEqual({
       known: true,
       height: 1_580_000,
@@ -425,76 +466,62 @@ describe("ChainClient with DAPI relays", () => {
   ];
   const coin = { txid: "aa", vout: 0, satoshis: 7, scriptPubKey: SCRIPT, height: 99, confirmations: 1 };
 
-  it("reads UTXOs from insight only, using DAPI for the tip", async () => {
-    const seen: string[] = [];
-    mockFetch((url) => {
-      seen.push(url);
-      if (url.includes("getBestBlockHeight")) return grpcOk([0x08, ...varint(100)]);
-      if (url.includes("i/insight-api/status")) return ok({ info: { blocks: 100 } });
-      if (url.includes("i/insight-api/addr")) return ok([coin]);
+  /** DAPI tip, insight tip, and insight's UTXO listing. */
+  function testnet(dapiHeight: number, insightHeight: number, listing: Route = () => ok([coin])): Route {
+    return (url, init) => {
+      if (url.includes("getBestBlockHeight")) return grpcOk(varintField(1, dapiHeight));
+      if (url.includes("i/insight-api/status")) return ok({ info: { blocks: insightHeight } });
+      if (url.includes("i/insight-api/addr")) return listing(url, init);
       throw new Error(`unexpected ${url}`);
-    });
+    };
+  }
+
+  it("reads UTXOs from insight, using DAPI only for the tip", async () => {
+    mockFetch(testnet(100, 100));
     const snap = await new ChainClient(TESTNET).getUtxos(ADDR);
     expect(snap.source).toBe("insight");
     expect(snap.statuses.map((s) => s.name)).toEqual(["insight", "dapi:seed-1", "dapi:seed-2"]);
-    expect(seen.filter((u) => u.includes("dapi.v0.Core/")).every((u) => u.endsWith("getBestBlockHeight"))).toBe(true);
   });
 
   it("refuses a lagging insight rather than reading stale coins", async () => {
-    mockFetch((url) => {
-      if (url.includes("getBestBlockHeight")) return grpcOk([0x08, ...varint(200)]);
-      if (url.includes("i/insight-api/status")) return ok({ info: { blocks: 150 } });
-      throw new Error(`unexpected ${url}`);
-    });
-    await expect(new ChainClient(TESTNET).getUtxos(ADDR)).rejects.toThrow(/insight: 50 blocks behind tip/);
+    mockFetch(testnet(200, 150, () => {
+      throw new Error("must not be called");
+    }));
+    await expect(new ChainClient(TESTNET).getUtxos(ADDR)).rejects.toThrow(
+      /insight: 50 blocks behind tip/,
+    );
   });
 
-  it("retries a failed UTXO listing once before giving up", async () => {
+  it("gives the UTXO listing a longer deadline than the height survey", async () => {
+    // Fake timers do not drive AbortSignal.timeout, so check the budgets where
+    // they are set: three parallel height checks, then the listing.
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    mockFetch(testnet(100, 100));
+    await new ChainClient(TESTNET).getUtxos(ADDR);
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([2500, 2500, 2500, 8000]);
+  });
+
+  it("retries a quickly failed UTXO listing once", async () => {
     let listings = 0;
-    mockFetch((url) => {
-      if (url.includes("getBestBlockHeight")) return grpcOk([0x08, ...varint(100)]);
-      if (url.includes("i/insight-api/status")) return ok({ info: { blocks: 100 } });
-      if (url.includes("i/insight-api/addr")) {
-        listings++;
-        return listings === 1 ? new Response("blip", { status: 502 }) : ok([coin]);
-      }
-      throw new Error(`unexpected ${url}`);
-    });
+    mockFetch(testnet(100, 100, () =>
+      ++listings === 1 ? new Response("blip", { status: 502 }) : ok([coin]),
+    ));
     const snap = await new ChainClient(TESTNET).getUtxos(ADDR);
     expect(listings).toBe(2);
     expect(snap.utxos).toHaveLength(1);
   });
 
-  it("gives the UTXO listing a longer deadline than the height survey", async () => {
-    // Record the deadline behind every signal: fake timers do not drive
-    // AbortSignal.timeout, so the budget has to be checked where it is set.
-    const deadlines = new WeakMap<AbortSignal, number>();
-    const timeout = AbortSignal.timeout.bind(AbortSignal);
-    vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
-      const signal = timeout(ms);
-      deadlines.set(signal, ms);
-      return signal;
-    });
-    const budget: Record<string, number | undefined> = {};
-    mockFetch((url, init) => {
-      const ms = deadlines.get(init.signal!);
-      if (url.includes("getBestBlockHeight")) {
-        budget.dapi = ms;
-        return grpcOk([0x08, ...varint(100)]);
-      }
-      if (url.includes("i/insight-api/status")) {
-        budget.status = ms;
-        return ok({ info: { blocks: 100 } });
-      }
-      budget.utxos = ms;
-      return ok([coin]);
-    });
-    try {
-      await new ChainClient(TESTNET).getUtxos(ADDR);
-    } finally {
-      vi.restoreAllMocks();
-    }
-    expect(budget).toEqual({ dapi: 2500, status: 2500, utxos: 8000 });
+  it("does not retry a listing that timed out", async () => {
+    // Waiting out the deadline twice would only hold the Treasury longer.
+    let listings = 0;
+    mockFetch(testnet(100, 100, () => {
+      listings++;
+      throw new DOMException("The operation timed out.", "TimeoutError");
+    }));
+    await expect(new ChainClient(TESTNET).getUtxos(ADDR)).rejects.toBeInstanceOf(
+      AllProvidersFailedError,
+    );
+    expect(listings).toBe(1);
   });
 
   it("counts DAPI's ALREADY_EXISTS as an accepted rebroadcast", async () => {
@@ -505,5 +532,18 @@ describe("ChainClient with DAPI relays", () => {
     const res = await new ChainClient(TESTNET).broadcast("00", "abc");
     expect(res.accepted).toEqual(["dapi:seed-1", "dapi:seed-2"]);
     expect(res.ambiguous).toHaveLength(1);
+  });
+
+  it("stays ambiguous when DAPI rejects but insight went silent", async () => {
+    // The invariant the Treasury's input locking rests on: one relay's silence
+    // outweighs any number of rejections, since that relay may have taken it.
+    mockFetch((url) => {
+      if (url.includes("i/insight-api/tx/send")) return new Response("timeout", { status: 504 });
+      return grpcStatus(3, "invalid transaction: bad-txns-inputs-missingorspent");
+    });
+    const res = await new ChainClient(TESTNET).broadcast("00", "abc");
+    expect(res.accepted).toHaveLength(0);
+    expect(res.rejected).toHaveLength(2);
+    expect(res.ambiguous).toEqual([expect.stringMatching(/^insight: .*504/)]);
   });
 });

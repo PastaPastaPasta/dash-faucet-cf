@@ -1,4 +1,7 @@
-/** grpc-web response builders for tests that stand in for DAPI. */
+/**
+ * grpc-web builders for tests that stand in for DAPI. Deliberately independent
+ * of src/chain/dapi.ts, so the tests check its encoder rather than reuse it.
+ */
 export function varint(n: number): number[] {
   const out: number[] = [];
   while (n >= 0x80) {
@@ -9,30 +12,43 @@ export function varint(n: number): number[] {
   return out;
 }
 
-/** Bytes taken by a field-1 tag plus its varint length prefix. */
-export function lengthPrefix(message: Uint8Array): number {
-  let i = 1;
-  while (message[i] & 0x80) i++;
-  return i + 1;
+export function varintField(field: number, value: number): number[] {
+  return [...varint(field * 8), ...varint(value)];
 }
 
 export function lengthDelimited(field: number, bytes: Uint8Array): number[] {
   return [...varint(field * 8 + 2), ...varint(bytes.length), ...bytes];
 }
 
+/** The payload of a request's field 1 — the only field these requests carry. */
+export function field1(request: Uint8Array): Uint8Array {
+  if (request.length === 0) return request;
+  let i = 1;
+  while (request[i] & 0x80) i++;
+  return request.subarray(i + 1);
+}
+
 const GRPC_HEADERS = { "content-type": "application/grpc-web+proto" };
 
+function frame(flags: number, payload: ArrayLike<number>): number[] {
+  return [flags, ...[24, 16, 8, 0].map((shift) => (payload.length >>> shift) & 0xff), ...Array.from(payload)];
+}
+
+/** A message frame followed by an OK trailer frame. */
 export function grpcOk(message: number[]): Response {
   const trailer = new TextEncoder().encode("grpc-status:0\r\n");
-  const body = new Uint8Array(5 + message.length + 5 + trailer.length);
-  const view = new DataView(body.buffer);
-  view.setUint32(1, message.length);
-  body.set(message, 5);
-  const t = 5 + message.length;
-  body[t] = 0x80;
-  view.setUint32(t + 1, trailer.length);
-  body.set(trailer, t + 5);
-  return new Response(body, { status: 200, headers: GRPC_HEADERS });
+  return new Response(new Uint8Array([...frame(0, message), ...frame(0x80, trailer)]), {
+    status: 200,
+    headers: GRPC_HEADERS,
+  });
+}
+
+/** A reply whose only frame is the trailer block, given verbatim. */
+export function grpcTrailers(block: string): Response {
+  return new Response(new Uint8Array(frame(0x80, new TextEncoder().encode(block))), {
+    status: 200,
+    headers: GRPC_HEADERS,
+  });
 }
 
 /** A "trailers-only" reply: the status rides in the HTTP headers. */

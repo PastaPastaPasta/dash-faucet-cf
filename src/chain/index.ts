@@ -18,9 +18,8 @@ export type { Utxo } from "./types";
 /** Per-request budget for a single provider call. */
 const TIMEOUT_MS = 2500;
 /**
- * A UTXO listing grows with the coin count — the testnet faucet's is ~240 KB
- * for ~870 coins, and insight serves it in up to ~2 s on a good day. Under the
- * 2.5 s read budget that tail turned into intermittent 503s.
+ * A UTXO listing grows with the coin count (~240 KB for the testnet faucet's
+ * ~870 coins); under the 2.5 s read budget its slow tail meant 503s.
  */
 const UTXO_TIMEOUT_MS = 8000;
 /**
@@ -68,6 +67,10 @@ export class AllProvidersFailedError extends Error {
     super(`all providers failed for ${operation}: ${errors.join(" | ")}`);
     this.name = "AllProvidersFailedError";
   }
+}
+
+function isTimeout(err: unknown): boolean {
+  return (err as { name?: string } | null)?.name === "TimeoutError";
 }
 
 function build(spec: ProviderSpec): ChainProvider {
@@ -151,15 +154,20 @@ export class ChainClient {
       eligible.push(provider);
     }
 
-    // One extra attempt on the preferred provider rides out a single slow or
-    // failed listing, which matters most where it is the only UTXO source.
-    const attempts = eligible.length > 0 ? [...eligible, eligible[0]] : [];
-    for (const provider of attempts) {
+    // A quick failure (a 5xx blip) earns that provider one more try, once,
+    // which matters most where it is the only UTXO source. A timeout does not:
+    // asking again would only double the wait while the Treasury is held.
+    let retried = false;
+    for (let i = 0; i < eligible.length; i++) {
       try {
-        const utxos = await provider.getUtxos(address, this.signal(UTXO_TIMEOUT_MS));
-        return { utxos, source: provider.name, tipHeight, statuses };
+        const utxos = await eligible[i].getUtxos(address, this.signal(UTXO_TIMEOUT_MS));
+        return { utxos, source: eligible[i].name, tipHeight, statuses };
       } catch (err) {
         errors.push(describeError(err));
+        if (!retried && !isTimeout(err)) {
+          retried = true;
+          i--;
+        }
       }
     }
 

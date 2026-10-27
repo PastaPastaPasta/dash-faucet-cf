@@ -2,9 +2,6 @@ import { ChainLockStatus, ChainProvider, ProviderError, USER_AGENT, Utxo } from 
 
 const SERVICE = "org.dash.platform.dapi.v0.Core";
 
-/** grpc status codes this provider acts on. */
-const NOT_FOUND = 5;
-
 /** Raised for a non-OK grpc status, carrying the status code. */
 class GrpcError extends ProviderError {
   constructor(
@@ -29,6 +26,11 @@ class GrpcError extends ProviderError {
  *
  * Messages are hand-encoded from the field numbers in `@dashevo/dapi-grpc`
  * `protos/core/v0/core.proto`; the four calls used need nothing more.
+ *
+ * Broadcast errors keep Core's own text. Both DAPI implementations (js-dapi
+ * and rs-dapi) answer a Core rejection with INVALID_ARGUMENT or
+ * FAILED_PRECONDITION and a connection problem with UNAVAILABLE, which is
+ * what `classifyBroadcastError` relies on.
  */
 export class DapiProvider implements ChainProvider {
   readonly name: string;
@@ -58,22 +60,35 @@ export class DapiProvider implements ChainProvider {
     if (!res.ok) {
       throw new ProviderError(this.name, `HTTP ${res.status} for ${method}`);
     }
+    // Anything else answering 200 — a captive page, a misrouted proxy — must
+    // not be parsed as frames and read as success.
+    if (!(res.headers.get("content-type") ?? "").startsWith("application/grpc-web")) {
+      throw new ProviderError(this.name, `non-grpc-web response for ${method}`);
+    }
 
     let message: Uint8Array | null = null;
-    let trailers = "";
-    for (let i = 0; i + 5 <= body.length; ) {
+    const trailers: string[] = [];
+    for (let i = 0; i < body.length; ) {
+      if (i + 5 > body.length) throw new ProviderError(this.name, "truncated grpc-web frame");
       const length = new DataView(body.buffer, body.byteOffset + i + 1, 4).getUint32(0);
-      const payload = body.subarray(i + 5, i + 5 + length);
-      if (body[i] & 0x80) trailers += new TextDecoder().decode(payload);
+      const end = i + 5 + length;
+      if (end > body.length) throw new ProviderError(this.name, "truncated grpc-web frame");
+      const payload = body.subarray(i + 5, end);
+      if (body[i] & 0x80) trailers.push(new TextDecoder().decode(payload));
       else message ??= payload;
-      i += 5 + length;
+      i = end;
     }
 
     // A "trailers-only" reply carries the status in the HTTP headers instead.
-    const status = header(trailers, "grpc-status") ?? res.headers.get("grpc-status");
-    const code = status === null ? 0 : Number(status);
+    // No status at all is a broken reply, not success.
+    const block = trailers.join("\r\n");
+    const status = header(block, "grpc-status") ?? res.headers.get("grpc-status");
+    if (status === null) {
+      throw new ProviderError(this.name, `${method} returned no grpc-status`);
+    }
+    const code = Number(status);
     if (code !== 0) {
-      const raw = header(trailers, "grpc-message") ?? res.headers.get("grpc-message") ?? "";
+      const raw = header(block, "grpc-message") ?? res.headers.get("grpc-message") ?? "";
       let text = raw;
       try {
         text = decodeURIComponent(raw);
@@ -101,15 +116,20 @@ export class DapiProvider implements ChainProvider {
     throw new ProviderError(this.name, "DAPI has no address index");
   }
 
-  async hasTx(txid: string, signal: AbortSignal): Promise<boolean> {
+  /** getTransaction, or null when DAPI definitively does not know the txid. */
+  private async lookup(txid: string, signal: AbortSignal): Promise<Fields | null> {
     try {
-      await this.call("getTransaction", field(1, txid), signal);
-      return true;
+      return await this.call("getTransaction", field(1, txid), signal);
     } catch (err) {
-      // NOT_FOUND is DAPI's rendering of Core's -5: a definitive no.
-      if (err instanceof GrpcError && err.code === NOT_FOUND) return false;
+      // NOT_FOUND (5) is DAPI's rendering of Core's -5: a definitive no.
+      // Anything else is a provider problem and must not be read as "absent".
+      if (err instanceof GrpcError && err.code === 5) return null;
       throw err;
     }
+  }
+
+  async hasTx(txid: string, signal: AbortSignal): Promise<boolean> {
+    return (await this.lookup(txid, signal)) !== null;
   }
 
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {
@@ -126,15 +146,8 @@ export class DapiProvider implements ChainProvider {
   }
 
   async getChainLockStatus(txid: string, signal: AbortSignal): Promise<ChainLockStatus> {
-    let fields: Fields;
-    try {
-      fields = await this.call("getTransaction", field(1, txid), signal);
-    } catch (err) {
-      if (err instanceof GrpcError && err.code === NOT_FOUND) {
-        return { known: false, height: null, chainLocked: false };
-      }
-      throw err;
-    }
+    const fields = await this.lookup(txid, signal);
+    if (fields === null) return { known: false, height: null, chainLocked: false };
     // GetTransactionResponse: 3 height, 4 confirmations, 6 is_chain_locked.
     // DAPI omits the height entirely while the transaction is in the mempool.
     const height = fields.get(3);
@@ -159,23 +172,17 @@ function frame(message: Uint8Array): Uint8Array {
 /** One length-delimited protobuf field. Every request here is a single one. */
 function field(number: number, value: string | Uint8Array): Uint8Array {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
-  const tag = varint(number * 8 + 2);
-  const length = varint(bytes.length);
-  const out = new Uint8Array(tag.length + length.length + bytes.length);
-  out.set(tag);
-  out.set(length, tag.length);
-  out.set(bytes, tag.length + length.length);
-  return out;
+  return Uint8Array.from([...varint(number * 8 + 2), ...varint(bytes.length), ...bytes]);
 }
 
-function varint(n: number): Uint8Array {
+function varint(n: number): number[] {
   const out: number[] = [];
   while (n >= 0x80) {
     out.push((n % 0x80) | 0x80);
     n = Math.floor(n / 0x80);
   }
   out.push(n);
-  return Uint8Array.from(out);
+  return out;
 }
 
 function decode(buf: Uint8Array): Fields {
@@ -208,6 +215,14 @@ function decode(buf: Uint8Array): Fields {
         i += length;
         break;
       }
+      // fixed64 / fixed32: none of the fields read here, so skip them rather
+      // than fail a reply over a field added later.
+      case 1:
+        i += 8;
+        continue;
+      case 5:
+        i += 4;
+        continue;
       default:
         throw new Error(`unsupported protobuf wire type ${key % 8}`);
     }
