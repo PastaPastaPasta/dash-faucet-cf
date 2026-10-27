@@ -1,5 +1,6 @@
 import { ProviderSpec } from "../config";
 import { describeError } from "../errors";
+import { DapiProvider } from "./dapi";
 import { DashRpcProvider } from "./dashrpc";
 import { HyphenProvider } from "./hyphen";
 import { InsightProvider } from "./insight";
@@ -16,6 +17,11 @@ export type { Utxo } from "./types";
 
 /** Per-request budget for a single provider call. */
 const TIMEOUT_MS = 2500;
+/**
+ * A UTXO listing grows with the coin count (~240 KB for the testnet faucet's
+ * ~870 coins); under the 2.5 s read budget its slow tail meant 503s.
+ */
+const UTXO_TIMEOUT_MS = 8000;
 /**
  * Broadcasts get a longer budget than reads. A timeout here is *ambiguous* —
  * the node may have accepted the transaction and simply failed to answer — and
@@ -71,6 +77,8 @@ function build(spec: ProviderSpec): ChainProvider {
       return new InsightProvider(spec.url);
     case "dashrpc":
       return new DashRpcProvider(spec.url);
+    case "dapi":
+      return new DapiProvider(spec.url);
   }
 }
 
@@ -124,9 +132,11 @@ export class ChainClient {
     const tipHeight = Math.max(...heights);
 
     const errors: string[] = [];
+    const eligible: ChainProvider[] = [];
     // survey() maps over this.providers, so statuses is index-aligned with it.
     // Matching by name instead would collapse two providers of the same kind.
     for (const [i, provider] of this.providers.entries()) {
+      if (!provider.canReadUtxos) continue;
       const status = statuses[i];
       if (!status.ok || status.height === null) {
         errors.push(`${provider.name}: unreachable`);
@@ -137,11 +147,26 @@ export class ChainClient {
         errors.push(`${provider.name}: ${lag} blocks behind tip`);
         continue;
       }
+      eligible.push(provider);
+    }
+
+    // A quick failure (a 5xx blip) earns that provider one more try, once,
+    // which matters most where it is the only UTXO source. A timeout does not:
+    // asking again would only double the wait while the Treasury is held.
+    let retried = false;
+    for (let i = 0; i < eligible.length; i++) {
+      const signal = this.signal(UTXO_TIMEOUT_MS);
       try {
-        const utxos = await provider.getUtxos(address, this.signal());
-        return { utxos, source: provider.name, tipHeight, statuses };
+        const utxos = await eligible[i].getUtxos(address, signal);
+        return { utxos, source: eligible[i].name, tipHeight, statuses };
       } catch (err) {
         errors.push(describeError(err));
+        // Ask the signal, not the error: a deadline that fires mid-body can
+        // surface under a different error name than one that fires in fetch.
+        if (!retried && !signal.aborted) {
+          retried = true;
+          i--;
+        }
       }
     }
 

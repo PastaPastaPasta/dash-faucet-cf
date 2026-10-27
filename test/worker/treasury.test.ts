@@ -143,16 +143,15 @@ describe("broadcast settlement", () => {
     const t = treasury();
     chain.broadcast = { kind: "silence" };
     await t.payout(recipient(51));
-    // Two relays, each attempted twice. The two relays wrap the transaction
-    // differently, but the transaction itself must be byte-identical every
-    // time — a rebroadcast of the same bytes has the same txid and so can
-    // never double-pay.
-    expect(chain.broadcastAttempts.length).toBe(4);
-    const hexes = chain.broadcastAttempts.map((body) => {
-      const parsed = JSON.parse(body);
-      return parsed.rawtx ?? parsed.params[0];
-    });
-    expect(new Set(hexes).size).toBe(1);
+    // Four relays (insight and three DAPI seeds), each attempted twice. They
+    // wrap the transaction differently, but the transaction itself must be
+    // byte-identical every time — a rebroadcast of the same bytes has the same
+    // txid and so can never double-pay.
+    expect(chain.broadcastAttempts.length).toBe(8);
+    expect(new Set(chain.broadcastAttempts.map((a) => a.relay))).toEqual(
+      new Set(["insight", "dapi"]),
+    );
+    expect(new Set(chain.broadcastAttempts.map((a) => a.hex)).size).toBe(1);
   });
 
   it("treats a silent broadcast as success once the tx is observed on-chain", async () => {
