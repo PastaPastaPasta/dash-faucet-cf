@@ -21,10 +21,7 @@ export interface ChainProvider {
   /** Whether this provider knows the transaction, in a block or the mempool. */
   hasTx(txid: string, signal: AbortSignal): Promise<boolean>;
   broadcast(rawHex: string, signal: AbortSignal): Promise<string>;
-  /**
-   * Whether a transaction is a coinbase. Its outputs cannot be spent until 100
-   * blocks deep, and no UTXO listing here says which coins came from one.
-   */
+  /** Whether a transaction is a coinbase. */
   isCoinbase?(txid: string, signal: AbortSignal): Promise<boolean>;
   /** Optional Core-specific ChainLock lookup used by pre-created invitations. */
   getChainLockStatus?(
@@ -106,6 +103,17 @@ export function classifyBroadcastError(message: string): BroadcastFailure {
   if (REJECTED_PATTERNS.some((re) => re.test(m))) return "rejected";
   // Default to the cautious reading: assume it might be on the network.
   return "ambiguous";
+}
+
+/** A verbose transaction (insight, Core RPC) marks a coinbase on its first input. */
+export function firstInputIsCoinbase(
+  provider: string,
+  tx: { vin?: Array<{ coinbase?: string }> },
+): boolean {
+  if (!Array.isArray(tx.vin) || tx.vin.length === 0) {
+    throw new ProviderError(provider, "transaction had no inputs");
+  }
+  return tx.vin[0].coinbase !== undefined;
 }
 
 export class ProviderError extends Error {

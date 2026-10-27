@@ -4,6 +4,7 @@ import {
   ProviderError,
   USER_AGENT,
   Utxo,
+  firstInputIsCoinbase,
 } from "./types";
 
 interface RpcResponse<T> {
@@ -121,10 +122,7 @@ export class DashRpcProvider implements ChainProvider {
       [txid, 1],
       signal,
     );
-    if (!Array.isArray(tx.vin) || tx.vin.length === 0) {
-      throw new ProviderError(this.name, "getrawtransaction returned no inputs");
-    }
-    return tx.vin[0].coinbase !== undefined;
+    return firstInputIsCoinbase(this.name, tx);
   }
 
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {

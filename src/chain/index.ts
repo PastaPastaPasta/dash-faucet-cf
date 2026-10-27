@@ -237,11 +237,11 @@ export class ChainClient {
 
   /** Coinbase or not, from the first provider that can answer. */
   async isCoinbase(txid: string): Promise<boolean> {
+    const capable = this.providers.filter((provider) => provider.isCoinbase);
     const errors: string[] = [];
-    for (const provider of this.providers) {
-      if (!provider.isCoinbase) continue;
+    for (const provider of capable) {
       try {
-        return await provider.isCoinbase(txid, this.signal());
+        return await provider.isCoinbase!(txid, this.signal());
       } catch (err) {
         errors.push(describeError(err));
       }

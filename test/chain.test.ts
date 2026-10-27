@@ -559,15 +559,19 @@ describe("ChainClient with DAPI relays", () => {
 describe("isCoinbase", () => {
   const TX = "cd".repeat(32);
   const signal = () => AbortSignal.timeout(1000);
+  // version 3, type 5 (CbTx), one input spending the null outpoint.
+  const COINBASE_RAW = [3, 0, 5, 0, 1, ...new Array(32).fill(0), 0xff, 0xff, 0xff, 0xff];
+  const dapiTx = (bytes: number[]) => grpcOk(lengthDelimited(1, new Uint8Array(bytes)));
 
   it("reads insight's first input", async () => {
+    const insight = new InsightProvider("https://i");
     mockFetch(() => ok({ txid: TX, vin: [{ coinbase: "03abcdef", n: 0 }] }));
-    await expect(new InsightProvider("https://i").isCoinbase(TX, signal())).resolves.toBe(true);
+    await expect(insight.isCoinbase(TX, signal())).resolves.toBe(true);
     mockFetch(() => ok({ txid: TX, vin: [{ txid: "aa", vout: 1 }] }));
-    await expect(new InsightProvider("https://i").isCoinbase(TX, signal())).resolves.toBe(false);
-    // Unknown is not "no": the coin must sit out rather than be spent.
+    await expect(insight.isCoinbase(TX, signal())).resolves.toBe(false);
+    // Unknown is not "no".
     mockFetch(() => new Response("Not found", { status: 404 }));
-    await expect(new InsightProvider("https://i").isCoinbase(TX, signal())).rejects.toThrow();
+    await expect(insight.isCoinbase(TX, signal())).rejects.toThrow();
   });
 
   it("reads Core's verbose transaction", async () => {
@@ -578,17 +582,14 @@ describe("isCoinbase", () => {
 
   it("parses the raw transaction DAPI returns", async () => {
     const dapi = new DapiProvider("https://seed-1.d:1443");
-    // version 3, type 5 (CbTx), one input spending the null outpoint.
-    const coinbase = [3, 0, 5, 0, 1, ...new Array(32).fill(0), 0xff, 0xff, 0xff, 0xff, 0x00];
-    mockFetch(() => grpcOk(lengthDelimited(1, new Uint8Array(coinbase))));
+    mockFetch(() => dapiTx([...COINBASE_RAW, 0x00]));
     await expect(dapi.isCoinbase(TX, signal())).resolves.toBe(true);
 
-    const spend = [2, 0, 0, 0, 1, ...new Array(32).fill(7), 0, 0, 0, 0, 0x00];
-    mockFetch(() => grpcOk(lengthDelimited(1, new Uint8Array(spend))));
+    mockFetch(() => dapiTx([2, 0, 0, 0, 1, ...new Array(32).fill(7), 0, 0, 0, 0, 0x00]));
     await expect(dapi.isCoinbase(TX, signal())).resolves.toBe(false);
 
     // Two inputs can never be a coinbase, whatever they spend.
-    mockFetch(() => grpcOk(lengthDelimited(1, new Uint8Array([2, 0, 0, 0, 2]))));
+    mockFetch(() => dapiTx([2, 0, 0, 0, 2]));
     await expect(dapi.isCoinbase(TX, signal())).resolves.toBe(false);
 
     mockFetch(() => grpcStatus(5, "Transaction not found"));
@@ -603,7 +604,7 @@ describe("isCoinbase", () => {
     mockFetch((url) =>
       url.includes("insight-api/tx/")
         ? new Response("down", { status: 503 })
-        : grpcOk(lengthDelimited(1, new Uint8Array([3, 0, 5, 0, 1, ...new Array(32).fill(0), 0xff, 0xff, 0xff, 0xff]))),
+        : dapiTx(COINBASE_RAW),
     );
     await expect(new ChainClient(specs).isCoinbase(TX)).resolves.toBe(true);
 

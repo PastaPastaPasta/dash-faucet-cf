@@ -41,7 +41,7 @@ export class FakeChain {
   /** Transactions the network will admit to knowing. */
   readonly known = new Set<string>();
   readonly broadcastAttempts: BroadcastAttempt[] = [];
-  /** Every txid asked about through insight's transaction lookup. */
+  /** Every txid insight's transaction route was asked about (lookups and hasTx). */
   readonly txLookups: string[] = [];
   /** When true, insight's transaction lookup answers 503. */
   txLookupDown = false;
@@ -175,14 +175,17 @@ export class FakeChain {
       const address = url.split("/insight-api/addr/")[1].split("/")[0];
       const script = await this.scriptFor(address);
       return this.json(
-        this.coins.map((c) => ({
-          txid: c.txid,
-          vout: c.vout,
-          satoshis: c.satoshis,
-          scriptPubKey: script,
-          height: c.height ?? this.height - 5,
-          confirmations: this.height - (c.height ?? this.height - 5) + 1,
-        })),
+        this.coins.map((c) => {
+          const height = c.height ?? this.height - 5;
+          return {
+            txid: c.txid,
+            vout: c.vout,
+            satoshis: c.satoshis,
+            scriptPubKey: script,
+            height,
+            confirmations: this.height - height + 1,
+          };
+        }),
       );
     }
     if (url.includes("/insight-api/tx/")) {

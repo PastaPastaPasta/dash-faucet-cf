@@ -81,6 +81,13 @@ tail turned into intermittent "Chain providers unavailable" errors.
 
 ### The UTXO pool
 
+Coins under 101 blocks deep are classified before use, because testnet miners
+pay block rewards straight to the faucet address, and Core refuses to spend a
+coinbase output until it is 100 blocks deep. Each young transaction is looked up
+once (at most six per view) and the verdict cached in `coinbase_checks`. Young
+rewards, and young coins nobody could classify, are left out of the spendable
+view, so they also do not count towards `/api/status`'s balance until they mature.
+
 A cron trigger keeps the faucet's balance split into several equal coins. Dash's
 mempool allows a chain of at most 25 unconfirmed ancestors, so a single chain of
 change outputs would stall after 25 payouts until a block lands. N independent

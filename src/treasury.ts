@@ -62,16 +62,15 @@ const SPENT_STALE_MS = 24 * HOUR_MS;
  */
 const PENDING_TTL_MS = HOUR_MS;
 /**
- * Core refuses to spend a coinbase output until the spending block is 100
- * blocks past it. Testnet miners pay block rewards straight to the faucet's
- * address, and nothing in a UTXO listing marks them.
+ * Core spends a coinbase output only once the spending block is 100 past it.
+ * One block more than that, so a relay a block behind our tip agrees too.
  */
-const COINBASE_MATURITY = 100;
+const COINBASE_MATURITY = 101;
 /**
- * A cached coinbase verdict is kept until every output of that transaction is
- * mature, with margin: 100 blocks is ~4 h at 2.5 min, so a day is plenty.
+ * Uncached coinbase lookups per view. Workers hold six connections at once;
+ * past that, queued lookups would spend their deadline waiting for a slot.
  */
-const COINBASE_CACHE_MS = DAY_MS;
+const MAX_COINBASE_LOOKUPS = 6;
 
 export interface PayoutRequest {
   address: string;
@@ -340,7 +339,8 @@ export class Treasury extends DurableObject<Env> {
     // A capToken past its own expiry can never be accepted again, so the row
     // proving it was spent has nothing left to protect.
     sql.exec(`DELETE FROM used_cap WHERE expires_at < ?`, now);
-    sql.exec(`DELETE FROM coinbase_checks WHERE checked_at < ?`, now - COINBASE_CACHE_MS);
+    // 100 blocks is ~4 h, so a day-old verdict is about a long-mature coin.
+    sql.exec(`DELETE FROM coinbase_checks WHERE checked_at < ?`, now - DAY_MS);
     sql.exec(
       `DELETE FROM invitation_hits WHERE created_at < ?`,
       now - this.config.invitations.rateWindowMs,
@@ -455,52 +455,43 @@ export class Treasury extends DurableObject<Env> {
   }
 
   /**
-   * Transactions whose outputs must not be spent yet: young coinbases, and any
-   * young transaction nobody could classify. Only coins under 100 blocks deep
-   * are ever looked up, each transaction once — the verdict never changes.
+   * Young coinbases, and young transactions nobody could classify. Only coins
+   * under COINBASE_MATURITY deep are looked up, each transaction once.
    */
   private async immatureTxids(snapshot: UtxoSnapshot, now: number): Promise<Set<string>> {
-    const sql = this.ctx.storage.sql;
     const young = new Set(
       snapshot.utxos
-        .filter(
-          (u) => u.height === null || snapshot.tipHeight + 1 - u.height < COINBASE_MATURITY,
-        )
+        .filter((u) => u.height === null || snapshot.tipHeight + 1 - u.height < COINBASE_MATURITY)
         .map((u) => u.txid),
     );
+    const verdicts = new Map(
+      this.ctx.storage.sql
+        .exec<{ txid: string; is_coinbase: number }>(`SELECT txid, is_coinbase FROM coinbase_checks`)
+        .toArray()
+        .map((row) => [row.txid, row.is_coinbase === 1] as const),
+    );
 
-    const immature = new Set<string>();
-    const unknown: string[] = [];
-    for (const txid of young) {
-      const row = sql
-        .exec<{ is_coinbase: number }>(
-          `SELECT is_coinbase FROM coinbase_checks WHERE txid = ?`,
-          txid,
-        )
-        .toArray()[0];
-      if (!row) unknown.push(txid);
-      else if (row.is_coinbase) immature.add(txid);
-    }
-
-    const verdicts = await Promise.allSettled(unknown.map((txid) => this.chain.isCoinbase(txid)));
-    for (const [i, verdict] of verdicts.entries()) {
-      const txid = unknown[i];
-      if (verdict.status === "rejected") {
-        // Unclassified: sit this one out rather than build a payout every node
-        // would refuse. The next view asks again.
-        console.warn(`treasury: cannot classify ${txid}: ${describeError(verdict.reason)}`);
-        immature.add(txid);
-        continue;
+    const unknown = [...young].filter((txid) => !verdicts.has(txid)).slice(0, MAX_COINBASE_LOOKUPS);
+    const settled = await Promise.allSettled(unknown.map((txid) => this.chain.isCoinbase(txid)));
+    for (const [i, result] of settled.entries()) {
+      if (result.status === "fulfilled") {
+        this.recordVerdict(unknown[i], result.value, now);
+        verdicts.set(unknown[i], result.value);
+      } else {
+        console.warn(`treasury: cannot classify ${unknown[i]}: ${describeError(result.reason)}`);
       }
-      sql.exec(
-        `INSERT OR REPLACE INTO coinbase_checks (txid, is_coinbase, checked_at) VALUES (?, ?, ?)`,
-        txid,
-        verdict.value ? 1 : 0,
-        now,
-      );
-      if (verdict.value) immature.add(txid);
     }
-    return immature;
+    // Unclassified sits out: better than a payout every relay would refuse.
+    return new Set([...young].filter((txid) => verdicts.get(txid) ?? true));
+  }
+
+  private recordVerdict(txid: string, isCoinbase: boolean, now: number): void {
+    this.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO coinbase_checks (txid, is_coinbase, checked_at) VALUES (?, ?, ?)`,
+      txid,
+      isCoinbase ? 1 : 0,
+      now,
+    );
   }
 
   /** Mark a transaction's inputs as consumed, without claiming its outputs. */
@@ -517,13 +508,8 @@ export class Treasury extends DurableObject<Env> {
 
   private recordSpend(built: BuiltTx, now: number): void {
     this.lockInputs(built, now);
-    // Our own transactions are never coinbases; knowing that up front saves
-    // a lookup when their change shows up confirmed.
-    this.ctx.storage.sql.exec(
-      `INSERT OR IGNORE INTO coinbase_checks (txid, is_coinbase, checked_at) VALUES (?, 0, ?)`,
-      built.txid,
-      now,
-    );
+    // Ours are never coinbases: spare the lookup when the change confirms.
+    this.recordVerdict(built.txid, false, now);
     for (const out of built.ownOutputs) {
       this.ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO pending (txid, vout, satoshis, created_at) VALUES (?, ?, ?, ?)`,
