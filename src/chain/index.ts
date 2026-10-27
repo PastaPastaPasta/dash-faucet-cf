@@ -69,10 +69,6 @@ export class AllProvidersFailedError extends Error {
   }
 }
 
-function isTimeout(err: unknown): boolean {
-  return (err as { name?: string } | null)?.name === "TimeoutError";
-}
-
 function build(spec: ProviderSpec): ChainProvider {
   switch (spec.kind) {
     case "hyphen":
@@ -159,12 +155,15 @@ export class ChainClient {
     // asking again would only double the wait while the Treasury is held.
     let retried = false;
     for (let i = 0; i < eligible.length; i++) {
+      const signal = this.signal(UTXO_TIMEOUT_MS);
       try {
-        const utxos = await eligible[i].getUtxos(address, this.signal(UTXO_TIMEOUT_MS));
+        const utxos = await eligible[i].getUtxos(address, signal);
         return { utxos, source: eligible[i].name, tipHeight, statuses };
       } catch (err) {
         errors.push(describeError(err));
-        if (!retried && !isTimeout(err)) {
+        // Ask the signal, not the error: a deadline that fires mid-body can
+        // surface under a different error name than one that fires in fetch.
+        if (!retried && !signal.aborted) {
           retried = true;
           i--;
         }

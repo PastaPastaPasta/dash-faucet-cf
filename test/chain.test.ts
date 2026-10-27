@@ -404,6 +404,11 @@ describe("DapiProvider", () => {
     expect(classifyBroadcastError(String(err))).toBe("ambiguous");
   });
 
+  it("does not read an empty grpc-status as OK", async () => {
+    mockFetch(() => grpcTrailers("grpc-status:\r\n"));
+    await expect(dapi().broadcast("00", signal())).rejects.toThrow(/no grpc-status/);
+  });
+
   it("refuses a 200 that is not grpc-web at all", async () => {
     mockFetch(() => new Response("<html>hello</html>", { status: 200 }));
     await expect(dapi().broadcast("00", signal())).rejects.toThrow(/non-grpc-web/);
@@ -514,9 +519,12 @@ describe("ChainClient with DAPI relays", () => {
   it("does not retry a listing that timed out", async () => {
     // Waiting out the deadline twice would only hold the Treasury longer.
     let listings = 0;
+    // The deadline fires mid-body and surfaces as a plain AbortError: the
+    // signal, not the error's name, is what says it was the deadline.
+    vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort());
     mockFetch(testnet(100, 100, () => {
       listings++;
-      throw new DOMException("The operation timed out.", "TimeoutError");
+      throw new DOMException("The operation was aborted.", "AbortError");
     }));
     await expect(new ChainClient(TESTNET).getUtxos(ADDR)).rejects.toBeInstanceOf(
       AllProvidersFailedError,

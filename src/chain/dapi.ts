@@ -83,7 +83,7 @@ export class DapiProvider implements ChainProvider {
     // No status at all is a broken reply, not success.
     const block = trailers.join("\r\n");
     const status = header(block, "grpc-status") ?? res.headers.get("grpc-status");
-    if (status === null) {
+    if (status === null || !/^\d+$/.test(status)) {
       throw new ProviderError(this.name, `${method} returned no grpc-status`);
     }
     const code = Number(status);
