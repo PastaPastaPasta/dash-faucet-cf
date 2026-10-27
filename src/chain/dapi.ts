@@ -132,6 +132,22 @@ export class DapiProvider implements ChainProvider {
     return (await this.lookup(txid, signal)) !== null;
   }
 
+  async isCoinbase(txid: string, signal: AbortSignal): Promise<boolean> {
+    const fields = await this.lookup(txid, signal);
+    if (fields === null) throw new ProviderError(this.name, `unknown transaction ${txid}`);
+    const raw = fields.get(1);
+    // version u16, type u16, input count, first prevout. A coinbase has one
+    // input, spending the null outpoint: 32 zero bytes, then index 0xffffffff.
+    if (!(raw instanceof Uint8Array) || raw.length < 5) {
+      throw new ProviderError(this.name, "getTransaction returned no transaction");
+    }
+    if (raw[4] !== 1) return false;
+    if (raw.length < 41) {
+      throw new ProviderError(this.name, "getTransaction returned a truncated transaction");
+    }
+    return raw.subarray(5, 41).every((b, i) => b === (i < 32 ? 0 : 0xff));
+  }
+
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {
     const fields = await this.call(
       "broadcastTransaction",

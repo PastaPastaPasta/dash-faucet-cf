@@ -29,6 +29,8 @@ beforeEach(() => {
   chain.broadcast = { kind: "accept" };
   chain.known.clear();
   chain.broadcastAttempts.length = 0;
+  chain.txLookups.length = 0;
+  chain.txLookupDown = false;
   chain.install();
 });
 
@@ -255,5 +257,75 @@ describe("ledger reconciliation", () => {
     const after = await t.snapshot();
     expect(after.balanceSats).toBe(before.balanceSats);
     expect(after.availableUtxos).toBe(before.availableUtxos);
+  });
+});
+
+describe("Treasury coinbase maturity", () => {
+  // Txids are byte-palindromes, so they read the same in the raw tx's
+  // little-endian prevouts and `spends` can match them as hex substrings.
+  const REWARD = { txid: "c".repeat(64), vout: 0, satoshis: 500_000_000, coinbase: true };
+  const COIN = { txid: "e".repeat(64), vout: 0, satoshis: 1_000_000_000 };
+  const spends = (txid: string) => chain.broadcastAttempts.some((a) => a.hex.includes(txid));
+
+  // The reward is the smallest coin that covers the payout, so coin selection
+  // would pick it first if it were let through. Depth 100 (tip + 1 - height)
+  // would already satisfy Core; one block of margin keeps it out until 101.
+  it.each([17, 99])("never spends a block reward %i blocks below the tip", async (below) => {
+    chain.coins = [{ ...REWARD, height: chain.height - below }, COIN];
+    const result = await treasury().payout(recipient(70));
+    expect(result.ok).toBe(true);
+    expect(spends(REWARD.txid)).toBe(false);
+    expect(spends(COIN.txid)).toBe(true);
+  });
+
+  it("spends a block reward once it has matured", async () => {
+    chain.coins = [{ ...REWARD, height: chain.height - 100 }];
+    expect((await treasury().payout(recipient(71))).ok).toBe(true);
+    expect(spends(REWARD.txid)).toBe(true);
+    // Old enough that nobody needed to ask what it was.
+    expect(chain.txLookups).not.toContain(REWARD.txid);
+  });
+
+  it("looks up a bounded number of young transactions per view", async () => {
+    const t = treasury();
+    chain.coins = Array.from({ length: 10 }, (_, i) => ({
+      txid: i.toString(16).repeat(64),
+      vout: 0,
+      satoshis: 1_000_000_000,
+    }));
+    // The rest sit out this view and are classified on the next.
+    expect((await t.snapshot()).availableUtxos).toBe(6);
+    expect((await t.snapshot()).availableUtxos).toBe(10);
+    expect(chain.txLookups).toHaveLength(10);
+  });
+
+  it("asks about each young transaction once", async () => {
+    const t = treasury();
+    chain.coins = [{ ...REWARD, height: chain.height - 17 }, COIN];
+    expect((await t.snapshot()).availableUtxos).toBe(1);
+    expect((await t.snapshot()).availableUtxos).toBe(1);
+    expect(chain.txLookups.filter((x) => x === REWARD.txid)).toHaveLength(1);
+  });
+
+  it("sits out a young coin nobody can classify, and asks again later", async () => {
+    const t = treasury();
+    chain.coins = [{ ...COIN, height: chain.height - 3 }];
+    chain.txLookupDown = true;
+    expect((await t.snapshot()).availableUtxos).toBe(0);
+    chain.txLookupDown = false;
+    expect((await t.snapshot()).availableUtxos).toBe(1);
+  });
+
+  it("never looks up its own transactions", async () => {
+    const t = treasury();
+    chain.coins = [COIN];
+    const paid = await t.payout(recipient(72));
+    expect(paid.ok).toBe(true);
+    if (!paid.ok) return;
+    // The payout confirms, and its change shows up in the explorer's listing.
+    chain.coins = [{ txid: paid.txid, vout: 0, satoshis: 989_000_000, height: chain.height }];
+    chain.txLookups.length = 0;
+    await t.snapshot();
+    expect(chain.txLookups).toEqual([]);
   });
 });

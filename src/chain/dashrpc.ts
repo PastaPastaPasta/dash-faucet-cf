@@ -4,6 +4,7 @@ import {
   ProviderError,
   USER_AGENT,
   Utxo,
+  firstInputIsCoinbase,
 } from "./types";
 
 interface RpcResponse<T> {
@@ -113,6 +114,15 @@ export class DashRpcProvider implements ChainProvider {
       if (err instanceof RpcError && err.code === -5) return false;
       throw err;
     }
+  }
+
+  async isCoinbase(txid: string, signal: AbortSignal): Promise<boolean> {
+    const tx = await this.call<{ vin?: Array<{ coinbase?: string }> }>(
+      "getrawtransaction",
+      [txid, 1],
+      signal,
+    );
+    return firstInputIsCoinbase(this.name, tx);
   }
 
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {

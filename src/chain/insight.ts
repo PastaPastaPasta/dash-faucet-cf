@@ -1,5 +1,12 @@
 import { COIN } from "../config";
-import { ChainProvider, ProviderError, Utxo, fetchJson, headExists } from "./types";
+import {
+  ChainProvider,
+  ProviderError,
+  Utxo,
+  fetchJson,
+  firstInputIsCoinbase,
+  headExists,
+} from "./types";
 
 interface InsightUtxo {
   txid: string;
@@ -58,6 +65,11 @@ export class InsightProvider implements ChainProvider {
 
   async hasTx(txid: string, signal: AbortSignal): Promise<boolean> {
     return headExists(this.name, `${this.origin}/insight-api/tx/${txid}`, signal);
+  }
+
+  async isCoinbase(txid: string, signal: AbortSignal): Promise<boolean> {
+    const tx = await fetchJson(this.name, `${this.origin}/insight-api/tx/${txid}`, signal);
+    return firstInputIsCoinbase(this.name, tx as { vin?: Array<{ coinbase?: string }> });
   }
 
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {

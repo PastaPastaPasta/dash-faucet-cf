@@ -8,6 +8,10 @@ export interface Coin {
   txid: string;
   vout: number;
   satoshis: number;
+  /** A block reward: unspendable until 100 blocks deep. */
+  coinbase?: boolean;
+  /** Defaults to five blocks below the tip. */
+  height?: number;
 }
 
 /** One relay's broadcast attempt: which wire it came over, and the raw tx. */
@@ -37,6 +41,10 @@ export class FakeChain {
   /** Transactions the network will admit to knowing. */
   readonly known = new Set<string>();
   readonly broadcastAttempts: BroadcastAttempt[] = [];
+  /** Every txid insight's transaction route was asked about (lookups and hasTx). */
+  readonly txLookups: string[] = [];
+  /** When true, insight's transaction lookup answers 503. */
+  txLookupDown = false;
   /**
    * Every token handed to Turnstile's siteverify. Recorded so a test can prove
    * that a proof-of-work capToken is never sent to Cloudflare.
@@ -167,21 +175,27 @@ export class FakeChain {
       const address = url.split("/insight-api/addr/")[1].split("/")[0];
       const script = await this.scriptFor(address);
       return this.json(
-        this.coins.map((c) => ({
-          txid: c.txid,
-          vout: c.vout,
-          satoshis: c.satoshis,
-          scriptPubKey: script,
-          height: this.height - 5,
-          confirmations: 6,
-        })),
+        this.coins.map((c) => {
+          const height = c.height ?? this.height - 5;
+          return {
+            txid: c.txid,
+            vout: c.vout,
+            satoshis: c.satoshis,
+            scriptPubKey: script,
+            height,
+            confirmations: this.height - height + 1,
+          };
+        }),
       );
     }
     if (url.includes("/insight-api/tx/")) {
       const txid = url.split("/insight-api/tx/")[1];
-      return this.knows(txid)
-        ? this.json({ txid })
-        : new Response("not found", { status: 404 });
+      this.txLookups.push(txid);
+      if (this.txLookupDown) return new Response("unavailable", { status: 503 });
+      const coin = this.coins.find((c) => c.txid === txid);
+      if (!coin && !this.knows(txid)) return new Response("not found", { status: 404 });
+      const vin = coin?.coinbase ? [{ coinbase: "03abcdef" }] : [{ txid: "11".repeat(32), vout: 0 }];
+      return this.json({ txid, vin });
     }
 
     // --- Platform Explorer ---------------------------------------------------

@@ -61,6 +61,16 @@ const SPENT_STALE_MS = 24 * HOUR_MS;
  * an input that no longer exists. Prefer to drop early.
  */
 const PENDING_TTL_MS = HOUR_MS;
+/**
+ * Core spends a coinbase output only once the spending block is 100 past it.
+ * One block more than that, so a relay a block behind our tip agrees too.
+ */
+const COINBASE_MATURITY = 101;
+/**
+ * Uncached coinbase lookups per view. Workers hold six connections at once;
+ * past that, queued lookups would spend their deadline waiting for a slot.
+ */
+const MAX_COINBASE_LOOKUPS = 6;
 
 export interface PayoutRequest {
   address: string;
@@ -235,6 +245,11 @@ export class Treasury extends DurableObject<Env> {
         day      TEXT    PRIMARY KEY,
         satoshis INTEGER NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS coinbase_checks (
+        txid        TEXT    PRIMARY KEY,
+        is_coinbase INTEGER NOT NULL,
+        checked_at  INTEGER NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS used_cap (
         token      TEXT    PRIMARY KEY,
         expires_at INTEGER NOT NULL
@@ -324,6 +339,8 @@ export class Treasury extends DurableObject<Env> {
     // A capToken past its own expiry can never be accepted again, so the row
     // proving it was spent has nothing left to protect.
     sql.exec(`DELETE FROM used_cap WHERE expires_at < ?`, now);
+    // 100 blocks is ~4 h, so a day-old verdict is about a long-mature coin.
+    sql.exec(`DELETE FROM coinbase_checks WHERE checked_at < ?`, now - DAY_MS);
     sql.exec(
       `DELETE FROM invitation_hits WHERE created_at < ?`,
       now - this.config.invitations.rateWindowMs,
@@ -398,6 +415,7 @@ export class Treasury extends DurableObject<Env> {
   private async spendableUtxos(key: FaucetKey, now: number): Promise<UtxoSnapshot> {
     const snapshot = await this.chain.getUtxos(key.address);
     const sql = this.ctx.storage.sql;
+    const immature = await this.immatureTxids(snapshot, now);
 
     const confirmed = new Set(
       snapshot.utxos.map((u) => outpointKey(u.txid, u.outputIndex)),
@@ -430,7 +448,50 @@ export class Treasury extends DurableObject<Env> {
     }
     for (const k of spent) merged.delete(k);
 
-    return { ...snapshot, utxos: [...merged.values()] };
+    return {
+      ...snapshot,
+      utxos: [...merged.values()].filter((u) => !immature.has(u.txid)),
+    };
+  }
+
+  /**
+   * Young coinbases, and young transactions nobody could classify. Only coins
+   * under COINBASE_MATURITY deep are looked up, each transaction once.
+   */
+  private async immatureTxids(snapshot: UtxoSnapshot, now: number): Promise<Set<string>> {
+    const young = new Set(
+      snapshot.utxos
+        .filter((u) => u.height === null || snapshot.tipHeight + 1 - u.height < COINBASE_MATURITY)
+        .map((u) => u.txid),
+    );
+    const verdicts = new Map(
+      this.ctx.storage.sql
+        .exec<{ txid: string; is_coinbase: number }>(`SELECT txid, is_coinbase FROM coinbase_checks`)
+        .toArray()
+        .map((row) => [row.txid, row.is_coinbase === 1] as const),
+    );
+
+    const unknown = [...young].filter((txid) => !verdicts.has(txid)).slice(0, MAX_COINBASE_LOOKUPS);
+    const settled = await Promise.allSettled(unknown.map((txid) => this.chain.isCoinbase(txid)));
+    for (const [i, result] of settled.entries()) {
+      if (result.status === "fulfilled") {
+        this.recordVerdict(unknown[i], result.value, now);
+        verdicts.set(unknown[i], result.value);
+      } else {
+        console.warn(`treasury: cannot classify ${unknown[i]}: ${describeError(result.reason)}`);
+      }
+    }
+    // Unclassified sits out: better than a payout every relay would refuse.
+    return new Set([...young].filter((txid) => verdicts.get(txid) ?? true));
+  }
+
+  private recordVerdict(txid: string, isCoinbase: boolean, now: number): void {
+    this.ctx.storage.sql.exec(
+      `INSERT OR IGNORE INTO coinbase_checks (txid, is_coinbase, checked_at) VALUES (?, ?, ?)`,
+      txid,
+      isCoinbase ? 1 : 0,
+      now,
+    );
   }
 
   /** Mark a transaction's inputs as consumed, without claiming its outputs. */
@@ -447,6 +508,8 @@ export class Treasury extends DurableObject<Env> {
 
   private recordSpend(built: BuiltTx, now: number): void {
     this.lockInputs(built, now);
+    // Ours are never coinbases: spare the lookup when the change confirms.
+    this.recordVerdict(built.txid, false, now);
     for (const out of built.ownOutputs) {
       this.ctx.storage.sql.exec(
         `INSERT OR REPLACE INTO pending (txid, vout, satoshis, created_at) VALUES (?, ?, ?, ?)`,
