@@ -235,6 +235,23 @@ export class ChainClient {
     return answered ? false : null;
   }
 
+  /** Coinbase or not, from the first provider that can answer. */
+  async isCoinbase(txid: string): Promise<boolean> {
+    const errors: string[] = [];
+    for (const provider of this.providers) {
+      if (!provider.isCoinbase) continue;
+      try {
+        return await provider.isCoinbase(txid, this.signal());
+      } catch (err) {
+        errors.push(describeError(err));
+      }
+    }
+    throw new AllProvidersFailedError(
+      "isCoinbase",
+      errors.length > 0 ? errors : ["no provider can look up transactions"],
+    );
+  }
+
   /** ChainLock status from the first Core RPC provider that can answer. */
   async getChainLockStatus(txid: string): Promise<ChainLockStatus> {
     const capable = this.providers.filter((provider) => provider.getChainLockStatus);

@@ -60,6 +60,18 @@ export class InsightProvider implements ChainProvider {
     return headExists(this.name, `${this.origin}/insight-api/tx/${txid}`, signal);
   }
 
+  async isCoinbase(txid: string, signal: AbortSignal): Promise<boolean> {
+    const body = (await fetchJson(
+      this.name,
+      `${this.origin}/insight-api/tx/${txid}`,
+      signal,
+    )) as { vin?: Array<{ coinbase?: string }> };
+    if (!Array.isArray(body.vin) || body.vin.length === 0) {
+      throw new ProviderError(this.name, "tx response had no inputs");
+    }
+    return body.vin[0].coinbase !== undefined;
+  }
+
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {
     const body = (await fetchJson(
       this.name,

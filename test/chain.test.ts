@@ -555,3 +555,62 @@ describe("ChainClient with DAPI relays", () => {
     expect(res.ambiguous).toEqual([expect.stringMatching(/^insight: .*504/)]);
   });
 });
+
+describe("isCoinbase", () => {
+  const TX = "cd".repeat(32);
+  const signal = () => AbortSignal.timeout(1000);
+
+  it("reads insight's first input", async () => {
+    mockFetch(() => ok({ txid: TX, vin: [{ coinbase: "03abcdef", n: 0 }] }));
+    await expect(new InsightProvider("https://i").isCoinbase(TX, signal())).resolves.toBe(true);
+    mockFetch(() => ok({ txid: TX, vin: [{ txid: "aa", vout: 1 }] }));
+    await expect(new InsightProvider("https://i").isCoinbase(TX, signal())).resolves.toBe(false);
+    // Unknown is not "no": the coin must sit out rather than be spent.
+    mockFetch(() => new Response("Not found", { status: 404 }));
+    await expect(new InsightProvider("https://i").isCoinbase(TX, signal())).rejects.toThrow();
+  });
+
+  it("reads Core's verbose transaction", async () => {
+    const { DashRpcProvider } = await import("../src/chain/dashrpc");
+    mockFetch(() => ok({ result: { vin: [{ coinbase: "03ab" }] }, error: null, id: 1 }));
+    await expect(new DashRpcProvider("https://r").isCoinbase(TX, signal())).resolves.toBe(true);
+  });
+
+  it("parses the raw transaction DAPI returns", async () => {
+    const dapi = new DapiProvider("https://seed-1.d:1443");
+    // version 3, type 5 (CbTx), one input spending the null outpoint.
+    const coinbase = [3, 0, 5, 0, 1, ...new Array(32).fill(0), 0xff, 0xff, 0xff, 0xff, 0x00];
+    mockFetch(() => grpcOk(lengthDelimited(1, new Uint8Array(coinbase))));
+    await expect(dapi.isCoinbase(TX, signal())).resolves.toBe(true);
+
+    const spend = [2, 0, 0, 0, 1, ...new Array(32).fill(7), 0, 0, 0, 0, 0x00];
+    mockFetch(() => grpcOk(lengthDelimited(1, new Uint8Array(spend))));
+    await expect(dapi.isCoinbase(TX, signal())).resolves.toBe(false);
+
+    // Two inputs can never be a coinbase, whatever they spend.
+    mockFetch(() => grpcOk(lengthDelimited(1, new Uint8Array([2, 0, 0, 0, 2]))));
+    await expect(dapi.isCoinbase(TX, signal())).resolves.toBe(false);
+
+    mockFetch(() => grpcStatus(5, "Transaction not found"));
+    await expect(dapi.isCoinbase(TX, signal())).rejects.toThrow(/unknown transaction/);
+  });
+
+  it("falls through to the next provider, and refuses to guess when none answers", async () => {
+    const specs: ProviderSpec[] = [
+      { kind: "insight", url: "https://i" },
+      { kind: "dapi", url: "https://seed-1.d:1443" },
+    ];
+    mockFetch((url) =>
+      url.includes("insight-api/tx/")
+        ? new Response("down", { status: 503 })
+        : grpcOk(lengthDelimited(1, new Uint8Array([3, 0, 5, 0, 1, ...new Array(32).fill(0), 0xff, 0xff, 0xff, 0xff]))),
+    );
+    await expect(new ChainClient(specs).isCoinbase(TX)).resolves.toBe(true);
+
+    mockFetch(() => new Response("down", { status: 503 }));
+    await expect(new ChainClient(specs).isCoinbase(TX)).rejects.toBeInstanceOf(AllProvidersFailedError);
+    await expect(
+      new ChainClient([{ kind: "hyphen", url: "https://h" }]).isCoinbase(TX),
+    ).rejects.toThrow(/no provider can look up transactions/);
+  });
+});

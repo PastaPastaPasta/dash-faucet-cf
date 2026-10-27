@@ -115,6 +115,18 @@ export class DashRpcProvider implements ChainProvider {
     }
   }
 
+  async isCoinbase(txid: string, signal: AbortSignal): Promise<boolean> {
+    const tx = await this.call<{ vin?: Array<{ coinbase?: string }> }>(
+      "getrawtransaction",
+      [txid, 1],
+      signal,
+    );
+    if (!Array.isArray(tx.vin) || tx.vin.length === 0) {
+      throw new ProviderError(this.name, "getrawtransaction returned no inputs");
+    }
+    return tx.vin[0].coinbase !== undefined;
+  }
+
   async broadcast(rawHex: string, signal: AbortSignal): Promise<string> {
     return this.call<string>("sendrawtransaction", [rawHex], signal);
   }

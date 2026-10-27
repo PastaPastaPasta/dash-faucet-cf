@@ -21,6 +21,11 @@ export interface ChainProvider {
   /** Whether this provider knows the transaction, in a block or the mempool. */
   hasTx(txid: string, signal: AbortSignal): Promise<boolean>;
   broadcast(rawHex: string, signal: AbortSignal): Promise<string>;
+  /**
+   * Whether a transaction is a coinbase. Its outputs cannot be spent until 100
+   * blocks deep, and no UTXO listing here says which coins came from one.
+   */
+  isCoinbase?(txid: string, signal: AbortSignal): Promise<boolean>;
   /** Optional Core-specific ChainLock lookup used by pre-created invitations. */
   getChainLockStatus?(
     txid: string,
