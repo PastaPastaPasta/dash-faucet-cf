@@ -22,6 +22,7 @@ interface HyphenUtxoResponse {
 export class HyphenProvider implements ChainProvider {
   readonly name = "hyphen";
   readonly canBroadcast = false;
+  readonly canReadUtxos = true;
 
   constructor(private readonly origin: string) {}
 

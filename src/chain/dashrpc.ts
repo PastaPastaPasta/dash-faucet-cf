@@ -31,6 +31,7 @@ class RpcError extends ProviderError {
 export class DashRpcProvider implements ChainProvider {
   readonly name = "dashrpc";
   readonly canBroadcast = true;
+  readonly canReadUtxos = true;
 
   constructor(private readonly origin: string) {}
 

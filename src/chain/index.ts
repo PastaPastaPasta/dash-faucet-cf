@@ -1,5 +1,6 @@
 import { ProviderSpec } from "../config";
 import { describeError } from "../errors";
+import { DapiProvider } from "./dapi";
 import { DashRpcProvider } from "./dashrpc";
 import { HyphenProvider } from "./hyphen";
 import { InsightProvider } from "./insight";
@@ -16,6 +17,12 @@ export type { Utxo } from "./types";
 
 /** Per-request budget for a single provider call. */
 const TIMEOUT_MS = 2500;
+/**
+ * A UTXO listing grows with the coin count — the testnet faucet's is ~240 KB
+ * for ~870 coins, and insight serves it in up to ~2 s on a good day. Under the
+ * 2.5 s read budget that tail turned into intermittent 503s.
+ */
+const UTXO_TIMEOUT_MS = 8000;
 /**
  * Broadcasts get a longer budget than reads. A timeout here is *ambiguous* —
  * the node may have accepted the transaction and simply failed to answer — and
@@ -71,6 +78,8 @@ function build(spec: ProviderSpec): ChainProvider {
       return new InsightProvider(spec.url);
     case "dashrpc":
       return new DashRpcProvider(spec.url);
+    case "dapi":
+      return new DapiProvider(spec.url);
   }
 }
 
@@ -124,9 +133,11 @@ export class ChainClient {
     const tipHeight = Math.max(...heights);
 
     const errors: string[] = [];
+    const eligible: ChainProvider[] = [];
     // survey() maps over this.providers, so statuses is index-aligned with it.
     // Matching by name instead would collapse two providers of the same kind.
     for (const [i, provider] of this.providers.entries()) {
+      if (!provider.canReadUtxos) continue;
       const status = statuses[i];
       if (!status.ok || status.height === null) {
         errors.push(`${provider.name}: unreachable`);
@@ -137,8 +148,15 @@ export class ChainClient {
         errors.push(`${provider.name}: ${lag} blocks behind tip`);
         continue;
       }
+      eligible.push(provider);
+    }
+
+    // One extra attempt on the preferred provider rides out a single slow or
+    // failed listing, which matters most where it is the only UTXO source.
+    const attempts = eligible.length > 0 ? [...eligible, eligible[0]] : [];
+    for (const provider of attempts) {
       try {
-        const utxos = await provider.getUtxos(address, this.signal());
+        const utxos = await provider.getUtxos(address, this.signal(UTXO_TIMEOUT_MS));
         return { utxos, source: provider.name, tipHeight, statuses };
       } catch (err) {
         errors.push(describeError(err));

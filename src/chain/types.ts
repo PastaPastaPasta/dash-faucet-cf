@@ -13,6 +13,8 @@ export interface Utxo {
 export interface ChainProvider {
   readonly name: string;
   readonly canBroadcast: boolean;
+  /** False for sources with no address index, which serve heights and relay only. */
+  readonly canReadUtxos: boolean;
   getHeight(signal: AbortSignal): Promise<number>;
   /** Confirmed UTXOs only. In-flight outputs are tracked by the Treasury. */
   getUtxos(address: string, signal: AbortSignal): Promise<Utxo[]>;
@@ -47,6 +49,8 @@ export const USER_AGENT =
  */
 const ALREADY_KNOWN = [
   "already in block chain",
+  // DAPI's wording for Core's -27, which it does not pass through.
+  "already in chain",
   "already in the mempool",
   "already known",
   "txn-already-known",
@@ -77,6 +81,9 @@ const REJECTED_PATTERNS = [
   /tx decode failed/,
   /txn-mempool-conflict/,
   /-2[2-6]\b/,
+  // DAPI: INVALID_ARGUMENT (its own pre-relay checks, Core -22/-25) and
+  // FAILED_PRECONDITION (Core -26). Neither leaves the transaction in a mempool.
+  /\(grpc [39]\)/,
 ];
 
 export type BroadcastFailure = "rejected" | "ambiguous";

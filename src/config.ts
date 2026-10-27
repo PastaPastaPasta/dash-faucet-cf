@@ -17,7 +17,7 @@ export type NetworkName = "mainnet" | "testnet";
 export type ProofTier = "soft" | "turnstile" | "hard";
 
 export interface ProviderSpec {
-  kind: "hyphen" | "insight" | "dashrpc";
+  kind: "hyphen" | "insight" | "dashrpc" | "dapi";
   /** Origin, no trailing slash. */
   url: string;
 }
@@ -206,9 +206,16 @@ const PROVIDERS: Record<NetworkName, ProviderSpec[]> = {
     { kind: "insight", url: "https://insight.dash.org" },
     { kind: "dashrpc", url: "https://rpc.digitalcash.dev" },
   ],
+  // No Core JSON-RPC on testnet: trpc.digitalcash.dev stayed on Core v22 and
+  // has sat on a dead fork at height 1,577,999 since V24 activated at
+  // 1,578,000. A forked node still answers, so it looks healthy, and reading or
+  // relaying through it is worse than not having it. The DAPI seeds stand in
+  // as relays and as an independent tip for insight's lag check.
   testnet: [
     { kind: "insight", url: "https://insight.testnet.networks.dash.org" },
-    { kind: "dashrpc", url: "https://trpc.digitalcash.dev" },
+    { kind: "dapi", url: "https://seed-1.testnet.networks.dash.org:1443" },
+    { kind: "dapi", url: "https://seed-2.testnet.networks.dash.org:1443" },
+    { kind: "dapi", url: "https://seed-3.testnet.networks.dash.org:1443" },
   ],
 };
 

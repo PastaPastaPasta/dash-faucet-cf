@@ -22,9 +22,10 @@ Browser ──► Worker (src/index.ts)   ◄── native clients (cap.js proof
               │  durable limits · idempotency · in-flight coin tracking
               │  build → sign → broadcast
               ▼
-            Chain layer (src/chain/) ──► hyphen ┐
+            Chain layer (src/chain/) ──► hyphen  ┐
                                       ──► insight ├─ ordered failover
-                                      ──► dashrpc ┘
+                                      ──► dashrpc ┤
+                                      ──► DAPI    ┘  (testnet: tip + relay only)
               │
               └──► Platform Explorer (identity claim checks)
 ```
@@ -53,13 +54,30 @@ operate.
 |---|---|---|---|---|
 | Hyphen | `hyphen.dash.org` | — | ✓ | ✗ read-only |
 | Insight | `insight.dash.org` | `insight.testnet.networks.dash.org` | ✓ | ✓ |
-| Dash JSON-RPC | `rpc.digitalcash.dev` | `trpc.digitalcash.dev` | ✓ | ✓ |
+| Dash JSON-RPC | `rpc.digitalcash.dev` | — | ✓ | ✓ |
+| DAPI (grpc-web) | — | `seed-{1,2,3}.testnet.networks.dash.org:1443` | ✗ no address index | ✓ |
+
+Testnet dropped `trpc.digitalcash.dev`: it stayed on Core v22 and has sat on a
+dead fork at height 1,577,999 since V24 activated at 1,578,000. A forked node
+still answers every call, so it looked healthy while it refused every payout.
+
+DAPI is reached through the DCG seed hostnames rather than evonodes. Workers
+refuse to `fetch` a bare IP (Cloudflare error 1003), and evonodes are only
+addressable by IP, with IP-only certificates. DAPI has no address or UTXO
+lookup, so on testnet insight is the sole UTXO source; the DAPI seeds serve as
+relays, as `hasTx`/ChainLock lookups, and as an independent tip that insight's
+lag check is measured against.
 
 Reads take the first healthy provider that is not lagging the best-known tip;
 refusing a stale provider is what stops the faucet spending coins the rest of
 the network already knows are gone. Broadcasts are fanned out to every
 relay-capable provider at once, which removes the single point of failure and
 improves propagation. "Already in mempool" counts as success, not failure.
+
+Height checks and lookups get 2.5 s each. A UTXO listing gets 8 s and one retry
+on the preferred provider: its size grows with the coin count (~240 KB for the
+testnet faucet's ~870 coins), and under the shared 2.5 s budget insight's slow
+tail turned into intermittent "Chain providers unavailable" errors.
 
 ### The UTXO pool
 

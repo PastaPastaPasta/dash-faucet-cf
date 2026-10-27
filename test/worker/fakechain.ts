@@ -1,11 +1,18 @@
 import DashKeys from "dashkeys";
 import DashTx from "dashtx";
 import { vi } from "vitest";
+import { grpcOk, grpcStatus, lengthDelimited, lengthPrefix, varint } from "../grpcweb";
 
 export interface Coin {
   txid: string;
   vout: number;
   satoshis: number;
+}
+
+/** One relay's broadcast attempt: which wire it came over, and the raw tx. */
+export interface BroadcastAttempt {
+  relay: "insight" | "dashrpc" | "dapi";
+  hex: string;
 }
 
 export type BroadcastBehaviour =
@@ -28,7 +35,7 @@ export class FakeChain {
   broadcast: BroadcastBehaviour = { kind: "accept" };
   /** Transactions the network will admit to knowing. */
   readonly known = new Set<string>();
-  readonly broadcastAttempts: string[] = [];
+  readonly broadcastAttempts: BroadcastAttempt[] = [];
   /**
    * Every token handed to Turnstile's siteverify. Recorded so a test can prove
    * that a proof-of-work capToken is never sent to Cloudflare.
@@ -90,12 +97,15 @@ export class FakeChain {
 
     // --- broadcast -----------------------------------------------------------
     if (url.includes("/insight-api/tx/send")) {
-      this.broadcastAttempts.push(String(init.body));
+      const raw = String(JSON.parse(String(init.body)).rawtx);
+      this.broadcastAttempts.push({ relay: "insight", hex: raw });
       if (this.broadcast.kind === "accept") {
-        const raw = String(JSON.parse(String(init.body)).rawtx);
         this.known.add(await DashTx.getId(raw));
       }
       return this.broadcastResponse(false);
+    }
+    if (url.includes("/org.dash.platform.dapi.v0.Core/")) {
+      return this.dapi(url.split("/").pop()!, init);
     }
     if (url.includes("digitalcash") || url.endsWith("trpc") || url.includes("//r")) {
       const body = JSON.parse(String(init.body ?? "{}"));
@@ -103,7 +113,7 @@ export class FakeChain {
         case "getblockcount":
           return this.json({ result: this.height, error: null, id: 1 });
         case "sendrawtransaction":
-          this.broadcastAttempts.push(String(init.body));
+          this.broadcastAttempts.push({ relay: "dashrpc", hex: body.params[0] });
           if (this.broadcast.kind === "accept") {
             this.known.add(await DashTx.getId(body.params[0]));
           }
@@ -182,6 +192,47 @@ export class FakeChain {
         : this.json({ message: "not found" }, 404);
     }
     return new Response("unexpected request: " + url, { status: 500 });
+  }
+
+  /**
+   * DAPI over grpc-web. Requests here carry at most one length-delimited
+   * field 1, so the request decoder only needs to skip the tag and length.
+   */
+  private async dapi(method: string, init: RequestInit): Promise<Response> {
+    const request = new Uint8Array(init.body as ArrayBuffer).subarray(5);
+    const field1 = request.length === 0 ? new Uint8Array(0) : request.subarray(lengthPrefix(request));
+    switch (method) {
+      case "getBestBlockHeight":
+        return grpcOk([0x08, ...varint(this.height)]);
+      case "broadcastTransaction": {
+        const hex = Array.from(field1, (b) => b.toString(16).padStart(2, "0")).join("");
+        this.broadcastAttempts.push({ relay: "dapi", hex });
+        switch (this.broadcast.kind) {
+          case "accept": {
+            const txid = await DashTx.getId(hex);
+            this.known.add(txid);
+            return grpcOk(lengthDelimited(1, new TextEncoder().encode(txid)));
+          }
+          case "reject":
+            return grpcStatus(3, `invalid transaction: ${this.broadcast.message}`);
+          case "silence":
+          case "silent-but-live":
+            return new Response("gateway timeout", { status: 504 });
+        }
+      }
+      case "getTransaction": {
+        const txid = new TextDecoder().decode(field1);
+        if (!this.knows(txid)) return grpcStatus(5, "Transaction not found");
+        // GetTransactionResponse: 3 height, 4 confirmations, 6 is_chain_locked.
+        return grpcOk([
+          0x18, ...varint(this.height - 5),
+          0x20, ...varint(6),
+          0x30, 1,
+        ]);
+      }
+      default:
+        return grpcStatus(12, `unimplemented: ${method}`);
+    }
   }
 
   private knows(txid: string): boolean {

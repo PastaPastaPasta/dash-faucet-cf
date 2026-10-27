@@ -15,6 +15,7 @@ interface InsightUtxo {
 export class InsightProvider implements ChainProvider {
   readonly name = "insight";
   readonly canBroadcast = true;
+  readonly canReadUtxos = true;
 
   constructor(private readonly origin: string) {}
 
