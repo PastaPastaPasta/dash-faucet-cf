@@ -174,11 +174,18 @@ export class ChainClient {
       else trusted.push(height);
     }
     const candidates = [...trusted];
-    if (sampled.length > 0) {
+    if (sampled.length > 1) {
       const sorted = sampled.map((s) => s.height).sort((a, b) => a - b);
       const median = sorted[Math.floor((sorted.length - 1) / 2)];
       candidates.push(median);
       for (const s of sampled) if (s.height > median + MAX_LAG_BLOCKS) this.bench(s.provider);
+    } else if (sampled.length === 1) {
+      // A lone answer is not a median: it may lead the configured providers by
+      // at most the lag allowance, so it cannot by itself make them look stale.
+      const [only] = sampled;
+      candidates.push(
+        trusted.length > 0 ? Math.min(only.height, Math.max(...trusted) + MAX_LAG_BLOCKS) : only.height,
+      );
     }
     return candidates.length > 0 ? Math.max(...candidates) : null;
   }
@@ -325,7 +332,7 @@ export class ChainClient {
       if (outcome.status === "fulfilled") {
         // DAPI answers with the txid it computed; any other one is a node
         // that did not take our transaction.
-        if (evonode && outcome.value !== expectedTxid) {
+        if (evonode && outcome.value.toLowerCase() !== expectedTxid.toLowerCase()) {
           this.bench(relays[i]);
           result.ambiguous.push(`${name}: answered with txid ${outcome.value}`);
         } else {

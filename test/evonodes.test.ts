@@ -198,6 +198,18 @@ describe("ChainClient with evonodes", () => {
     expect(snapshot.tipHeight).toBe(1000);
   });
 
+  it("caps a lone evonode height at the configured tip plus the lag allowance", async () => {
+    let calls = 0;
+    network({
+      insight: (url) =>
+        url.includes("/utxo") ? Response.json([]) : Response.json({ info: { blocks: 1000 } }),
+      evonode: () => (calls++ === 0 ? grpcOk(varintField(1, 9_000_000)) : new Response("down", { status: 503 })),
+    });
+    const snapshot = await new ChainClient(specs).getUtxos("yAddr");
+    expect(snapshot.source).toBe("insight");
+    expect(snapshot.tipHeight).toBe(1010);
+  });
+
   it("treats acceptance by evonodes alone as ambiguous, never as success", async () => {
     network({
       insight: () => new Response("down", { status: 503 }),
