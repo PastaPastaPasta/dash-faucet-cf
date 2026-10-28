@@ -16,11 +16,24 @@ export type NetworkName = "mainnet" | "testnet";
  */
 export type ProofTier = "soft" | "turnstile" | "hard";
 
-export interface ProviderSpec {
-  kind: "hyphen" | "insight" | "dashrpc" | "dapi";
-  /** Origin, no trailing slash. */
-  url: string;
-}
+export type ProviderSpec =
+  | {
+      kind: "hyphen" | "insight" | "dashrpc" | "dapi";
+      /** Origin, no trailing slash. */
+      url: string;
+      /** Only consulted when no primary provider could answer. */
+      fallback?: boolean;
+    }
+  | {
+      /** DAPI on evonodes found at runtime; see `chain/evonodes.ts`. */
+      kind: "evonodes";
+      network: NetworkName;
+      /**
+       * `socket` (production) reaches evonode IPs over `cloudflare:sockets`;
+       * `fetch` exists so tests can intercept the calls.
+       */
+      transport: "socket" | "fetch";
+    };
 
 export interface Env {
   ASSETS: Fetcher;
@@ -63,6 +76,8 @@ export interface Env {
   KEY_RESERVE_SATS?: string;
   MAX_PAYOUT_INPUTS?: string;
   COLLATERAL_COINS?: string;
+  /** `fetch` only for tests; production reaches evonodes over sockets. */
+  EVONODE_TRANSPORT?: string;
 
   // secrets
   FAUCET_WIF: string;
@@ -236,19 +251,33 @@ const PROVIDERS: Record<NetworkName, ProviderSpec[]> = {
     { kind: "hyphen", url: "https://hyphen.dash.org" },
     { kind: "insight", url: "https://insight.dash.org" },
     { kind: "dashrpc", url: "https://rpc.digitalcash.dev" },
+    // Independent relays and tip sources, so mainnet does not rest on one
+    // Core RPC endpoint the way testnet did when trpc forked off at V24.
+    { kind: "evonodes", network: "mainnet", transport: "socket" },
   ],
   // No Core JSON-RPC on testnet: trpc.digitalcash.dev stayed on Core v22 and
   // has sat on a dead fork at height 1,577,999 since V24 activated at
   // 1,578,000. A forked node still answers, so it looks healthy, and reading or
-  // relaying through it is worse than not having it. The DAPI seeds stand in
-  // as relays and as an independent tip for insight's lag check.
+  // relaying through it is worse than not having it.
+  //
+  // DAPI comes from the evonodes themselves, reached by IP over sockets; the
+  // DCG seed gateways are only asked when no evonode answered.
   testnet: [
     { kind: "insight", url: "https://insight.testnet.networks.dash.org" },
-    { kind: "dapi", url: "https://seed-1.testnet.networks.dash.org:1443" },
-    { kind: "dapi", url: "https://seed-2.testnet.networks.dash.org:1443" },
-    { kind: "dapi", url: "https://seed-3.testnet.networks.dash.org:1443" },
+    { kind: "evonodes", network: "testnet", transport: "socket" },
+    { kind: "dapi", url: "https://seed-1.testnet.networks.dash.org:1443", fallback: true },
+    { kind: "dapi", url: "https://seed-2.testnet.networks.dash.org:1443", fallback: true },
+    { kind: "dapi", url: "https://seed-3.testnet.networks.dash.org:1443", fallback: true },
   ],
 };
+
+/** The network's providers, with the evonode transport this deployment uses. */
+function providersFor(network: NetworkName, env: Env): ProviderSpec[] {
+  const transport = env.EVONODE_TRANSPORT === "fetch" ? "fetch" : "socket";
+  return PROVIDERS[network].map((spec) =>
+    spec.kind === "evonodes" ? { ...spec, transport } : spec,
+  );
+}
 
 function int(name: string, raw: string | undefined, fallback?: number): number {
   if (raw === undefined || raw === "") {
@@ -334,7 +363,7 @@ export function resolveConfig(env: Env): FaucetConfig {
 
   return {
     network,
-    providers: PROVIDERS[network],
+    providers: providersFor(network, env),
     payoutSats: int("PAYOUT_SATS", env.PAYOUT_SATS),
     rateLimits: {
       soft: int("RATE_LIMIT_PER_HOUR", env.RATE_LIMIT_PER_HOUR, 3),
@@ -424,7 +453,7 @@ export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
   return {
     ...config,
     network,
-    providers: PROVIDERS[network],
+    providers: providersFor(network, env),
     wif,
     // Keys follow the actor's own network: this one may hold real DASH.
     apiKeys: { ...config.apiKeys, enabled: network === "testnet" },

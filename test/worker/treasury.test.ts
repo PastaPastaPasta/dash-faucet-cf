@@ -145,11 +145,12 @@ describe("broadcast settlement", () => {
     const t = treasury();
     chain.broadcast = { kind: "silence" };
     await t.payout(recipient(51));
-    // Four relays (insight and three DAPI seeds), each attempted twice. They
-    // wrap the transaction differently, but the transaction itself must be
-    // byte-identical every time — a rebroadcast of the same bytes has the same
-    // txid and so can never double-pay.
-    expect(chain.broadcastAttempts.length).toBe(8);
+    // Each of two attempts asks insight and three sampled evonodes and, with
+    // none of them accepting, the three DAPI seed fallbacks as well: 2 x 7.
+    // They wrap the transaction differently, but the transaction itself must
+    // be byte-identical every time — a rebroadcast of the same bytes has the
+    // same txid and so can never double-pay.
+    expect(chain.broadcastAttempts.length).toBe(14);
     expect(new Set(chain.broadcastAttempts.map((a) => a.relay))).toEqual(
       new Set(["insight", "dapi"]),
     );

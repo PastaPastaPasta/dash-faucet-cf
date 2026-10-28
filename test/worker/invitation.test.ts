@@ -92,8 +92,8 @@ describe("invitation inventory", () => {
     const minted = await invitationTreasury().maintainInvitations();
     expect(minted.action).toBe("minted");
     expect(minted.detail).toContain("3 voucher(s)");
-    // Two relays per broadcast.
-    expect(chain.broadcastAttempts).toHaveLength(6);
+    // Five relays per broadcast: insight, Core RPC and three mainnet evonodes.
+    expect(chain.broadcastAttempts).toHaveLength(15);
 
     const waiting = await invitationTreasury().snapshot();
     expect(waiting.invitations).toEqual({ available: 0, preparing: 3, issued: 0 });
