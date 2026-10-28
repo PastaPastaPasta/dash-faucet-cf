@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import DashTx from "dashtx";
-import { ChainClient, ProviderStatus, UtxoSnapshot } from "./chain";
+import { ChainClient, ProviderStatus, Utxo, UtxoSnapshot } from "./chain";
 import {
   COIN,
   Env,
@@ -747,13 +747,13 @@ export class Treasury extends DurableObject<Env> {
 
     let built: BuiltTx;
     try {
-      built = await buildPayout({
+      built = await this.buildPayoutSparingCollateral(
         key,
-        utxos: view.utxos,
-        recipientPubKeyHash: input.pubKeyHash,
+        view.utxos,
+        input.pubKeyHash,
         satoshis,
-        maxInputs: cfg.maxPayoutInputs,
-      });
+        apiKey?.tier === "mn",
+      );
     } catch (err) {
       if (err instanceof InsufficientFundsError) {
         return { ok: false, code: "insufficient_funds", detail: err.message };
@@ -827,6 +827,34 @@ export class Treasury extends DurableObject<Env> {
       accepted: outcome.accepted,
       ...keyResult,
     };
+  }
+
+  /**
+   * Build a payout without touching kept collateral coins when anything else
+   * covers it, so ordinary traffic does not undo the consolidation an mn key
+   * is waiting for. An mn payout, or one nothing else can cover, may use them.
+   */
+  private async buildPayoutSparingCollateral(
+    key: FaucetKey,
+    utxos: Utxo[],
+    recipientPubKeyHash: string,
+    satoshis: number,
+    forCollateral: boolean,
+  ): Promise<BuiltTx> {
+    const cfg = this.config;
+    const build = (coins: Utxo[]) =>
+      buildPayout({ key, utxos: coins, recipientPubKeyHash, satoshis, maxInputs: cfg.maxPayoutInputs });
+    if (forCollateral || cfg.collateralCoins === 0) return build(utxos);
+    const spare = utxos.filter((u) => u.satoshis < COLLATERAL_COIN_SATS);
+    if (spare.length === utxos.length) return build(utxos);
+    try {
+      return await build(spare);
+    } catch (err) {
+      if (err instanceof InsufficientFundsError || err instanceof TooFragmentedError) {
+        return build(utxos);
+      }
+      throw err;
+    }
   }
 
   private recordKeyPayout(
@@ -1088,8 +1116,12 @@ export class Treasury extends DurableObject<Env> {
         address: key.address,
         balanceSats: view.utxos.reduce((acc, u) => acc + u.satoshis, 0),
         availableUtxos: view.utxos.length,
-        poolUtxos: view.utxos.filter((u) => u.satoshis >= this.config.poolUtxoSats)
-          .length,
+        // Same rule as maintenance: a kept collateral coin is not throughput.
+        poolUtxos: view.utxos.filter(
+          (u) =>
+            u.satoshis >= this.config.poolUtxoSats &&
+            (this.config.collateralCoins === 0 || u.satoshis < COLLATERAL_COIN_SATS),
+        ).length,
         collateralUtxos: view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length,
         blockHeight: view.tipHeight,
         source: view.source,
@@ -1564,11 +1596,11 @@ export class Treasury extends DurableObject<Env> {
   /**
    * Grow a collateral coin out of small ones, one bounded slice per cron run.
    *
-   * Each pass merges the largest non-pool coins — the coin being grown is
-   * itself the largest, so it is always in the slice — into one output, which
-   * becomes the next pass's starting point. Pool coins are left alone so
-   * throughput is unaffected, and nothing happens unless the small coins
-   * together could actually reach a collateral.
+   * Each pass merges the coin being grown (the largest below collateral size)
+   * with the largest confirmed small coins into one output, which becomes the
+   * next pass's starting point. The smallest `poolTarget` pool coins and
+   * in-flight change are left alone, and nothing happens unless the small
+   * coins together could actually reach a collateral.
    */
   private async consolidate(
     key: FaucetKey,
@@ -1581,19 +1613,27 @@ export class Treasury extends DurableObject<Env> {
     const ready = view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length;
     if (ready >= cfg.collateralCoins) return { action: "none", detail: poolNote };
 
-    // Keep the smallest `poolTarget` pool coins for payouts; everything else
-    // under collateral size — change, dust, block rewards past the pool's
-    // needs — is material.
-    const small = view.utxos
+    // The largest coin below collateral size is the one being grown, and is
+    // always in the slice — even when it is pool-sized itself.
+    const [grown, ...rest] = view.utxos
       .filter((u) => u.satoshis < COLLATERAL_COIN_SATS)
       .sort((a, b) => b.satoshis - a.satoshis);
+    // Keep the smallest `poolTarget` pool coins for payouts.
+    const isPoolCoin = (u: Utxo) =>
+      u.satoshis >= cfg.poolUtxoSats && u.satoshis < 2 * cfg.poolUtxoSats;
     const keep = new Set(
-      small
-        .filter((u) => u.satoshis >= cfg.poolUtxoSats)
+      rest
+        .filter(isPoolCoin)
         .slice(-cfg.poolTarget)
         .map((u) => outpointKey(u.txid, u.outputIndex)),
     );
-    const candidates = small.filter((u) => !keep.has(outpointKey(u.txid, u.outputIndex)));
+    // Everything else, confirmed, is material. Unconfirmed coins are payout
+    // change still in flight: sweeping it would drain the pool faster and can
+    // join several mempool chains past the 25-ancestor limit.
+    const material = rest.filter(
+      (u) => u.height !== null && !keep.has(outpointKey(u.txid, u.outputIndex)),
+    );
+    const candidates = grown ? [grown, ...material] : [];
     const available = candidates.reduce((acc, u) => acc + u.satoshis, 0);
     if (available < COLLATERAL_COIN_SATS || candidates.length < 2) {
       return {

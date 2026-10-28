@@ -115,4 +115,37 @@ describe("collateral coin", () => {
     expect(result.action).toBe("split");
     expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).not.toContain(collateral.txid);
   });
+
+  it("keeps growing a pool-sized coin when the pool is at or under POOL_TARGET", async () => {
+    // Regression: the coin being grown was itself counted as a kept pool coin
+    // whenever there were few pool-size coins, so consolidation stalled.
+    const grown = { txid: "9".repeat(64), vout: 0, satoshis: 990 * COIN, height: 10 };
+    chain.coins = [...coins(3, POOL), grown, ...coins(100, 15_000_000, 200)];
+    const t = treasury();
+    const result = await t.maintain();
+    expect(result.action).toBe("consolidate");
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toContain(grown.txid);
+  });
+
+  it("spends a collateral coin on an ordinary payout only when nothing else covers it", async () => {
+    const collateral = { txid: "c".repeat(64), vout: 0, satoshis: 1002 * COIN, height: 10 };
+    chain.coins = [collateral, ...coins(10, 20 * COIN)];
+    const t = treasury();
+    const { token } = await t.createApiKey({ label: "dcg", tier: "trusted" });
+    const pay = (n: number, requestedSats: number) =>
+      t.payout({
+        address: `${RECIPIENT.testnet.address}-${n}`,
+        pubKeyHash: RECIPIENT.testnet.pubKeyHash.slice(0, 38) + n.toString(16).padStart(2, "0"),
+        ip: "203.0.113.71",
+        apiKeyHash: hashApiKey(token),
+        requestedSats,
+      });
+
+    expect((await pay(1, 50 * COIN)).ok).toBe(true);
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).not.toContain(collateral.txid);
+
+    // 500 tDASH: the small coins cannot cover it within the input cap.
+    expect((await pay(2, 500 * COIN)).ok).toBe(true);
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toContain(collateral.txid);
+  });
 });

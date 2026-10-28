@@ -428,6 +428,8 @@ export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
     wif,
     // Keys follow the actor's own network: this one may hold real DASH.
     apiKeys: { ...config.apiKeys, enabled: network === "testnet" },
+    // Its coins are invitation inventory, never mn collateral.
+    collateralCoins: 0,
   };
 }
 
