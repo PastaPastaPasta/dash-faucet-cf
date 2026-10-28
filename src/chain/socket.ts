@@ -18,7 +18,7 @@ const dec = new TextDecoder();
 const SKIPPED_HEADERS = new Set(["host", "content-length", "connection", "transfer-encoding"]);
 const MAX_HEAD = 64 * 1024;
 /** DAPI replies to the calls the faucet makes are a few hundred bytes to a few KB. */
-const MAX_BODY = 4 * 1024 * 1024;
+const MAX_BODY = 1024 * 1024;
 
 export async function socketFetch(url: string, init: RequestInit): Promise<Response> {
   const req = new Request(url, init);
@@ -32,19 +32,32 @@ export async function socketFetch(url: string, init: RequestInit): Promise<Respo
     { hostname: target.hostname, port: Number(target.port || 443) },
     { secureTransport: "on", allowHalfOpen: false },
   );
-  const close = () => {
-    socket.close().catch(() => {});
-  };
-  signal?.addEventListener("abort", close);
-  try {
+  socket.closed.catch(() => {});
+  const exchange = (async () => {
+    await socket.opened;
     const writer = socket.writable.getWriter();
     await writer.write(encodeRequest(req, target, body));
     writer.releaseLock();
-    return await readResponse(socket.readable, signal);
+    return readResponse(socket.readable, signal);
+  })();
+  exchange.catch(() => {});
+  try {
+    // Closing the socket does not unblock a connect to a black-holed address:
+    // the pending write waits for the OS connect timeout (~2 min, measured in
+    // workerd). Race the whole exchange against the deadline instead, so a
+    // dead or stalling evonode costs the caller's budget and no more.
+    return await (signal ? Promise.race([exchange, aborted(signal)]) : exchange);
   } finally {
-    signal?.removeEventListener("abort", close);
-    close();
+    socket.close().catch(() => {});
   }
+}
+
+/** Rejects with the signal's reason once it aborts. */
+function aborted(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    if (signal.aborted) reject(signal.reason);
+    else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
 }
 
 export function encodeRequest(req: Request, url: URL, body: Uint8Array): Uint8Array {

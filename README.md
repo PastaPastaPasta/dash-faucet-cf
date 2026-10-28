@@ -75,6 +75,25 @@ into the Worker. The list is refreshed hourly per isolate. Each operation asks 3
 evonodes drawn at random, and one that fails is benched for 10 minutes. The DCG
 `seed-N` gateways are asked only when none of the sampled evonodes answered (or,
 for a broadcast, none accepted), so the faucet does not depend on them.
+Discovery never blocks a request: a cold isolate serves the snapshot while the
+lists refresh in the background, and a source listing fewer than 10 usable
+nodes is ignored.
+
+Evonodes are arbitrary third parties, so none of them is ever the authority for
+a decision about money:
+
+- **Tip:** the sample casts one vote, its median, next to each configured
+  provider; a node far above the median is benched. One node reporting a wild
+  height cannot make insight look stale.
+- **Broadcast:** evonode acceptance counts only alongside a configured relay's;
+  on its own it is *ambiguous*, which locks the inputs rather than reporting a
+  payout. A node answering with a different txid is benched.
+- **`hasTx`:** an evonode's "yes" never settles an ambiguous broadcast as live;
+  its "no" can only keep inputs locked.
+- **ChainLock status** (which makes invitation vouchers usable, or failed) comes
+  from configured providers only. Coinbase lookups try them first.
+- Every socket exchange — connect included — is raced against the call's
+  deadline: a black-holed address costs 2.5 s, not the OS connect timeout.
 
 DAPI has no address or UTXO lookup, so insight remains the sole testnet UTXO
 source; DAPI serves as relays, `hasTx`/coinbase/ChainLock lookups, and an

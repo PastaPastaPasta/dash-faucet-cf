@@ -9,7 +9,7 @@ import {
 } from "../src/chain/evonodes";
 import { readResponse } from "../src/chain/socket";
 import type { ProviderSpec } from "../src/config";
-import { grpcOk, varintField } from "./grpcweb";
+import { grpcOk, grpcStatus, lengthDelimited, varintField } from "./grpcweb";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -74,20 +74,26 @@ describe("evonode list sources", () => {
 });
 
 describe("EvonodeDirectory", () => {
-  const listed = ["1.0.0.1:1443", "1.0.0.2:1443", "1.0.0.3:1443", "1.0.0.4:1443"];
+  const listed = Array.from({ length: 12 }, (_, i) => `1.0.0.${i + 1}:1443`);
+  const origins = listed.map((a) => `https://${a}`);
 
-  it("prefers the quorum service and caches the list", async () => {
+  it("serves the snapshot at once, then the quorum service's list, and caches it", async () => {
     const calls = stubFetch(() => Response.json(quorumList(listed)));
     const dir = new EvonodeDirectory("testnet");
-    const sample = await dir.sample(3);
-    expect(sample).toHaveLength(3);
-    for (const origin of sample) expect(listed.map((a) => `https://${a}`)).toContain(origin);
+    // Never waits for discovery: the first sample is the compiled-in snapshot.
+    const first = dir.sample(3);
+    expect(BOOTSTRAP.testnet.map((a) => `https://${a}`)).toEqual(expect.arrayContaining(first));
+    await dir.refresh();
     expect(dir.listSource).toBe("quorums");
-    await dir.sample(3);
+    const sample = dir.sample(3);
+    expect(sample).toHaveLength(3);
+    for (const origin of sample) expect(origins).toContain(origin);
+    dir.sample(3);
+    await dir.refresh();
     expect(calls).toHaveLength(1);
   });
 
-  it("falls back to Platform Explorer, then to the compiled-in snapshot", async () => {
+  it("falls back to Platform Explorer, then keeps the compiled-in snapshot", async () => {
     stubFetch((url) =>
       url.includes("quorums")
         ? new Response("down", { status: 503 })
@@ -99,32 +105,33 @@ describe("EvonodeDirectory", () => {
           }),
     );
     const viaExplorer = new EvonodeDirectory("testnet");
-    await viaExplorer.sample(1);
+    await viaExplorer.refresh();
     expect(viaExplorer.listSource).toBe("explorer");
 
     stubFetch(() => new Response("down", { status: 503 }));
     const viaSnapshot = new EvonodeDirectory("testnet");
-    const [origin] = await viaSnapshot.sample(1);
+    await viaSnapshot.refresh();
     expect(viaSnapshot.listSource).toBe("bootstrap");
-    expect(BOOTSTRAP.testnet.map((a) => `https://${a}`)).toContain(origin);
+    expect(BOOTSTRAP.testnet.map((a) => `https://${a}`)).toContain(viaSnapshot.sample(1)[0]);
   });
 
   it("refuses a list too short to trust", async () => {
-    stubFetch(() => Response.json(quorumList(["1.0.0.1:1443"])));
+    stubFetch(() => Response.json(quorumList(listed.slice(0, 9))));
     const dir = new EvonodeDirectory("testnet");
-    await dir.sample(1);
-    expect(dir.listSource).not.toBe("quorums");
+    await dir.refresh();
+    expect(dir.listSource).toBe("bootstrap");
   });
 
   it("skips benched nodes until the bench expires", async () => {
     let now = 1_000_000;
-    stubFetch(() => Response.json(quorumList(listed.slice(0, 3))));
+    stubFetch(() => Response.json(quorumList(listed)));
     const dir = new EvonodeDirectory("testnet", () => now);
-    const [first] = await dir.sample(1);
+    await dir.refresh();
+    const [first] = dir.sample(1);
     dir.bench(first);
-    for (let i = 0; i < 20; i++) expect(await dir.sample(3)).not.toContain(first);
+    for (let i = 0; i < 30; i++) expect(dir.sample(12)).not.toContain(first);
     now += 11 * 60_000;
-    expect(await dir.sample(3)).toContain(first);
+    expect(dir.sample(12)).toContain(first);
   });
 });
 
@@ -134,29 +141,110 @@ describe("ChainClient with evonodes", () => {
     { kind: "evonodes", network: "testnet", transport: "fetch" },
     { kind: "dapi", url: "https://seed-1.test:1443", fallback: true },
   ];
-  const height = () => grpcOk(varintField(1, 1000));
+  const isEvonode = (url: string) => /^https:\/\/\d+\.\d+\.\d+\.\d+:/.test(url);
+  const grpcTxid = (txid: string) => grpcOk(lengthDelimited(1, new TextEncoder().encode(txid)));
+  const notFound = () => grpcStatus(5, "Transaction not found");
+  const TXID = "ab".repeat(32);
+
+  /** Every endpoint the client may touch; `evonode` and `seed` answer DAPI calls. */
+  function network(opts: {
+    insightHeight?: number;
+    insight?: (url: string) => Response;
+    evonode: (method: string, url: string) => Response;
+    seed?: (method: string) => Response;
+  }) {
+    return stubFetch((url) => {
+      if (url.includes("quorums") || url.includes("explorer")) return new Response("down", { status: 503 });
+      if (url.includes("insight.test")) {
+        if (opts.insight) return opts.insight(url);
+        return Response.json({ info: { blocks: opts.insightHeight ?? 1000 } });
+      }
+      const method = url.split("/").pop()!;
+      if (url.includes("seed-1")) return (opts.seed ?? (() => new Response("down", { status: 503 })))(method);
+      return opts.evonode(method, url);
+    });
+  }
 
   it("never asks the seeds while an evonode answers", async () => {
-    const calls = stubFetch((url) => {
-      if (url.includes("quorums")) return Response.json(quorumList(["1.0.0.1:1443", "1.0.0.2:1443", "1.0.0.3:1443"]));
-      if (url.includes("insight.test")) return Response.json({ info: { blocks: 1000 } });
-      return height();
-    });
+    const calls = network({ evonode: () => grpcOk(varintField(1, 1000)) });
     const statuses = await new ChainClient(specs).survey();
     expect(calls.some((u) => u.includes("seed-1"))).toBe(false);
-    expect(statuses.filter((s) => s.name.startsWith("dapi:1.0.0.") && s.ok)).toHaveLength(3);
+    expect(statuses.filter((s) => s.name.startsWith("dapi:") && s.ok)).toHaveLength(3);
   });
 
   it("asks the seeds when no evonode answers", async () => {
-    const calls = stubFetch((url) => {
-      if (url.includes("quorums")) return Response.json(quorumList(["1.0.0.1:1443", "1.0.0.2:1443", "1.0.0.3:1443"]));
-      if (url.includes("insight.test")) return Response.json({ info: { blocks: 1000 } });
-      if (url.includes("seed-1")) return height();
-      return new Response("down", { status: 503 });
+    const calls = network({
+      evonode: () => new Response("down", { status: 503 }),
+      seed: () => grpcOk(varintField(1, 1000)),
     });
     const statuses = await new ChainClient(specs).survey();
     expect(calls.some((u) => u.includes("seed-1"))).toBe(true);
     expect(statuses.find((s) => s.name === "dapi:seed-1")?.ok).toBe(true);
+  });
+
+  it("does not let one evonode's wild height make insight look stale", async () => {
+    let first = true;
+    network({
+      insight: (url) =>
+        url.includes("/utxo") ? Response.json([]) : Response.json({ info: { blocks: 1000 } }),
+      evonode: () => {
+        const height = first ? 9_000_000 : 1000;
+        first = false;
+        return grpcOk(varintField(1, height));
+      },
+    });
+    const snapshot = await new ChainClient(specs).getUtxos("yAddr");
+    expect(snapshot.source).toBe("insight");
+    expect(snapshot.tipHeight).toBe(1000);
+  });
+
+  it("treats acceptance by evonodes alone as ambiguous, never as success", async () => {
+    network({
+      insight: () => new Response("down", { status: 503 }),
+      evonode: () => grpcTxid(TXID),
+    });
+    const result = await new ChainClient(specs).broadcast("00", TXID);
+    expect(result.accepted).toEqual([]);
+    expect(result.ambiguous.some((a) => a.includes("unvouched"))).toBe(true);
+  });
+
+  it("counts evonode acceptance alongside a configured relay's", async () => {
+    network({
+      insight: () => Response.json({ txid: TXID }),
+      evonode: () => grpcTxid(TXID),
+    });
+    const result = await new ChainClient(specs).broadcast("00", TXID);
+    expect(result.accepted).toHaveLength(4);
+  });
+
+  it("does not count an evonode answering with another txid", async () => {
+    network({
+      insight: () => Response.json({ txid: TXID }),
+      evonode: () => grpcTxid("cd".repeat(32)),
+    });
+    const result = await new ChainClient(specs).broadcast("00", TXID);
+    expect(result.accepted).toEqual(["insight"]);
+    expect(result.ambiguous).toHaveLength(3);
+  });
+
+  it("ignores an evonode's lone claim to know a transaction", async () => {
+    network({
+      insight: () => new Response("down", { status: 503 }),
+      evonode: () =>
+        grpcOk([...varintField(3, 990), ...varintField(4, 6), ...varintField(6, 1)]),
+      seed: () => notFound(),
+    });
+    expect(await new ChainClient(specs).anyKnowsTx(TXID)).toBe(false);
+  });
+
+  it("never takes ChainLock status from a sampled evonode", async () => {
+    const calls = network({
+      evonode: () => grpcOk([...varintField(3, 990), ...varintField(4, 6), ...varintField(6, 1)]),
+      seed: () => notFound(),
+    });
+    const status = await new ChainClient(specs).getChainLockStatus(TXID);
+    expect(status.known).toBe(false);
+    expect(calls.filter(isEvonode)).toHaveLength(0);
   });
 });
 

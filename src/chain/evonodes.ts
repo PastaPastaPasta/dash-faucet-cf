@@ -27,6 +27,8 @@ const RETRY_MS = 5 * 60_000;
 /** A node that failed a call is skipped for this long. */
 const BENCH_MS = 10 * 60_000;
 const DISCOVERY_TIMEOUT_MS = 4000;
+/** Fewer than this from a source is a broken or hostile list, not a network. */
+const MIN_LISTED = 10;
 
 const SOURCES: Record<NetworkName, { quorums: string; explorer: string }> = {
   testnet: {
@@ -84,12 +86,25 @@ export function evonodeOrigin(address: string): string | null {
   const octets = m.slice(1, 5).map(Number);
   const port = Number(m[5]);
   if (octets.some((o) => o > 255) || port < 1 || port > 65535) return null;
-  const [a, b] = octets;
-  // [::]:0-style placeholders and private ranges are not reachable evonodes.
-  if (a === 0 || a === 10 || a === 127 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
-    return null;
-  }
-  return `https://${address}`;
+  return isPublicIpv4(octets) ? `https://${address}` : null;
+}
+
+/** False for placeholder, private, shared, link-local, documentation, benchmark and multicast space. */
+function isPublicIpv4([a, b, c]: number[]): boolean {
+  return !(
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 192 && b === 0 && (c === 0 || c === 2)) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 198 && b === 51 && c === 100) ||
+    (a === 203 && b === 0 && c === 113)
+  );
 }
 
 interface QuorumServiceEntry {
@@ -142,9 +157,16 @@ export class EvonodeDirectory {
     return this.source;
   }
 
-  /** Up to `n` distinct evonode origins, at random, skipping benched ones. */
-  async sample(n: number): Promise<string[]> {
-    await this.refresh();
+  /**
+   * Up to `n` distinct evonode origins, at random, skipping benched ones.
+   *
+   * Never waits for discovery: callers hold the Treasury lock, and an idle
+   * Durable Object is evicted often enough that waiting would put a discovery
+   * round on most payouts. The current list (the snapshot, on a cold isolate)
+   * is served while a refresh runs in the background.
+   */
+  sample(n: number): string[] {
+    void this.refresh();
     const now = this.now();
     const live = this.nodes.filter((o) => (this.benched.get(o) ?? 0) <= now);
     // With everything benched, try anyway rather than report no DAPI at all.
@@ -161,7 +183,8 @@ export class EvonodeDirectory {
     this.benched.set(origin, this.now() + BENCH_MS);
   }
 
-  private refresh(): Promise<void> {
+  /** Resolves once any due refresh has finished. For tests and warm-up. */
+  refresh(): Promise<void> {
     if (this.now() < this.nextRefresh) return Promise.resolve();
     this.refreshing ??= this.discover().finally(() => {
       this.refreshing = null;
@@ -184,7 +207,7 @@ export class EvonodeDirectory {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const found = origins(parse(await res.json()));
         // A handful is not a list: keep what we had rather than shrink to it.
-        if (found.length < 3) throw new Error(`only ${found.length} usable evonodes`);
+        if (found.length < MIN_LISTED) throw new Error(`only ${found.length} usable evonodes`);
         this.nodes = found;
         this.source = name;
         this.nextRefresh = this.now() + REFRESH_MS;
