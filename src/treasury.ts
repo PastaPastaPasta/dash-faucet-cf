@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import DashTx from "dashtx";
 import { ChainClient, ProviderStatus, UtxoSnapshot } from "./chain";
 import {
+  COIN,
   Env,
   FaucetConfig,
   ProofTier,
@@ -31,6 +32,7 @@ import {
   InsufficientFundsError,
   SelfPayError,
   TooFragmentedError,
+  buildConsolidation,
   buildPayout,
   buildSplit,
   buildInvitationAssetLock,
@@ -80,6 +82,11 @@ const COINBASE_MATURITY = 101;
  * past that, queued lookups would spend their deadline waiting for a slot.
  */
 const MAX_COINBASE_LOOKUPS = 6;
+/**
+ * A coin that can pay one masternode collateral by itself: 1000 DASH plus a
+ * whole DASH of headroom for the fee, so the payout is a single input.
+ */
+const COLLATERAL_COIN_SATS = MN_COLLATERAL_SATS + COIN;
 
 export interface PayoutRequest {
   address: string;
@@ -169,6 +176,8 @@ export interface Snapshot {
   balanceSats: number;
   availableUtxos: number;
   poolUtxos: number;
+  /** Coins that can fund an `mn` key payout on their own. */
+  collateralUtxos: number;
   blockHeight: number;
   source: string;
   providers: ProviderStatus[];
@@ -181,7 +190,7 @@ export interface Snapshot {
 }
 
 export interface MaintenanceResult {
-  action: "none" | "split" | "blocked";
+  action: "none" | "split" | "consolidate" | "blocked";
   detail: string;
   txid?: string;
 }
@@ -659,7 +668,7 @@ export class Treasury extends DurableObject<Env> {
     let apiKey: ApiKeyRow | undefined;
     if (input.apiKeyHash !== undefined) {
       const auth = this.authorizeKeyPayout(input, now);
-      if (!auth.ok) return auth.result;
+      if (!auth.ok) return auth;
       apiKey = auth.key;
       satoshis = auth.satoshis;
     } else {
@@ -775,7 +784,13 @@ export class Treasury extends DurableObject<Env> {
     }
 
     const outcome = await this.settleBroadcast(built, now);
-    if (!outcome.ok) return outcome.result;
+    if (!outcome.ok) {
+      // The transaction may be live. Charge the key as if it were, so an mn
+      // key's retry cannot collect a second collateral, and so the audit log
+      // shows a payout that may have landed.
+      if (apiKey && outcome.uncertain) this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
+      return outcome.result;
+    }
 
     // 4. Commit. Everything below is local bookkeeping for an accepted tx.
     this.recordSpend(built, now);
@@ -783,22 +798,7 @@ export class Treasury extends DurableObject<Env> {
       // Key payouts sit outside the public ledgers on purpose: they neither
       // consume an address's daily claim nor an IP's allowance nor the public
       // daily budget, so trusted use can never lock the public out.
-      sql.exec(
-        `INSERT INTO key_payouts (key_id, txid, address, satoshis, created_at)
-         VALUES (?, ?, ?, ?, ?)`,
-        apiKey.id,
-        built.txid,
-        input.address,
-        satoshis,
-        now,
-      );
-      sql.exec(
-        `UPDATE api_keys SET last_used_at = ?, payouts = payouts + 1,
-                paid_sats = paid_sats + ? WHERE hash = ?`,
-        now,
-        satoshis,
-        apiKey.hash,
-      );
+      this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
     } else {
       sql.exec(
         `INSERT OR REPLACE INTO claims (recipient, day, txid, satoshis, created_at)
@@ -829,6 +829,46 @@ export class Treasury extends DurableObject<Env> {
     };
   }
 
+  private recordKeyPayout(
+    key: ApiKeyRow,
+    built: BuiltTx,
+    address: string,
+    satoshis: number,
+    now: number,
+  ): void {
+    const sql = this.ctx.storage.sql;
+    sql.exec(
+      `INSERT INTO key_payouts (key_id, txid, address, satoshis, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      key.id,
+      built.txid,
+      address,
+      satoshis,
+      now,
+    );
+    sql.exec(
+      `UPDATE api_keys SET last_used_at = ?, payouts = payouts + 1,
+              paid_sats = paid_sats + ? WHERE hash = ?`,
+      now,
+      satoshis,
+      key.hash,
+    );
+  }
+
+  /**
+   * Whether `hash` names an active key. Not serialized: the Worker uses it to
+   * turn away unknown keys (and charge them the edge limit) before they queue
+   * behind the spending lock. `authorizeKeyPayout` re-checks inside the lock.
+   */
+  async isActiveApiKey(hash: string): Promise<boolean> {
+    return (
+      this.config.apiKeys.enabled &&
+      this.ctx.storage.sql
+        .exec(`SELECT 1 FROM api_keys WHERE hash = ? AND revoked_at IS NULL`, hash)
+        .toArray().length > 0
+    );
+  }
+
   /**
    * Authenticate an API key and settle what this payout may be.
    *
@@ -838,15 +878,14 @@ export class Treasury extends DurableObject<Env> {
   private authorizeKeyPayout(
     input: PayoutRequest,
     now: number,
-  ):
-    | { ok: true; key: ApiKeyRow; satoshis: number }
-    | { ok: false; result: PayoutResult } {
+  ): { ok: true; key: ApiKeyRow; satoshis: number } | Extract<PayoutResult, { ok: false }> {
+    const cfg = this.config;
     const sql = this.ctx.storage.sql;
     const row = sql
       .exec<ApiKeyRow>(`SELECT * FROM api_keys WHERE hash = ?`, input.apiKeyHash ?? "")
       .toArray()[0];
-    if (!this.config.apiKeys.enabled || !row || row.revoked_at !== null) {
-      return { ok: false, result: { ok: false, code: "unauthorized" } };
+    if (!cfg.apiKeys.enabled || !row || row.revoked_at !== null) {
+      return { ok: false, code: "unauthorized" };
     }
 
     let satoshis: number;
@@ -854,24 +893,18 @@ export class Treasury extends DurableObject<Env> {
       if (input.requestedSats !== undefined && input.requestedSats !== MN_COLLATERAL_SATS) {
         return {
           ok: false,
-          result: {
-            ok: false,
-            code: "bad_request",
-            detail: "An mn key always pays exactly one 1000 DASH collateral; omit amount",
-          },
+          code: "bad_request",
+          detail: "An mn key always pays exactly one 1000 DASH collateral; omit amount",
         };
       }
       satoshis = MN_COLLATERAL_SATS;
     } else {
-      satoshis = input.requestedSats ?? this.config.payoutSats;
-      if (satoshis > this.config.apiKeys.maxPerRequestSats) {
+      satoshis = input.requestedSats ?? cfg.payoutSats;
+      if (satoshis > cfg.apiKeys.maxPerRequestSats) {
         return {
           ok: false,
-          result: {
-            ok: false,
-            code: "bad_request",
-            detail: `amount may be at most ${this.config.apiKeys.maxPerRequestSats / 1e8} DASH per request`,
-          },
+          code: "bad_request",
+          detail: `amount may be at most ${cfg.apiKeys.maxPerRequestSats / COIN} DASH per request`,
         };
       }
     }
@@ -888,7 +921,7 @@ export class Treasury extends DurableObject<Env> {
       if (hits && hits.n >= row.per_day) {
         const oldest = hits.oldest ?? now;
         const retryAfter = Math.max(1, Math.ceil((oldest + DAY_MS - now) / 1000));
-        return { ok: false, result: { ok: false, code: "rate_limited", retryAfter } };
+        return { ok: false, code: "rate_limited", retryAfter };
       }
     }
 
@@ -909,6 +942,7 @@ export class Treasury extends DurableObject<Env> {
     const token = generateApiKey();
     const hash = hashApiKey(token);
     const perDay = input.perDay === undefined ? DEFAULT_PER_DAY[input.tier] : input.perDay;
+    const now = Date.now();
     this.ctx.storage.sql.exec(
       `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -917,12 +951,22 @@ export class Treasury extends DurableObject<Env> {
       input.label,
       input.tier,
       perDay,
-      Date.now(),
+      now,
     );
-    const row = this.ctx.storage.sql
-      .exec<ApiKeyRow>(`SELECT * FROM api_keys WHERE hash = ?`, hash)
-      .toArray()[0];
-    return { token, key: apiKeyInfo(row) };
+    return {
+      token,
+      key: {
+        id: keyId(hash),
+        label: input.label,
+        tier: input.tier,
+        perDay,
+        createdAt: now,
+        revokedAt: null,
+        lastUsedAt: null,
+        payouts: 0,
+        paidSats: 0,
+      },
+    };
   }
 
   async listApiKeys(): Promise<ApiKeyInfo[]> {
@@ -934,13 +978,13 @@ export class Treasury extends DurableObject<Env> {
 
   /** Returns false when no active key has that id. */
   async revokeApiKey(id: string): Promise<boolean> {
-    const sql = this.ctx.storage.sql;
-    const live = sql
-      .exec(`SELECT 1 FROM api_keys WHERE id = ? AND revoked_at IS NULL`, id)
-      .toArray();
-    if (live.length === 0) return false;
-    sql.exec(`UPDATE api_keys SET revoked_at = ? WHERE id = ?`, Date.now(), id);
-    return true;
+    return (
+      this.ctx.storage.sql.exec(
+        `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+        Date.now(),
+        id,
+      ).rowsWritten > 0
+    );
   }
 
   /**
@@ -1046,6 +1090,7 @@ export class Treasury extends DurableObject<Env> {
         availableUtxos: view.utxos.length,
         poolUtxos: view.utxos.filter((u) => u.satoshis >= this.config.poolUtxoSats)
           .length,
+        collateralUtxos: view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length,
         blockHeight: view.tipHeight,
         source: view.source,
         providers: view.statuses,
@@ -1454,15 +1499,23 @@ export class Treasury extends DurableObject<Env> {
       return { action: "blocked", detail: describeError(err) };
     }
 
-    const pool = view.utxos.filter((u) => u.satoshis >= cfg.poolUtxoSats);
+    // A kept collateral coin is not throughput: counting it would hide a pool
+    // that has actually run low.
+    const kept = cfg.collateralCoins > 0 ? COLLATERAL_COIN_SATS : Infinity;
+    const pool = view.utxos.filter(
+      (u) => u.satoshis >= cfg.poolUtxoSats && u.satoshis < kept,
+    );
     if (pool.length >= cfg.poolMin) {
-      return {
-        action: "none",
-        detail: `${pool.length} pool coins available (min ${cfg.poolMin})`,
-      };
+      return this.consolidate(key, view, pool.length, now);
     }
 
-    const biggest = [...view.utxos].sort((a, b) => b.satoshis - a.satoshis)[0];
+    // Split from the largest coin that is not a kept collateral coin; fall back
+    // to one only when nothing else can refill the pool, since the public
+    // faucet running dry is worse than an mn payout waiting.
+    const descending = [...view.utxos].sort((a, b) => b.satoshis - a.satoshis);
+    const biggest =
+      descending.find((u) => u.satoshis < kept && u.satoshis * 0.99 >= 2 * cfg.poolUtxoSats) ??
+      descending[0];
     if (!biggest) {
       return { action: "blocked", detail: "no spendable coins" };
     }
@@ -1504,6 +1557,70 @@ export class Treasury extends DurableObject<Env> {
     return {
       action: "split",
       detail: `split into ${count} coins of ${cfg.poolUtxoSats} duffs`,
+      txid: built.txid,
+    };
+  }
+
+  /**
+   * Grow a collateral coin out of small ones, one bounded slice per cron run.
+   *
+   * Each pass merges the largest non-pool coins — the coin being grown is
+   * itself the largest, so it is always in the slice — into one output, which
+   * becomes the next pass's starting point. Pool coins are left alone so
+   * throughput is unaffected, and nothing happens unless the small coins
+   * together could actually reach a collateral.
+   */
+  private async consolidate(
+    key: FaucetKey,
+    view: UtxoSnapshot,
+    poolCount: number,
+    now: number,
+  ): Promise<MaintenanceResult> {
+    const cfg = this.config;
+    const poolNote = `${poolCount} pool coins available (min ${cfg.poolMin})`;
+    const ready = view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length;
+    if (ready >= cfg.collateralCoins) return { action: "none", detail: poolNote };
+
+    // Keep the smallest `poolTarget` pool coins for payouts; everything else
+    // under collateral size — change, dust, block rewards past the pool's
+    // needs — is material.
+    const small = view.utxos
+      .filter((u) => u.satoshis < COLLATERAL_COIN_SATS)
+      .sort((a, b) => b.satoshis - a.satoshis);
+    const keep = new Set(
+      small
+        .filter((u) => u.satoshis >= cfg.poolUtxoSats)
+        .slice(-cfg.poolTarget)
+        .map((u) => outpointKey(u.txid, u.outputIndex)),
+    );
+    const candidates = small.filter((u) => !keep.has(outpointKey(u.txid, u.outputIndex)));
+    const available = candidates.reduce((acc, u) => acc + u.satoshis, 0);
+    if (available < COLLATERAL_COIN_SATS || candidates.length < 2) {
+      return {
+        action: "none",
+        detail: `${poolNote}; ${available} duffs outside the pool cannot reach a collateral coin`,
+      };
+    }
+
+    const slice = candidates.slice(0, cfg.maxPayoutInputs);
+    if (cfg.dryRun) {
+      return { action: "none", detail: `dry run: would consolidate ${slice.length} coins` };
+    }
+
+    let built: BuiltTx;
+    try {
+      built = await buildConsolidation({ key, inputs: slice });
+    } catch (err) {
+      return { action: "blocked", detail: describeError(err) };
+    }
+    const outcome = await this.settleBroadcast(built, now);
+    if (!outcome.ok) {
+      return { action: "blocked", detail: "consolidation broadcast could not be confirmed" };
+    }
+    this.recordSpend(built, now);
+    return {
+      action: "consolidate",
+      detail: `merged ${slice.length} coins into ${built.ownOutputs[0].satoshis} duffs`,
       txid: built.txid,
     };
   }

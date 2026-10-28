@@ -227,7 +227,7 @@ describe("HTTP", () => {
 
     const { token } = await mint("trusted");
     const auth = { Authorization: `Bearer ${token}` };
-    for (const amount of [0, -1, "5", 1e-9, Number.NaN]) {
+    for (const amount of [0, -1, "5", 1e-9, 0.0001, 1.7e308, Number.NaN, null]) {
       expect((await post(auth, { address, amount })).status).toBe(400);
     }
     // Without a key, amount is not a knob anyone can turn.

@@ -71,6 +71,7 @@ export default defineConfig({
                 KEY_MAX_PER_REQUEST_SATS: "200000000000",
                 // Low enough that a test can build a payout that needs more.
                 MAX_PAYOUT_INPUTS: "5",
+                COLLATERAL_COINS: "1",
               },
             },
           }),

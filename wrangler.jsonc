@@ -102,6 +102,9 @@
         // ~0.35 ms of CPU per signed input; keep a payout well inside the
         // free plan's ~10 ms.
         "MAX_PAYOUT_INPUTS": "20",
+        // Keep one coin of 1001+ tDASH on hand for mn keys, merged from small
+        // coins by the cron, MAX_PAYOUT_INPUTS at a time.
+        "COLLATERAL_COINS": "1",
         "DRY_RUN": "0"
       }
     },

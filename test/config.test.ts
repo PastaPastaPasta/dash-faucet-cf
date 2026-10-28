@@ -164,6 +164,19 @@ describe("API keys", () => {
     ).toBe(false);
   });
 
+  it("are off for an invitation actor on mainnet, even behind a testnet faucet", () => {
+    const cfg = resolveInvitationTreasuryConfig(
+      env({
+        INVITATIONS_ENABLED: "1",
+        INVITATION_NETWORK: "mainnet",
+        INVITATION_SECRET: "s",
+        INVITATION_FAUCET_WIF: FAUCET.mainnet.wif,
+      }),
+    );
+    expect(cfg.network).toBe("mainnet");
+    expect(cfg.apiKeys.enabled).toBe(false);
+  });
+
   it("rejects an admin token hash that is not a SHA-256 digest", () => {
     expect(() => resolveConfig(env({ ADMIN_TOKEN_SHA256: "abc" }))).toThrow(/SHA-256/);
     expect(resolveConfig(env({ ADMIN_TOKEN_SHA256: "AB".repeat(32) })).apiKeys.adminTokenSha256).toBe(

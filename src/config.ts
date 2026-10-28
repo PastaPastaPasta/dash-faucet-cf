@@ -62,6 +62,7 @@ export interface Env {
   KEY_MAX_PER_REQUEST_SATS?: string;
   KEY_RESERVE_SATS?: string;
   MAX_PAYOUT_INPUTS?: string;
+  COLLATERAL_COINS?: string;
 
   // secrets
   FAUCET_WIF: string;
@@ -107,6 +108,12 @@ export interface FaucetConfig {
    * fails cleanly and waits for a coin large enough.
    */
   maxPayoutInputs: number;
+  /**
+   * Coins of at least one masternode collateral (plus fee headroom) the cron
+   * keeps on hand by merging small coins, so an `mn` key payout is a single
+   * input rather than hundreds. 0 disables consolidation.
+   */
+  collateralCoins: number;
   apiKeys: {
     /**
      * Testnet only. A key pays without a captcha and an `mn` key pays 1000
@@ -351,6 +358,7 @@ export function resolveConfig(env: Env): FaucetConfig {
     wif: env.FAUCET_WIF,
     dryRun: env.DRY_RUN === "1",
     maxPayoutInputs: positiveInt("MAX_PAYOUT_INPUTS", env.MAX_PAYOUT_INPUTS, 20),
+    collateralCoins: int("COLLATERAL_COINS", env.COLLATERAL_COINS, 0),
     apiKeys: {
       enabled: network === "testnet",
       adminTokenSha256: adminTokenSha256(env.ADMIN_TOKEN_SHA256),
@@ -418,6 +426,8 @@ export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
     network,
     providers: PROVIDERS[network],
     wif,
+    // Keys follow the actor's own network: this one may hold real DASH.
+    apiKeys: { ...config.apiKeys, enabled: network === "testnet" },
   };
 }
 

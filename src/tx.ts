@@ -36,26 +36,26 @@ export class InsufficientFundsError extends Error {
 }
 
 /**
- * The recipient is the faucet's own address. Refused because a payout's change
- * shares that pubKeyHash, so `finish()` — which identifies our outputs by
- * script — would record the recipient output as in-flight change and corrupt
- * the ledger. Client error, not a server fault.
- */
-/**
  * The balance covers the payout, but only by spending more coins than one
  * request can afford to sign. Distinct from insufficient funds: waiting for the
  * pool to consolidate (or a larger deposit) fixes it.
  */
 export class TooFragmentedError extends Error {
   constructor(
-    readonly inputs: number,
-    readonly maxInputs: number,
+    inputs: number,
+    maxInputs: number,
   ) {
     super(`payout needs ${inputs} inputs; at most ${maxInputs} are allowed per payout`);
     this.name = "TooFragmentedError";
   }
 }
 
+/**
+ * The recipient is the faucet's own address. Refused because a payout's change
+ * shares that pubKeyHash, so `finish()` — which identifies our outputs by
+ * script — would record the recipient output as in-flight change and corrupt
+ * the ledger. Client error, not a server fault.
+ */
 export class SelfPayError extends Error {
   constructor() {
     super("refusing to pay the faucet's own address");
@@ -266,14 +266,14 @@ export async function buildPayout(opts: {
   satoshis: number;
   maxInputs?: number;
 }): Promise<BuiltTx> {
-  const { key, utxos, recipientPubKeyHash, satoshis, maxInputs } = opts;
+  const { key, utxos, recipientPubKeyHash, satoshis, maxInputs = Infinity } = opts;
 
   if (recipientPubKeyHash === key.pubKeyHash) {
     throw new SelfPayError();
   }
 
   const selected = selectInputs(utxos, satoshis, 2);
-  if (maxInputs !== undefined && selected.length > maxInputs) {
+  if (selected.length > maxInputs) {
     throw new TooFragmentedError(selected.length, maxInputs);
   }
   const dashTx = DashTx.create(keyUtilsFor(key));
@@ -358,6 +358,38 @@ export async function buildSplit(opts: {
     throw new Error(
       `refusing to broadcast: split produced ${pool.length} pool coins, expected ${count}`,
     );
+  }
+  return built;
+}
+
+/**
+ * Build and sign a self-send that merges `inputs` into one coin.
+ *
+ * This is how the faucet grows a coin large enough for a masternode
+ * collateral out of hundreds of small ones: a payout may only sign a bounded
+ * number of inputs, so the merging happens a slice at a time, in the cron.
+ */
+export async function buildConsolidation(opts: {
+  key: FaucetKey;
+  inputs: Utxo[];
+}): Promise<BuiltTx> {
+  const { key } = opts;
+  if (opts.inputs.length < 2) throw new Error("consolidation requires at least 2 inputs");
+
+  const totalIn = opts.inputs.reduce((acc, u) => acc + u.satoshis, 0);
+  const fee = feeCeiling(opts.inputs.length, 1);
+  const merged = totalIn - fee;
+  if (merged <= DashTx.LEGACY_DUST) throw new InsufficientFundsError(totalIn, fee);
+
+  const inputs = opts.inputs.map(toTxInput);
+  inputs.sort(DashTx.sortInputs);
+  const outputs: TxOutput[] = [{ satoshis: merged, pubKeyHash: key.pubKeyHash }];
+
+  const dashTx = DashTx.create(keyUtilsFor(key));
+  const signed = await dashTx.hashAndSignAll({ inputs, outputs });
+  const built = await finish(signed, key, totalIn);
+  if (built.ownOutputs.length !== 1 || built.ownOutputs[0].satoshis !== merged) {
+    throw new Error("refusing to broadcast: consolidation did not produce exactly one merged coin");
   }
   return built;
 }

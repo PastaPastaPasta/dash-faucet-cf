@@ -184,9 +184,18 @@ curl -X POST https://faucet.thepasta.org/api/core-faucet \
 | `mn` | exactly 1000 DASH in one output — a masternode collateral; `amount` must be omitted | 1 per rolling 24 h by default |
 
 What still applies to every key: a payout may never leave the wallet below
-`KEY_RESERVE_SATS`, and may spend at most `MAX_PAYOUT_INPUTS` coins (signing
-costs ~0.35 ms of CPU per input). A large amount the wallet can only cover by
-spending many small coins returns `503` until a large enough coin exists.
+`KEY_RESERVE_SATS` (before the fee), and may spend at most `MAX_PAYOUT_INPUTS`
+coins, because signing costs ~0.35 ms of CPU per input against the free plan's
+~10 ms. A large amount the wallet can only cover with many small coins returns
+`503` until a large enough coin exists.
+
+For `mn` keys the cron keeps `COLLATERAL_COINS` coins of at least 1001 DASH on
+hand. Whenever the pool is healthy and the wallet is short of them, each pass
+merges up to `MAX_PAYOUT_INPUTS` of the largest small coins into one — the
+coin being grown is always the largest, so it is always in the slice — while
+the smallest `POOL_TARGET` pool coins stay untouched. Pool refills split from
+the largest coin *below* collateral size. `/api/status` reports
+`collateralUtxos`. Depositing a single coin of 1001+ tDASH skips the wait.
 
 The response is the usual payout body plus `keyId`. Errors: `401` (unknown or
 revoked key), `400` (bad `amount`), `429` with `Retry-After` (an `mn` key's
@@ -393,7 +402,8 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `ADMIN_TOKEN_SHA256` | SHA-256 (hex) of the admin token for `/api/admin/keys`; blank disables it |
 | `KEY_MAX_PER_REQUEST_SATS` | Largest single API-key payout (default 5000 DASH) |
 | `KEY_RESERVE_SATS` | API-key payouts never leave the balance below this (default 0) |
-| `MAX_PAYOUT_INPUTS` | Coins one payout may spend (default 20) |
+| `MAX_PAYOUT_INPUTS` | Coins one payout (or consolidation) may spend (default 20) |
+| `COLLATERAL_COINS` | Coins of 1001+ DASH the cron keeps for `mn` keys by merging small coins (default 0, off) |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |

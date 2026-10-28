@@ -129,6 +129,8 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       rateLimits: cfg.rateLimits,
       balanceSats: snap.balanceSats,
       poolUtxos: snap.poolUtxos,
+      // Coins that can pay an mn key's 1000 DASH collateral in one input.
+      collateralUtxos: snap.collateralUtxos,
       spentTodaySats: snap.spentToday,
       dailyBudgetSats: cfg.dailyBudgetSats,
       source: snap.source,
@@ -185,7 +187,8 @@ const PAYOUT_FAILURES: Record<
   bad_request: { status: 400, message: "Invalid request" },
   fragmented: {
     status: 503,
-    message: "No coin large enough for this amount yet — the faucet is consolidating; try again later",
+    message:
+      "No coin large enough for this amount yet; the faucet merges small coins every 10 minutes, so try again later",
   },
   error: { status: 500, message: "Internal server error" },
 };
@@ -312,6 +315,61 @@ async function verifyCaptcha(
   return { ok: true, tier: "soft" };
 }
 
+/**
+ * Cheap first line of defence, before any work or outbound calls. Per-colo
+ * and ephemeral; the Treasury owns the durable limits.
+ */
+async function edgeLimited(env: Env, key: string): Promise<Response | undefined> {
+  if (!env.EDGE_LIMIT || (await env.EDGE_LIMIT.limit({ key })).success) return undefined;
+  return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, { "Retry-After": "60" });
+}
+
+/** The recipient's address and pubKeyHash, or the 400 for a bad address. */
+async function parseRecipient(
+  body: { address?: string },
+  cfg: FaucetConfig,
+): Promise<{ address: string; pubKeyHash: string } | Response> {
+  const address = (body.address ?? "").trim();
+  try {
+    return { address, pubKeyHash: await addressToPubKeyHash(address, cfg.network) };
+  } catch (err) {
+    if (err instanceof AddressError) return errorJson(400, err.message);
+    throw err;
+  }
+}
+
+function payoutSuccess(
+  result: Extract<PayoutResult, { ok: true }>,
+  address: string,
+  cfg: FaucetConfig,
+): Response {
+  return json({
+    txid: result.txid,
+    amount: toDash(result.satoshis),
+    address,
+    network: cfg.network,
+    replay: result.replay,
+    ...(result.keyId ? { keyId: result.keyId } : {}),
+    ...(result.dryRun ? { dryRun: true } : {}),
+    ...(result.accepted.length ? { relays: result.accepted } : {}),
+  });
+}
+
+/**
+ * `amount` in DASH as whole duffs, or undefined when it is not a usable
+ * amount. Anything finer than a duff is a unit mistake, not a request; the
+ * floor keeps a typo from building an unrelayable dust output.
+ */
+function parseAmountSats(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const sats = Math.round(value * COIN);
+  if (!Number.isSafeInteger(sats) || sats < MIN_KEY_PAYOUT_SATS) return undefined;
+  return Math.abs(value * COIN - sats) <= 1e-3 ? sats : undefined;
+}
+
+/** 0.001 DASH: comfortably above dust, below anything anyone asks for. */
+const MIN_KEY_PAYOUT_SATS = 100_000;
+
 async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
   const ip = clientIp(request);
@@ -339,34 +397,20 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     return errorJson(400, "Address and captcha tokens must be strings");
   }
 
-  const apiKey = bearerToken(request);
-  if (apiKey !== undefined) return handleKeyFaucet(env, cfg, ip, apiKey, body);
+  const token = bearerToken(request);
+  if (token !== undefined) return handleKeyFaucet(env, cfg, ip, token, body);
   if (body.amount !== undefined) {
     return errorJson(400, "amount requires an API key");
   }
 
-  // Cheap first line of defence, before any work or outbound calls. Per-colo
-  // and ephemeral; the Treasury owns the durable limit.
-  if (env.EDGE_LIMIT) {
-    const { success } = await env.EDGE_LIMIT.limit({ key: ip });
-    if (!success) {
-      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, {
-        "Retry-After": "60",
-      });
-    }
-  }
+  const limited = await edgeLimited(env, ip);
+  if (limited) return limited;
 
   // Address first: it is pure local arithmetic, and checking it before the
   // captcha means a typo costs the user a retry rather than a fresh proof of
   // work (verifying the capToken consumes it).
-  let pubKeyHash: string;
-  const address = (body.address ?? "").trim();
-  try {
-    pubKeyHash = await addressToPubKeyHash(address, cfg.network);
-  } catch (err) {
-    if (err instanceof AddressError) return errorJson(400, err.message);
-    throw err;
-  }
+  const recipient = await parseRecipient(body, cfg);
+  if (recipient instanceof Response) return recipient;
 
   const captcha = await verifyCaptcha(env, cfg, ip, body);
   if (!captcha.ok) {
@@ -379,29 +423,16 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  const result = await treasury(env).payout({
-    address,
-    pubKeyHash,
-    ip,
-    tier: captcha.tier,
-  });
+  const result = await treasury(env).payout({ ...recipient, ip, tier: captcha.tier });
   if (!result.ok) return payoutFailure(result, canEscalate(cfg, captcha.tier));
-
-  return json({
-    txid: result.txid,
-    amount: toDash(result.satoshis),
-    address,
-    network: cfg.network,
-    replay: result.replay,
-    ...(result.dryRun ? { dryRun: true } : {}),
-    ...(result.accepted.length ? { relays: result.accepted } : {}),
-  });
+  return payoutSuccess(result, recipient.address, cfg);
 }
 
 /**
- * Payout for an API-key caller: no captcha, no edge or per-IP limit, and an
- * optional `amount` in DASH. The key itself is checked in the Treasury, inside
- * the payout lock, together with its tier's rules.
+ * Payout for an API-key caller: no captcha, no per-IP limit, and an optional
+ * `amount` in DASH. Unknown keys are turned away — and charged the edge limit,
+ * so this path cannot be used to skip it — before they reach the spending
+ * lock; the Treasury re-checks the key, and applies its tier, inside the lock.
  */
 async function handleKeyFaucet(
   env: Env,
@@ -410,65 +441,32 @@ async function handleKeyFaucet(
   token: string,
   body: { address?: string; amount?: unknown },
 ): Promise<Response> {
-  if (!looksLikeApiKey(token)) {
-    // Garbage credentials still pay the edge limit, so this path cannot be
-    // used to skip it.
-    if (env.EDGE_LIMIT && !(await env.EDGE_LIMIT.limit({ key: ip })).success) {
-      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, { "Retry-After": "60" });
-    }
-    return errorJson(401, "Invalid or revoked API key", {}, { "WWW-Authenticate": "Bearer" });
+  const apiKeyHash = hashApiKey(token);
+  if (!looksLikeApiKey(token) || !(await treasury(env).isActiveApiKey(apiKeyHash))) {
+    return (await edgeLimited(env, ip)) ?? payoutFailure({ ok: false, code: "unauthorized" }, false);
   }
 
   let requestedSats: number | undefined;
   if (body.amount !== undefined) {
-    const amount = body.amount;
-    // Whole duffs only: anything finer is a unit mistake, not a request.
-    const sats = typeof amount === "number" ? Math.round(amount * COIN) : NaN;
-    if (
-      typeof amount !== "number" ||
-      !Number.isFinite(amount) ||
-      sats < 1 ||
-      Math.abs(amount * COIN - sats) > 1e-3
-    ) {
-      return errorJson(400, "amount must be a positive number of DASH with at most 8 decimals");
+    requestedSats = parseAmountSats(body.amount);
+    if (requestedSats === undefined) {
+      return errorJson(400, "amount must be a number of DASH, at least 0.001, with at most 8 decimals");
     }
-    requestedSats = sats;
   }
 
-  let pubKeyHash: string;
-  const address = (body.address ?? "").trim();
-  try {
-    pubKeyHash = await addressToPubKeyHash(address, cfg.network);
-  } catch (err) {
-    if (err instanceof AddressError) return errorJson(400, err.message);
-    throw err;
-  }
+  const recipient = await parseRecipient(body, cfg);
+  if (recipient instanceof Response) return recipient;
 
-  const result = await treasury(env).payout({
-    address,
-    pubKeyHash,
-    ip,
-    apiKeyHash: hashApiKey(token),
-    requestedSats,
-  });
+  const result = await treasury(env).payout({ ...recipient, ip, apiKeyHash, requestedSats });
   if (!result.ok) return payoutFailure(result, false);
-
-  return json({
-    txid: result.txid,
-    amount: toDash(result.satoshis),
-    address,
-    network: cfg.network,
-    replay: result.replay,
-    keyId: result.keyId,
-    ...(result.dryRun ? { dryRun: true } : {}),
-    ...(result.accepted.length ? { relays: result.accepted } : {}),
-  });
+  return payoutSuccess(result, recipient.address, cfg);
 }
 
 /** True when the request carries the admin bearer token. */
 function isAdmin(request: Request, cfg: FaucetConfig): boolean {
   const token = bearerToken(request);
-  if (!cfg.apiKeys.adminTokenSha256 || !token) return false;
+  const header = request.headers.get("Authorization") ?? "";
+  if (!cfg.apiKeys.adminTokenSha256 || !token || !/^Bearer\s/i.test(header)) return false;
   return digestEquals(hashApiKey(token), cfg.apiKeys.adminTokenSha256);
 }
 
@@ -581,14 +579,8 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   }
 
   const ip = clientIp(request);
-  if (env.EDGE_LIMIT) {
-    const { success } = await env.EDGE_LIMIT.limit({ key: `invite:${ip}` });
-    if (!success) {
-      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, {
-        "Retry-After": "60",
-      });
-    }
-  }
+  const limited = await edgeLimited(env, `invite:${ip}`);
+  if (limited) return limited;
 
   const captcha = await verifyTurnstile(
     cfg.turnstileSecret,

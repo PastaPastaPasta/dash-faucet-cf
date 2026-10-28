@@ -4,6 +4,8 @@ import { loadFaucetKey } from "../src/keys";
 import {
   InsufficientFundsError,
   SelfPayError,
+  TooFragmentedError,
+  buildConsolidation,
   buildPayout,
   buildSplit,
   buildInvitationAssetLock,
@@ -195,5 +197,25 @@ describe("buildInvitationAssetLock", () => {
     expect(built.ownOutputs).toHaveLength(1);
     expect(txidOf(built.hex)).toBe(built.txid);
     expect(built.totalIn - amount - built.ownOutputs[0].satoshis).toBe(built.fee);
+  });
+});
+
+describe("input cap and consolidation", () => {
+  const small = Array.from({ length: 8 }, (_, i) => utxo((i + 1).toString(16), 0, 100_000_000));
+
+  it("refuses a payout that needs more inputs than allowed, before signing", async () => {
+    await expect(
+      buildPayout({ key, utxos: small, recipientPubKeyHash: RECIPIENT.testnet.pubKeyHash, satoshis: 500_000_000, maxInputs: 4 }),
+    ).rejects.toBeInstanceOf(TooFragmentedError);
+  });
+
+  it("merges coins into exactly one output back to the faucet", async () => {
+    const built = await buildConsolidation({ key, inputs: small });
+    expect(built.inputs).toHaveLength(8);
+    expect(built.ownOutputs).toHaveLength(1);
+    expect(built.ownOutputs[0].satoshis).toBe(800_000_000 - built.fee);
+    expect(built.fee).toBeGreaterThan(0);
+    expect(built.fee).toBeLessThan(10_000);
+    expect(built.txid).toBe(txidOf(built.hex));
   });
 });
