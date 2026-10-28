@@ -844,14 +844,16 @@ export class Treasury extends DurableObject<Env> {
     const cfg = this.config;
     const build = (coins: Utxo[]) =>
       buildPayout({ key, utxos: coins, recipientPubKeyHash, satoshis, maxInputs: cfg.maxPayoutInputs });
-    if (forCollateral || cfg.collateralCoins === 0) return build(utxos);
+    // `return await` throughout: workerd reports a returned-but-unawaited
+    // rejection as unhandled before the caller gets to catch it.
+    if (forCollateral || cfg.collateralCoins === 0) return await build(utxos);
     const spare = utxos.filter((u) => u.satoshis < COLLATERAL_COIN_SATS);
-    if (spare.length === utxos.length) return build(utxos);
+    if (spare.length === utxos.length) return await build(utxos);
     try {
       return await build(spare);
     } catch (err) {
       if (err instanceof InsufficientFundsError || err instanceof TooFragmentedError) {
-        return build(utxos);
+        return await build(utxos);
       }
       throw err;
     }
