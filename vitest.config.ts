@@ -12,7 +12,7 @@ export default defineConfig({
   test: {
     projects: [
       {
-        resolve: { alias },
+        resolve: { alias: { ...alias, "cloudflare:sockets": "./test/stubs/sockets.ts" } },
         test: {
           name: "unit",
           // Pure logic — nothing here imports `cloudflare:workers`.
@@ -72,6 +72,8 @@ export default defineConfig({
                 // Low enough that a test can build a payout that needs more.
                 MAX_PAYOUT_INPUTS: "5",
                 COLLATERAL_COINS: "1",
+                // FakeChain stubs fetch; real deployments use sockets.
+                EVONODE_TRANSPORT: "fetch",
               },
             },
           }),

@@ -16,10 +16,10 @@ class GrpcError extends ProviderError {
 /**
  * Dash Platform DAPI Core over grpc-web — the gateway every evonode runs.
  *
- * Only hostnames work here: Workers refuse to fetch a bare IP (Cloudflare error
- * 1003), and evonodes are addressed by IP with IP-only certificates. That
- * leaves the DCG-run `seed-N.<network>.networks.dash.org` gateways, which do
- * have hostname certificates and serve DAPI on :1443.
+ * Evonodes are addressed by IP with IP-SAN certificates. Workers' `fetch`
+ * refuses bare IPs (Cloudflare error 1003), so those are reached through
+ * `socketFetch` instead (see `socket.ts`); hostname origins such as the DCG
+ * `seed-N` gateways use plain `fetch`.
  *
  * DAPI has no address index, so this provider cannot list UTXOs. It is a
  * height source, a relay, and a transaction lookup.
@@ -37,8 +37,14 @@ export class DapiProvider implements ChainProvider {
   readonly canBroadcast = true;
   readonly canReadUtxos = false;
 
-  constructor(private readonly origin: string) {
-    this.name = `dapi:${new URL(origin).hostname.split(".")[0]}`;
+  constructor(
+    readonly origin: string,
+    // Resolved per call, so a fetch installed later (tests) is the one used.
+    private readonly transport: (url: string, init: RequestInit) => Promise<Response> = (url, init) =>
+      fetch(url, init),
+  ) {
+    const host = new URL(origin).hostname;
+    this.name = `dapi:${/^[\d.]+$/.test(host) ? host : host.split(".")[0]}`;
   }
 
   private async call(
@@ -46,7 +52,7 @@ export class DapiProvider implements ChainProvider {
     request: Uint8Array,
     signal: AbortSignal,
   ): Promise<Fields> {
-    const res = await fetch(`${this.origin}/${SERVICE}/${method}`, {
+    const res = await this.transport(`${this.origin}/${SERVICE}/${method}`, {
       method: "POST",
       headers: {
         "content-type": "application/grpc-web+proto",

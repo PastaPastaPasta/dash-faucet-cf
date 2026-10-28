@@ -25,7 +25,7 @@ Browser ──► Worker (src/index.ts)   ◄── native clients (cap.js proof
             Chain layer (src/chain/) ──► hyphen  ┐
                                       ──► insight ├─ ordered failover
                                       ──► dashrpc ┤
-                                      ──► DAPI    ┘  (testnet: tip + relay only)
+                                      ──► DAPI    ┘  (evonodes by IP: tip + relay + lookups)
               │
               └──► Platform Explorer (identity claim checks)
 ```
@@ -55,18 +55,50 @@ operate.
 | Hyphen | `hyphen.dash.org` | — | ✓ | ✗ read-only |
 | Insight | `insight.dash.org` | `insight.testnet.networks.dash.org` | ✓ | ✓ |
 | Dash JSON-RPC | `rpc.digitalcash.dev` | — | ✓ | ✓ |
-| DAPI (grpc-web) | — | `seed-{1,2,3}.testnet.networks.dash.org:1443` | ✗ no address index | ✓ |
+| DAPI (grpc-web) | 3 sampled evonodes, `:443` | 3 sampled evonodes, `:1443`; `seed-{1,2,3}` only as fallback | ✗ no address index | ✓ |
 
 Testnet dropped `trpc.digitalcash.dev`: it stayed on Core v22 and has sat on a
 dead fork at height 1,577,999 since V24 activated at 1,578,000. A forked node
 still answers every call, so it looked healthy while it refused every payout.
 
-DAPI is reached through the DCG seed hostnames rather than evonodes. Workers
-refuse to `fetch` a bare IP (Cloudflare error 1003), and evonodes are only
-addressable by IP, with IP-only certificates. DAPI has no address or UTXO
-lookup, so on testnet insight is the sole UTXO source; the DAPI seeds serve as
-relays, as `hasTx`/ChainLock lookups, and as an independent tip that insight's
-lag check is measured against.
+DAPI goes straight to the evonodes. Workers' `fetch` refuses a bare IP
+(Cloudflare error 1003) and evonodes are only addressable by IP, but
+`cloudflare:sockets` may connect to an IP, and evonode certificates carry the IP
+as a SAN, so a TLS socket verifies normally. `src/chain/socket.ts` sends each
+grpc-web call as one HTTP/1.1 request over such a socket (ported from
+dash-platform-workers, which runs rs-sdk the same way).
+
+Which evonodes: `src/chain/evonodes.ts` reads the quorum service's
+`/masternodes` (enabled, version-checked, `platform_https`), falls back to
+Platform Explorer's active validators, and failing both uses a snapshot compiled
+into the Worker. The list is refreshed hourly per isolate. Each operation asks 3
+evonodes drawn at random, and one that fails is benched for 10 minutes. The DCG
+`seed-N` gateways are asked only when none of the sampled evonodes answered (or,
+for a broadcast, none accepted), so the faucet does not depend on them.
+Discovery never blocks a request: a cold isolate serves the snapshot while the
+lists refresh in the background, and a source listing fewer than 10 usable
+nodes is ignored.
+
+Evonodes are arbitrary third parties, so none of them is ever the authority for
+a decision about money:
+
+- **Tip:** the sample casts one vote, its median, next to each configured
+  provider; a node far above the median is benched. One node reporting a wild
+  height cannot make insight look stale.
+- **Broadcast:** evonode acceptance counts only alongside a configured relay's;
+  on its own it is *ambiguous*, which locks the inputs rather than reporting a
+  payout. A node answering with a different txid is benched.
+- **`hasTx`:** an evonode's "yes" never settles an ambiguous broadcast as live;
+  its "no" can only keep inputs locked.
+- **ChainLock status** (which makes invitation vouchers usable, or failed) comes
+  from configured providers only. Coinbase lookups try them first.
+- Every socket exchange — connect included — is raced against the call's
+  deadline: a black-holed address costs 2.5 s, not the OS connect timeout.
+
+DAPI has no address or UTXO lookup, so insight remains the sole testnet UTXO
+source; DAPI serves as relays, `hasTx`/coinbase/ChainLock lookups, and an
+independent tip that insight's lag check is measured against. Mainnet gets the
+same evonode relays, so it no longer rests on a single Core RPC endpoint.
 
 Reads take the first healthy provider that is not lagging the best-known tip;
 refusing a stale provider is what stops the faucet spending coins the rest of

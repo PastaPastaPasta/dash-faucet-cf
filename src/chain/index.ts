@@ -1,6 +1,8 @@
 import { ProviderSpec } from "../config";
 import { describeError } from "../errors";
 import { DapiProvider } from "./dapi";
+import { EvonodeDirectory } from "./evonodes";
+import { socketFetch } from "./socket";
 import { DashRpcProvider } from "./dashrpc";
 import { HyphenProvider } from "./hyphen";
 import { InsightProvider } from "./insight";
@@ -32,6 +34,8 @@ const BROADCAST_TIMEOUT_MS = 8000;
 const CHAINLOCK_TIMEOUT_MS = 10_000;
 /** A provider further behind the best tip than this is not trusted for reads. */
 const MAX_LAG_BLOCKS = 10;
+/** Evonodes asked per operation, drawn at random from the directory. */
+const EVONODE_SAMPLE = 3;
 
 export interface ProviderStatus {
   name: string;
@@ -69,7 +73,7 @@ export class AllProvidersFailedError extends Error {
   }
 }
 
-function build(spec: ProviderSpec): ChainProvider {
+function build(spec: Exclude<ProviderSpec, { kind: "evonodes" }>): ChainProvider {
   switch (spec.kind) {
     case "hyphen":
       return new HyphenProvider(spec.url);
@@ -88,28 +92,137 @@ function build(spec: ProviderSpec): ChainProvider {
  * removes the single point of failure and improves propagation.
  */
 export class ChainClient {
-  private readonly providers: ChainProvider[];
+  /** Fixed providers asked on every operation. */
+  private readonly primary: ChainProvider[] = [];
+  /** Asked only when no primary DAPI source answered (the DCG seed gateways). */
+  private readonly fallback: ChainProvider[] = [];
+  private readonly evonodes?: {
+    directory: EvonodeDirectory;
+    transport: (url: string, init: RequestInit) => Promise<Response>;
+    providers: Map<string, DapiProvider>;
+  };
 
   constructor(specs: ProviderSpec[]) {
-    this.providers = specs.map(build);
+    for (const spec of specs) {
+      if (spec.kind === "evonodes") {
+        this.evonodes = {
+          directory: new EvonodeDirectory(spec.network),
+          transport: spec.transport === "fetch" ? (url, init) => fetch(url, init) : socketFetch,
+          providers: new Map(),
+        };
+      } else {
+        (spec.fallback ? this.fallback : this.primary).push(build(spec));
+      }
+    }
   }
 
   private signal(ms = TIMEOUT_MS): AbortSignal {
     return AbortSignal.timeout(ms);
   }
 
-  /** Heights from every provider, in parallel. Never throws. */
-  async survey(): Promise<ProviderStatus[]> {
+  /** The fixed primaries plus a fresh random sample of evonodes. */
+  private async active(): Promise<ChainProvider[]> {
+    if (!this.evonodes) return this.primary;
+    const { directory, transport, providers } = this.evonodes;
+    const sampled = directory.sample(EVONODE_SAMPLE).map((origin) => {
+      let provider = providers.get(origin);
+      if (!provider) {
+        provider = new DapiProvider(origin, transport);
+        providers.set(origin, provider);
+      }
+      return provider;
+    });
+    return [...this.primary, ...sampled];
+  }
+
+  /** Bench an evonode that failed, so the next sample skips it for a while. */
+  private bench(provider: ChainProvider): void {
+    if (provider instanceof DapiProvider && this.evonodes?.providers.get(provider.origin) === provider) {
+      this.evonodes.directory.bench(provider.origin);
+    }
+  }
+
+  private static isDapi(provider: ChainProvider): boolean {
+    return provider instanceof DapiProvider;
+  }
+
+  /**
+   * Sampled evonodes are arbitrary third parties, unlike the configured
+   * explorers and gateways. They relay, and they vote on the tip, but no
+   * single one of them is ever the authority for a decision about money.
+   */
+  private isEvonode(provider: ChainProvider): boolean {
+    return (
+      provider instanceof DapiProvider &&
+      this.evonodes?.providers.get(provider.origin) === provider
+    );
+  }
+
+  /**
+   * The best-known tip. Configured providers count individually; the sampled
+   * evonodes cast one vote, their median, so a single node reporting a wild
+   * height cannot make every trusted UTXO source look stale. Evonodes far
+   * above that median are benched.
+   */
+  private tipHeight(providers: ChainProvider[], statuses: ProviderStatus[]): number | null {
+    const trusted: number[] = [];
+    const sampled: Array<{ provider: ChainProvider; height: number }> = [];
+    for (const [i, provider] of providers.entries()) {
+      const height = statuses[i].height;
+      if (height === null) continue;
+      if (this.isEvonode(provider)) sampled.push({ provider, height });
+      else trusted.push(height);
+    }
+    const candidates = [...trusted];
+    if (sampled.length > 1) {
+      const sorted = sampled.map((s) => s.height).sort((a, b) => a - b);
+      const median = sorted[Math.floor((sorted.length - 1) / 2)];
+      candidates.push(median);
+      for (const s of sampled) if (s.height > median + MAX_LAG_BLOCKS) this.bench(s.provider);
+    } else if (sampled.length === 1) {
+      // A lone answer is not a median: it may lead the configured providers by
+      // at most the lag allowance, so it cannot by itself make them look stale.
+      const [only] = sampled;
+      candidates.push(
+        trusted.length > 0 ? Math.min(only.height, Math.max(...trusted) + MAX_LAG_BLOCKS) : only.height,
+      );
+    }
+    return candidates.length > 0 ? Math.max(...candidates) : null;
+  }
+
+  private async heights(providers: ChainProvider[]): Promise<ProviderStatus[]> {
     return Promise.all(
-      this.providers.map(async (p): Promise<ProviderStatus> => {
+      providers.map(async (p): Promise<ProviderStatus> => {
         try {
           const height = await p.getHeight(this.signal());
           return { name: p.name, ok: true, height, error: null };
         } catch (err) {
+          this.bench(p);
           return { name: p.name, ok: false, height: null, error: describeError(err) };
         }
       }),
     );
+  }
+
+  /**
+   * Heights from the active providers, in parallel, plus the fallbacks when
+   * no DAPI source among them answered. Never throws. `providers` is
+   * index-aligned with `statuses`.
+   */
+  private async surveyWith(): Promise<{ providers: ChainProvider[]; statuses: ProviderStatus[] }> {
+    const providers = await this.active();
+    const statuses = await this.heights(providers);
+    const dapiAnswered = providers.some((p, i) => ChainClient.isDapi(p) && statuses[i].ok);
+    if (dapiAnswered || this.fallback.length === 0) return { providers, statuses };
+    return {
+      providers: [...providers, ...this.fallback],
+      statuses: [...statuses, ...(await this.heights(this.fallback))],
+    };
+  }
+
+  /** Heights from every provider asked. Never throws. */
+  async survey(): Promise<ProviderStatus[]> {
+    return (await this.surveyWith()).statuses;
   }
 
   /**
@@ -118,24 +231,20 @@ export class ChainClient {
    * stops us from spending coins that another provider already knows are gone.
    */
   async getUtxos(address: string): Promise<UtxoSnapshot> {
-    const statuses = await this.survey();
-    const heights = statuses
-      .map((s) => s.height)
-      .filter((h): h is number => h !== null);
-
-    if (heights.length === 0) {
+    const { providers, statuses } = await this.surveyWith();
+    const tipHeight = this.tipHeight(providers, statuses);
+    if (tipHeight === null) {
       throw new AllProvidersFailedError(
         "getHeight",
         statuses.map((s) => s.error ?? "unknown"),
       );
     }
-    const tipHeight = Math.max(...heights);
 
     const errors: string[] = [];
     const eligible: ChainProvider[] = [];
-    // survey() maps over this.providers, so statuses is index-aligned with it.
-    // Matching by name instead would collapse two providers of the same kind.
-    for (const [i, provider] of this.providers.entries()) {
+    // statuses is index-aligned with providers. Matching by name instead would
+    // collapse two providers of the same kind.
+    for (const [i, provider] of providers.entries()) {
       if (!provider.canReadUtxos) continue;
       const status = statuses[i];
       if (!status.ok || status.height === null) {
@@ -179,14 +288,10 @@ export class ChainClient {
    * are safe to reuse.
    */
   async broadcast(rawHex: string, expectedTxid: string): Promise<BroadcastResult> {
-    const relays = this.providers.filter((p) => p.canBroadcast);
-    if (relays.length === 0) {
+    const relays = (await this.active()).filter((p) => p.canBroadcast);
+    if (relays.length === 0 && this.fallback.length === 0) {
       throw new Error("no broadcast-capable providers configured");
     }
-
-    const settled = await Promise.allSettled(
-      relays.map((p) => p.broadcast(rawHex, this.signal(BROADCAST_TIMEOUT_MS))),
-    );
 
     const result: BroadcastResult = {
       txid: expectedTxid,
@@ -194,25 +299,58 @@ export class ChainClient {
       rejected: [],
       ambiguous: [],
     };
+    const unvouched: string[] = [];
+    await this.relay(relays, rawHex, expectedTxid, result, unvouched);
+    // Same bytes, same txid: asking the seeds as well can never double-pay,
+    // so they get it whenever no configured relay took it.
+    if (result.accepted.length === 0) {
+      await this.relay(this.fallback.filter((p) => p.canBroadcast), rawHex, expectedTxid, result, unvouched);
+    }
+    // Evonode acceptance alone is not proof the transaction is live: an
+    // honest-looking reply costs a hostile node nothing. Unvouched, it is
+    // ambiguous — which locks the inputs, the safe direction — rather than a
+    // success the faucet would report to the user.
+    if (result.accepted.length > 0) result.accepted.push(...unvouched);
+    else result.ambiguous.push(...unvouched.map((name) => `${name}: accepted, unvouched by a configured relay`));
+    return result;
+  }
+
+  private async relay(
+    relays: ChainProvider[],
+    rawHex: string,
+    expectedTxid: string,
+    result: BroadcastResult,
+    unvouched: string[],
+  ): Promise<void> {
+    const settled = await Promise.allSettled(
+      relays.map((p) => p.broadcast(rawHex, this.signal(BROADCAST_TIMEOUT_MS))),
+    );
 
     for (const [i, outcome] of settled.entries()) {
       const name = relays[i].name;
+      const evonode = this.isEvonode(relays[i]);
       if (outcome.status === "fulfilled") {
-        result.accepted.push(name);
+        // DAPI answers with the txid it computed; any other one is a node
+        // that did not take our transaction.
+        if (evonode && outcome.value.toLowerCase() !== expectedTxid.toLowerCase()) {
+          this.bench(relays[i]);
+          result.ambiguous.push(`${name}: answered with txid ${outcome.value}`);
+        } else {
+          (evonode ? unvouched : result.accepted).push(name);
+        }
         continue;
       }
       const message = describeError(outcome.reason);
       if (isAlreadyKnown(message)) {
-        result.accepted.push(name);
+        (evonode ? unvouched : result.accepted).push(name);
         continue;
       }
       const kind: BroadcastFailure = classifyBroadcastError(message);
+      if (kind !== "rejected") this.bench(relays[i]);
       (kind === "rejected" ? result.rejected : result.ambiguous).push(
         `${name}: ${message}`,
       );
     }
-
-    return result;
   }
 
   /**
@@ -223,21 +361,34 @@ export class ChainClient {
    * "still unknown", never as "absent".
    */
   async anyKnowsTx(txid: string): Promise<boolean | null> {
+    const first = await this.knowsTx(await this.active(), txid);
+    if (first !== null || this.fallback.length === 0) return first;
+    return this.knowsTx(this.fallback, txid);
+  }
+
+  private async knowsTx(providers: ChainProvider[], txid: string): Promise<boolean | null> {
     const settled = await Promise.allSettled(
-      this.providers.map((p) => p.hasTx(txid, this.signal())),
+      providers.map((p) => p.hasTx(txid, this.signal())),
     );
     let answered = false;
-    for (const outcome of settled) {
+    for (const [i, outcome] of settled.entries()) {
       if (outcome.status !== "fulfilled") continue;
-      if (outcome.value) return true;
-      answered = true;
+      // "Yes" settles an ambiguous broadcast as live, so it must come from a
+      // configured provider. An evonode's "no" only ever keeps inputs locked.
+      if (outcome.value && !this.isEvonode(providers[i])) return true;
+      if (!outcome.value) answered = true;
     }
     return answered ? false : null;
   }
 
   /** Coinbase or not, from the first provider that can answer. */
   async isCoinbase(txid: string): Promise<boolean> {
-    const capable = this.providers.filter((provider) => provider.isCoinbase);
+    // Configured providers first; a sampled evonode answers only when none of
+    // them could.
+    const sampled = (await this.active()).filter((p) => this.isEvonode(p));
+    const capable = [...this.primary, ...this.fallback, ...sampled].filter(
+      (provider) => provider.isCoinbase,
+    );
     const errors: string[] = [];
     for (const provider of capable) {
       try {
@@ -254,7 +405,12 @@ export class ChainClient {
 
   /** ChainLock status from the first Core RPC provider that can answer. */
   async getChainLockStatus(txid: string): Promise<ChainLockStatus> {
-    const capable = this.providers.filter((provider) => provider.getChainLockStatus);
+    // Never a sampled evonode: this status marks invitation vouchers usable,
+    // or failed (destroying their keys), so it comes from configured
+    // providers only.
+    const capable = [...this.primary, ...this.fallback].filter(
+      (provider) => provider.getChainLockStatus,
+    );
     const errors: string[] = [];
     for (const provider of capable) {
       try {
