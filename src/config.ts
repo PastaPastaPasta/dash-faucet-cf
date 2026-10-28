@@ -57,6 +57,11 @@ export interface Env {
   INVITATION_RATE_WINDOW_SECS?: string;
   PLATFORM_EXPLORER_URL?: string;
   INVITATION_PLATFORM_EXPLORER_URL?: string;
+  /** SHA-256 (hex) of the admin bearer token. Blank disables `/api/admin/*`. */
+  ADMIN_TOKEN_SHA256?: string;
+  KEY_MAX_PER_REQUEST_SATS?: string;
+  KEY_RESERVE_SATS?: string;
+  MAX_PAYOUT_INPUTS?: string;
 
   // secrets
   FAUCET_WIF: string;
@@ -95,6 +100,25 @@ export interface FaucetConfig {
   capSecret: string;
   wif: string;
   dryRun: boolean;
+  /**
+   * Inputs one payout may spend. Signing costs ~0.35 ms per input and the
+   * Workers free plan allows ~10 ms of CPU, so a large payout assembled from
+   * hundreds of small coins would be killed mid-build. Past this the request
+   * fails cleanly and waits for a coin large enough.
+   */
+  maxPayoutInputs: number;
+  apiKeys: {
+    /**
+     * Testnet only. A key pays without a captcha and an `mn` key pays 1000
+     * DASH at a time — fine for tDASH, never acceptable for real money.
+     */
+    enabled: boolean;
+    adminTokenSha256: string;
+    /** Sanity cap on one key payout, mostly against duffs/DASH mix-ups. */
+    maxPerRequestSats: number;
+    /** A key payout may never take the balance below this, so the public faucet keeps working. */
+    reserveSats: number;
+  };
   invitations: {
     enabled: boolean;
     /** May differ from the ordinary faucet network. */
@@ -238,6 +262,14 @@ function positiveInt(name: string, raw: string | undefined, fallback: number): n
   return value;
 }
 
+function adminTokenSha256(raw: string | undefined): string {
+  const value = (raw ?? "").trim().toLowerCase();
+  if (value && !/^[0-9a-f]{64}$/.test(value)) {
+    throw new Error("ADMIN_TOKEN_SHA256 must be a hex SHA-256 digest");
+  }
+  return value;
+}
+
 function networkName(name: string, raw: string): NetworkName {
   if (raw !== "mainnet" && raw !== "testnet") {
     throw new Error(`${name} must be "mainnet" or "testnet", got ${raw}`);
@@ -318,6 +350,17 @@ export function resolveConfig(env: Env): FaucetConfig {
     capSecret: env.CAP_SECRET ?? "",
     wif: env.FAUCET_WIF,
     dryRun: env.DRY_RUN === "1",
+    maxPayoutInputs: positiveInt("MAX_PAYOUT_INPUTS", env.MAX_PAYOUT_INPUTS, 20),
+    apiKeys: {
+      enabled: network === "testnet",
+      adminTokenSha256: adminTokenSha256(env.ADMIN_TOKEN_SHA256),
+      maxPerRequestSats: positiveInt(
+        "KEY_MAX_PER_REQUEST_SATS",
+        env.KEY_MAX_PER_REQUEST_SATS,
+        5000 * COIN,
+      ),
+      reserveSats: int("KEY_RESERVE_SATS", env.KEY_RESERVE_SATS, 0),
+    },
     invitations: {
       enabled: invitationsEnabled,
       network: invitationNetwork,

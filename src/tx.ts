@@ -41,6 +41,21 @@ export class InsufficientFundsError extends Error {
  * script — would record the recipient output as in-flight change and corrupt
  * the ledger. Client error, not a server fault.
  */
+/**
+ * The balance covers the payout, but only by spending more coins than one
+ * request can afford to sign. Distinct from insufficient funds: waiting for the
+ * pool to consolidate (or a larger deposit) fixes it.
+ */
+export class TooFragmentedError extends Error {
+  constructor(
+    readonly inputs: number,
+    readonly maxInputs: number,
+  ) {
+    super(`payout needs ${inputs} inputs; at most ${maxInputs} are allowed per payout`);
+    this.name = "TooFragmentedError";
+  }
+}
+
 export class SelfPayError extends Error {
   constructor() {
     super("refusing to pay the faucet's own address");
@@ -249,14 +264,18 @@ export async function buildPayout(opts: {
   utxos: Utxo[];
   recipientPubKeyHash: string;
   satoshis: number;
+  maxInputs?: number;
 }): Promise<BuiltTx> {
-  const { key, utxos, recipientPubKeyHash, satoshis } = opts;
+  const { key, utxos, recipientPubKeyHash, satoshis, maxInputs } = opts;
 
   if (recipientPubKeyHash === key.pubKeyHash) {
     throw new SelfPayError();
   }
 
   const selected = selectInputs(utxos, satoshis, 2);
+  if (maxInputs !== undefined && selected.length > maxInputs) {
+    throw new TooFragmentedError(selected.length, maxInputs);
+  }
   const dashTx = DashTx.create(keyUtilsFor(key));
 
   const draft = dashTx.legacy.draftSingleOutput({

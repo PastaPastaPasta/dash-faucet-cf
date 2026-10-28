@@ -1,3 +1,12 @@
+import {
+  KEY_TIERS,
+  MN_COLLATERAL_SATS,
+  type KeyTier,
+  bearerToken,
+  digestEquals,
+  hashApiKey,
+  looksLikeApiKey,
+} from "./apikeys";
 import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
 import {
   COIN,
@@ -125,6 +134,10 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       source: snap.source,
       providers: snap.providers,
       dryRun: cfg.dryRun,
+      // API keys (`Authorization: Bearer dfk_…`) skip the captcha; see README.
+      apiKeysEnabled: cfg.apiKeys.enabled,
+      keyMaxPerRequest: toDash(cfg.apiKeys.maxPerRequestSats),
+      mnCollateralAmount: toDash(MN_COLLATERAL_SATS),
       invitationsEnabled: cfg.invitations.enabled,
       invitationNetwork: cfg.invitations.network,
       invitationAmount: toDash(cfg.invitations.amountSats),
@@ -168,6 +181,12 @@ const PAYOUT_FAILURES: Record<
     message: "That is the faucet's own deposit address — send to a wallet you control",
   },
   chain_unavailable: { status: 503, message: "Chain providers unavailable" },
+  unauthorized: { status: 401, message: "Invalid or revoked API key" },
+  bad_request: { status: 400, message: "Invalid request" },
+  fragmented: {
+    status: 503,
+    message: "No coin large enough for this amount yet — the faucet is consolidating; try again later",
+  },
   error: { status: 500, message: "Internal server error" },
 };
 
@@ -179,6 +198,10 @@ const PAYOUT_FAILURES: Record<
  */
 function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   const { status, message } = PAYOUT_FAILURES[result.code];
+  if (result.code === "bad_request") return errorJson(status, result.detail);
+  if (result.code === "unauthorized") {
+    return errorJson(status, message, {}, { "WWW-Authenticate": "Bearer" });
+  }
   if (!("retryAfter" in result)) {
     return errorJson(status, message, { detailMessage: result.detail });
   }
@@ -298,6 +321,7 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     turnstileToken?: string;
     capToken?: string;
     hardCapToken?: string;
+    amount?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -313,6 +337,12 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     )
   ) {
     return errorJson(400, "Address and captcha tokens must be strings");
+  }
+
+  const apiKey = bearerToken(request);
+  if (apiKey !== undefined) return handleKeyFaucet(env, cfg, ip, apiKey, body);
+  if (body.amount !== undefined) {
+    return errorJson(400, "amount requires an API key");
   }
 
   // Cheap first line of defence, before any work or outbound calls. Per-colo
@@ -366,6 +396,137 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     ...(result.dryRun ? { dryRun: true } : {}),
     ...(result.accepted.length ? { relays: result.accepted } : {}),
   });
+}
+
+/**
+ * Payout for an API-key caller: no captcha, no edge or per-IP limit, and an
+ * optional `amount` in DASH. The key itself is checked in the Treasury, inside
+ * the payout lock, together with its tier's rules.
+ */
+async function handleKeyFaucet(
+  env: Env,
+  cfg: FaucetConfig,
+  ip: string,
+  token: string,
+  body: { address?: string; amount?: unknown },
+): Promise<Response> {
+  if (!looksLikeApiKey(token)) {
+    // Garbage credentials still pay the edge limit, so this path cannot be
+    // used to skip it.
+    if (env.EDGE_LIMIT && !(await env.EDGE_LIMIT.limit({ key: ip })).success) {
+      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, { "Retry-After": "60" });
+    }
+    return errorJson(401, "Invalid or revoked API key", {}, { "WWW-Authenticate": "Bearer" });
+  }
+
+  let requestedSats: number | undefined;
+  if (body.amount !== undefined) {
+    const amount = body.amount;
+    // Whole duffs only: anything finer is a unit mistake, not a request.
+    const sats = typeof amount === "number" ? Math.round(amount * COIN) : NaN;
+    if (
+      typeof amount !== "number" ||
+      !Number.isFinite(amount) ||
+      sats < 1 ||
+      Math.abs(amount * COIN - sats) > 1e-3
+    ) {
+      return errorJson(400, "amount must be a positive number of DASH with at most 8 decimals");
+    }
+    requestedSats = sats;
+  }
+
+  let pubKeyHash: string;
+  const address = (body.address ?? "").trim();
+  try {
+    pubKeyHash = await addressToPubKeyHash(address, cfg.network);
+  } catch (err) {
+    if (err instanceof AddressError) return errorJson(400, err.message);
+    throw err;
+  }
+
+  const result = await treasury(env).payout({
+    address,
+    pubKeyHash,
+    ip,
+    apiKeyHash: hashApiKey(token),
+    requestedSats,
+  });
+  if (!result.ok) return payoutFailure(result, false);
+
+  return json({
+    txid: result.txid,
+    amount: toDash(result.satoshis),
+    address,
+    network: cfg.network,
+    replay: result.replay,
+    keyId: result.keyId,
+    ...(result.dryRun ? { dryRun: true } : {}),
+    ...(result.accepted.length ? { relays: result.accepted } : {}),
+  });
+}
+
+/** True when the request carries the admin bearer token. */
+function isAdmin(request: Request, cfg: FaucetConfig): boolean {
+  const token = bearerToken(request);
+  if (!cfg.apiKeys.adminTokenSha256 || !token) return false;
+  return digestEquals(hashApiKey(token), cfg.apiKeys.adminTokenSha256);
+}
+
+/**
+ * `/api/admin/keys` — mint (POST), list (GET) and revoke (DELETE …/<id>) API
+ * keys. 404 when no admin token is configured, so the surface does not exist.
+ */
+async function handleAdminKeys(request: Request, env: Env, path: string): Promise<Response> {
+  const cfg = resolveConfig(env);
+  if (!cfg.apiKeys.enabled || !cfg.apiKeys.adminTokenSha256) {
+    return errorJson(404, "Not found");
+  }
+  if (!isAdmin(request, cfg)) {
+    return errorJson(401, "Admin token required", {}, { "WWW-Authenticate": "Bearer" });
+  }
+  const noStore = { "Cache-Control": "no-store" };
+
+  if (path === "/api/admin/keys" && request.method === "GET") {
+    return json({ keys: await treasury(env).listApiKeys() }, 200, noStore);
+  }
+
+  if (path === "/api/admin/keys" && request.method === "POST") {
+    let body: { label?: unknown; tier?: unknown; perDay?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return errorJson(400, "Request body must be JSON");
+    }
+    if (!isJsonObject(body)) return errorJson(400, "Request body must be a JSON object");
+    const { label, tier, perDay } = body;
+    if (typeof label !== "string" || label.trim() === "" || label.length > 100) {
+      return errorJson(400, "label must be a non-empty string of at most 100 characters");
+    }
+    if (typeof tier !== "string" || !KEY_TIERS.includes(tier as KeyTier)) {
+      return errorJson(400, `tier must be one of: ${KEY_TIERS.join(", ")}`);
+    }
+    if (
+      perDay !== undefined &&
+      perDay !== null &&
+      !(typeof perDay === "number" && Number.isInteger(perDay) && perDay >= 1)
+    ) {
+      return errorJson(400, "perDay must be a positive integer or null (unlimited)");
+    }
+    const created = await treasury(env).createApiKey({
+      label: label.trim(),
+      tier: tier as KeyTier,
+      perDay: perDay as number | null | undefined,
+    });
+    return json(created, 201, noStore);
+  }
+
+  const revoke = /^\/api\/admin\/keys\/([0-9a-f]{12})$/.exec(path);
+  if (revoke && request.method === "DELETE") {
+    const revoked = await treasury(env).revokeApiKey(revoke[1]);
+    return revoked ? json({ revoked: revoke[1] }, 200, noStore) : errorJson(404, "No active key with that id");
+  }
+
+  return errorJson(404, "Not found");
 }
 
 type InvitationFailure = Extract<InvitationIssueResult, { ok: false }>;
@@ -513,6 +674,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (url.pathname === "/api/invitation-faucet" && request.method === "POST") {
     return handleInvitation(request, env);
+  }
+  if (url.pathname === "/api/admin/keys" || url.pathname.startsWith("/api/admin/keys/")) {
+    return handleAdminKeys(request, env, url.pathname);
   }
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/")) {
     return errorJson(404, "Not found");

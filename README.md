@@ -164,6 +164,46 @@ absent when the daily budget is what ran out, since no proof of work moves that.
 Requesting the same address twice in one UTC day returns the original `txid`
 with `replay: true` rather than paying again.
 
+### API keys
+
+`Authorization: Bearer dfk_…` on `POST /api/core-faucet` replaces the captcha
+(testnet only). Key payouts skip the edge limit, the per-IP limit, the
+per-address daily replay and the public daily budget; none of them count
+against the public faucet either.
+
+```bash
+curl -X POST https://faucet.thepasta.org/api/core-faucet \
+  -H "Authorization: Bearer $DASH_FAUCET_KEY" \
+  -H 'content-type: application/json' \
+  -d '{"address":"y...","amount":250}'
+```
+
+| Tier | Pays | Limit |
+|---|---|---|
+| `trusted` | `amount` in DASH (default `PAYOUT_SATS`), up to `KEY_MAX_PER_REQUEST_SATS` | none by default |
+| `mn` | exactly 1000 DASH in one output — a masternode collateral; `amount` must be omitted | 1 per rolling 24 h by default |
+
+What still applies to every key: a payout may never leave the wallet below
+`KEY_RESERVE_SATS`, and may spend at most `MAX_PAYOUT_INPUTS` coins (signing
+costs ~0.35 ms of CPU per input). A large amount the wallet can only cover by
+spending many small coins returns `503` until a large enough coin exists.
+
+The response is the usual payout body plus `keyId`. Errors: `401` (unknown or
+revoked key), `400` (bad `amount`), `429` with `Retry-After` (an `mn` key's
+daily limit).
+
+Keys are minted with the admin token, whose SHA-256 is `ADMIN_TOKEN_SHA256`.
+Only each key's SHA-256 is stored; the plaintext is shown once.
+
+```bash
+ADMIN="Authorization: Bearer $(cat ~/.config/dash-faucet/admin-token)"
+# tier: trusted | mn; perDay: optional positive integer, or null for unlimited
+curl -X POST https://faucet.thepasta.org/api/admin/keys -H "$ADMIN" \
+  -H 'content-type: application/json' -d '{"label":"alice (DCG)","tier":"trusted"}'
+curl https://faucet.thepasta.org/api/admin/keys -H "$ADMIN"          # list, with usage
+curl -X DELETE https://faucet.thepasta.org/api/admin/keys/<id> -H "$ADMIN"  # revoke
+```
+
 ### `POST /api/invitation-faucet`
 
 Enabled only when `INVITATIONS_ENABLED=1`. It requires a Turnstile token bound
@@ -350,6 +390,10 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `INVITATION_TTL_SECS` | Recipient reservation time before recovery (default 3600) |
 | `INVITATION_RATE_WINDOW_SECS` | Per-IP and per-device issuance window (default 604800 / seven days); `0` disables it |
 | `INVITATION_PLATFORM_EXPLORER_URL` | Platform Explorer base URL for invitation claim checks |
+| `ADMIN_TOKEN_SHA256` | SHA-256 (hex) of the admin token for `/api/admin/keys`; blank disables it |
+| `KEY_MAX_PER_REQUEST_SATS` | Largest single API-key payout (default 5000 DASH) |
+| `KEY_RESERVE_SATS` | API-key payouts never leave the balance below this (default 0) |
+| `MAX_PAYOUT_INPUTS` | Coins one payout may spend (default 20) |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |

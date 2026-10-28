@@ -90,6 +90,18 @@
         // Disabled during the invitation pilot. Turnstile and EDGE_LIMIT still apply.
         "INVITATION_RATE_WINDOW_SECS": "0",
         "INVITATION_PLATFORM_EXPLORER_URL": "https://platform-explorer.pshenmic.dev",
+        // API keys (`Authorization: Bearer dfk_…`) skip the captcha. Minted via
+        // /api/admin/keys with the admin token whose SHA-256 is below; the
+        // token itself is never committed. Testnet only, enforced in code.
+        "ADMIN_TOKEN_SHA256": "1c1845de62422b182ecfcf0054aae10fb805e90b129f55234dc906f75799e4b7",
+        // Sanity cap on one key payout (catches duffs/DASH mix-ups): 5000 tDASH.
+        "KEY_MAX_PER_REQUEST_SATS": "500000000000",
+        // Key payouts never take the wallet below 100 tDASH, so the public
+        // faucet keeps paying.
+        "KEY_RESERVE_SATS": "10000000000",
+        // ~0.35 ms of CPU per signed input; keep a payout well inside the
+        // free plan's ~10 ms.
+        "MAX_PAYOUT_INPUTS": "20",
         "DRY_RUN": "0"
       }
     },
