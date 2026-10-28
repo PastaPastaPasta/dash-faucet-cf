@@ -1,13 +1,22 @@
 import { DurableObject } from "cloudflare:workers";
 import DashTx from "dashtx";
-import { ChainClient, ProviderStatus, UtxoSnapshot } from "./chain";
+import { ChainClient, ProviderStatus, Utxo, UtxoSnapshot } from "./chain";
 import {
+  COIN,
   Env,
   FaucetConfig,
   ProofTier,
   resolveConfig,
   resolveInvitationTreasuryConfig,
 } from "./config";
+import {
+  DEFAULT_PER_DAY,
+  KeyTier,
+  MN_COLLATERAL_SATS,
+  generateApiKey,
+  hashApiKey,
+  keyId,
+} from "./apikeys";
 import { describeError } from "./errors";
 import {
   decryptWif,
@@ -22,6 +31,8 @@ import {
   BuiltTx,
   InsufficientFundsError,
   SelfPayError,
+  TooFragmentedError,
+  buildConsolidation,
   buildPayout,
   buildSplit,
   buildInvitationAssetLock,
@@ -71,6 +82,11 @@ const COINBASE_MATURITY = 101;
  * past that, queued lookups would spend their deadline waiting for a slot.
  */
 const MAX_COINBASE_LOOKUPS = 6;
+/**
+ * A coin that can pay one masternode collateral by itself: 1000 DASH plus a
+ * whole DASH of headroom for the fee, so the payout is a single input.
+ */
+const COLLATERAL_COIN_SATS = MN_COLLATERAL_SATS + COIN;
 
 export interface PayoutRequest {
   address: string;
@@ -84,6 +100,55 @@ export interface PayoutRequest {
    * unauthenticated deployment (no captcha configured at all) gets.
    */
   tier?: ProofTier;
+  /**
+   * SHA-256 of a presented API key. When set, the key replaces the captcha
+   * tier entirely: it is authenticated here, in the same transaction as the
+   * payout, and its own limits apply instead of the public ones.
+   */
+  apiKeyHash?: string;
+  /** Amount an API-key caller asked for; ignored without a key. */
+  requestedSats?: number;
+}
+
+export interface ApiKeyInfo {
+  id: string;
+  label: string;
+  tier: KeyTier;
+  /** Payouts allowed per rolling 24 h; null means unlimited. */
+  perDay: number | null;
+  createdAt: number;
+  revokedAt: number | null;
+  lastUsedAt: number | null;
+  payouts: number;
+  paidSats: number;
+}
+
+interface ApiKeyRow {
+  [key: string]: string | number | null;
+  hash: string;
+  id: string;
+  label: string;
+  tier: string;
+  per_day: number | null;
+  created_at: number;
+  revoked_at: number | null;
+  last_used_at: number | null;
+  payouts: number;
+  paid_sats: number;
+}
+
+function apiKeyInfo(row: ApiKeyRow): ApiKeyInfo {
+  return {
+    id: row.id,
+    label: row.label,
+    tier: row.tier as KeyTier,
+    perDay: row.per_day,
+    createdAt: row.created_at,
+    revokedAt: row.revoked_at,
+    lastUsedAt: row.last_used_at,
+    payouts: row.payouts,
+    paidSats: row.paid_sats,
+  };
 }
 
 export type PayoutResult =
@@ -94,9 +159,13 @@ export type PayoutResult =
       replay: boolean;
       dryRun: boolean;
       accepted: string[];
+      keyId?: string;
     }
   | { ok: false; code: "rate_limited"; retryAfter: number }
   | { ok: false; code: "budget_exhausted"; retryAfter: number }
+  | { ok: false; code: "unauthorized" }
+  | { ok: false; code: "bad_request"; detail: string }
+  | { ok: false; code: "fragmented"; detail: string }
   | { ok: false; code: "insufficient_funds"; detail: string }
   | { ok: false; code: "self_pay"; detail: string }
   | { ok: false; code: "chain_unavailable"; detail: string }
@@ -107,6 +176,8 @@ export interface Snapshot {
   balanceSats: number;
   availableUtxos: number;
   poolUtxos: number;
+  /** Coins that can fund an `mn` key payout on their own. */
+  collateralUtxos: number;
   blockHeight: number;
   source: string;
   providers: ProviderStatus[];
@@ -119,7 +190,7 @@ export interface Snapshot {
 }
 
 export interface MaintenanceResult {
-  action: "none" | "split" | "blocked";
+  action: "none" | "split" | "consolidate" | "blocked";
   detail: string;
   txid?: string;
 }
@@ -277,6 +348,27 @@ export class Treasury extends DurableObject<Env> {
       );
       CREATE INDEX IF NOT EXISTS invitation_hits_lookup
         ON invitation_hits (kind, value_hash, created_at);
+      CREATE TABLE IF NOT EXISTS api_keys (
+        hash         TEXT    PRIMARY KEY,
+        id           TEXT    NOT NULL UNIQUE,
+        label        TEXT    NOT NULL,
+        tier         TEXT    NOT NULL,
+        per_day      INTEGER,
+        created_at   INTEGER NOT NULL,
+        revoked_at   INTEGER,
+        last_used_at INTEGER,
+        payouts      INTEGER NOT NULL DEFAULT 0,
+        paid_sats    INTEGER NOT NULL DEFAULT 0
+      );
+      -- Audit log as well as the per-day counter, so it is never pruned.
+      CREATE TABLE IF NOT EXISTS key_payouts (
+        key_id     TEXT    NOT NULL,
+        txid       TEXT    NOT NULL,
+        address    TEXT    NOT NULL,
+        satoshis   INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS key_payouts_lookup ON key_payouts (key_id, created_at);
     `);
 
     const columns = new Set(
@@ -572,56 +664,65 @@ export class Treasury extends DurableObject<Env> {
 
     this.prune(now);
 
-    // 1. Idempotency. A repeated request for the same address on the same day
-    //    returns the original transaction instead of paying twice.
-    const prior = sql
-      .exec<{ txid: string; satoshis: number }>(
-        `SELECT txid, satoshis FROM claims WHERE recipient = ? AND day = ?`,
-        input.address,
-        day,
-      )
-      .toArray()[0];
-    if (prior) {
-      return {
-        ok: true,
-        txid: prior.txid,
-        satoshis: prior.satoshis,
-        replay: true,
-        dryRun: false,
-        accepted: [],
-      };
-    }
+    let satoshis = cfg.payoutSats;
+    let apiKey: ApiKeyRow | undefined;
+    if (input.apiKeyHash !== undefined) {
+      const auth = this.authorizeKeyPayout(input, now);
+      if (!auth.ok) return auth;
+      apiKey = auth.key;
+      satoshis = auth.satoshis;
+    } else {
+      // 1. Idempotency. A repeated request for the same address on the same day
+      //    returns the original transaction instead of paying twice.
+      const prior = sql
+        .exec<{ txid: string; satoshis: number }>(
+          `SELECT txid, satoshis FROM claims WHERE recipient = ? AND day = ?`,
+          input.address,
+          day,
+        )
+        .toArray()[0];
+      if (prior) {
+        return {
+          ok: true,
+          txid: prior.txid,
+          satoshis: prior.satoshis,
+          replay: true,
+          dryRun: false,
+          accepted: [],
+        };
+      }
 
-    // 2. Durable per-IP limit, scaled by how strong a proof was presented.
-    const limit = cfg.rateLimits[input.tier ?? "soft"];
-    const hits = sql
-      .exec<{ oldest: number | null; n: number }>(
-        `SELECT MIN(created_at) AS oldest, COUNT(*) AS n
-           FROM ip_hits WHERE ip = ? AND created_at > ?`,
-        input.ip,
-        now - HOUR_MS,
-      )
-      .toArray()[0];
-    if (hits && hits.n >= limit) {
-      const oldest = hits.oldest ?? now;
-      const retryAfter = Math.max(1, Math.ceil((oldest + HOUR_MS - now) / 1000));
-      return { ok: false, code: "rate_limited", retryAfter };
-    }
+      // 2. Durable per-IP limit, scaled by how strong a proof was presented.
+      const limit = cfg.rateLimits[input.tier ?? "soft"];
+      const hits = sql
+        .exec<{ oldest: number | null; n: number }>(
+          `SELECT MIN(created_at) AS oldest, COUNT(*) AS n
+             FROM ip_hits WHERE ip = ? AND created_at > ?`,
+          input.ip,
+          now - HOUR_MS,
+        )
+        .toArray()[0];
+      if (hits && hits.n >= limit) {
+        const oldest = hits.oldest ?? now;
+        const retryAfter = Math.max(1, Math.ceil((oldest + HOUR_MS - now) / 1000));
+        return { ok: false, code: "rate_limited", retryAfter };
+      }
 
-    // 3. Global daily budget — the hard ceiling on a day's total loss.
-    const spent = this.spentToday(day);
-    if (spent + cfg.payoutSats > cfg.dailyBudgetSats) {
-      const today = new Date(now);
-      const midnight = Date.UTC(
-        today.getUTCFullYear(),
-        today.getUTCMonth(),
-        today.getUTCDate() + 1,
-      );
-      return {
-        ok: false,
-        code: "budget_exhausted",
-        retryAfter: Math.max(1, Math.ceil((midnight - now) / 1000)),
-      };
+      // 3. Global daily budget — the hard ceiling on a day's total loss.
+      const spent = this.spentToday(day);
+      if (spent + cfg.payoutSats > cfg.dailyBudgetSats) {
+        const today = new Date(now);
+        const midnight = Date.UTC(
+          today.getUTCFullYear(),
+          today.getUTCMonth(),
+          today.getUTCDate() + 1,
+        );
+        return {
+          ok: false,
+          code: "budget_exhausted",
+          retryAfter: Math.max(1, Math.ceil((midnight - now) / 1000)),
+        };
+      }
     }
 
     const key = await this.key();
@@ -633,17 +734,32 @@ export class Treasury extends DurableObject<Env> {
       return { ok: false, code: "chain_unavailable", detail: describeError(err) };
     }
 
+    if (apiKey) {
+      const balance = view.utxos.reduce((acc, u) => acc + u.satoshis, 0);
+      if (balance - satoshis < cfg.apiKeys.reserveSats) {
+        return {
+          ok: false,
+          code: "insufficient_funds",
+          detail: `${satoshis} duffs would take the ${balance}-duff balance below the ${cfg.apiKeys.reserveSats}-duff public reserve`,
+        };
+      }
+    }
+
     let built: BuiltTx;
     try {
-      built = await buildPayout({
+      built = await this.buildPayoutSparingCollateral(
         key,
-        utxos: view.utxos,
-        recipientPubKeyHash: input.pubKeyHash,
-        satoshis: cfg.payoutSats,
-      });
+        view.utxos,
+        input.pubKeyHash,
+        satoshis,
+        apiKey?.tier === "mn",
+      );
     } catch (err) {
       if (err instanceof InsufficientFundsError) {
         return { ok: false, code: "insufficient_funds", detail: err.message };
+      }
+      if (err instanceof TooFragmentedError) {
+        return { ok: false, code: "fragmented", detail: err.message };
       }
       if (err instanceof SelfPayError) {
         return { ok: false, code: "self_pay", detail: err.message };
@@ -653,48 +769,252 @@ export class Treasury extends DurableObject<Env> {
       return { ok: false, code: "error", detail: "could not build transaction" };
     }
 
+    const keyResult = apiKey ? { keyId: apiKey.id } : {};
     if (cfg.dryRun) {
       // Build and sign, but change no state and touch no network.
       return {
         ok: true,
         txid: built.txid,
-        satoshis: cfg.payoutSats,
+        satoshis,
         replay: false,
         dryRun: true,
         accepted: [],
+        ...keyResult,
       };
     }
 
     const outcome = await this.settleBroadcast(built, now);
-    if (!outcome.ok) return outcome.result;
+    if (!outcome.ok) {
+      // The transaction may be live. Charge the key as if it were, so an mn
+      // key's retry cannot collect a second collateral, and so the audit log
+      // shows a payout that may have landed.
+      if (apiKey && outcome.uncertain) this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
+      return outcome.result;
+    }
 
     // 4. Commit. Everything below is local bookkeeping for an accepted tx.
     this.recordSpend(built, now);
-    sql.exec(
-      `INSERT OR REPLACE INTO claims (recipient, day, txid, satoshis, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
-      input.address,
-      day,
-      built.txid,
-      cfg.payoutSats,
-      now,
-    );
-    sql.exec(`INSERT INTO ip_hits (ip, created_at) VALUES (?, ?)`, input.ip, now);
-    sql.exec(
-      `INSERT INTO budget (day, satoshis) VALUES (?, ?)
-       ON CONFLICT(day) DO UPDATE SET satoshis = satoshis + excluded.satoshis`,
-      day,
-      cfg.payoutSats,
-    );
+    if (apiKey) {
+      // Key payouts sit outside the public ledgers on purpose: they neither
+      // consume an address's daily claim nor an IP's allowance nor the public
+      // daily budget, so trusted use can never lock the public out.
+      this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
+    } else {
+      sql.exec(
+        `INSERT OR REPLACE INTO claims (recipient, day, txid, satoshis, created_at)
+         VALUES (?, ?, ?, ?, ?)`,
+        input.address,
+        day,
+        built.txid,
+        satoshis,
+        now,
+      );
+      sql.exec(`INSERT INTO ip_hits (ip, created_at) VALUES (?, ?)`, input.ip, now);
+      sql.exec(
+        `INSERT INTO budget (day, satoshis) VALUES (?, ?)
+         ON CONFLICT(day) DO UPDATE SET satoshis = satoshis + excluded.satoshis`,
+        day,
+        satoshis,
+      );
+    }
 
     return {
       ok: true,
       txid: built.txid,
-      satoshis: cfg.payoutSats,
+      satoshis,
       replay: false,
       dryRun: false,
       accepted: outcome.accepted,
+      ...keyResult,
     };
+  }
+
+  /**
+   * Build a payout without touching kept collateral coins when anything else
+   * covers it, so ordinary traffic does not undo the consolidation an mn key
+   * is waiting for. An mn payout, or one nothing else can cover, may use them.
+   */
+  private async buildPayoutSparingCollateral(
+    key: FaucetKey,
+    utxos: Utxo[],
+    recipientPubKeyHash: string,
+    satoshis: number,
+    forCollateral: boolean,
+  ): Promise<BuiltTx> {
+    const cfg = this.config;
+    const build = (coins: Utxo[]) =>
+      buildPayout({ key, utxos: coins, recipientPubKeyHash, satoshis, maxInputs: cfg.maxPayoutInputs });
+    // `return await` throughout: workerd reports a returned-but-unawaited
+    // rejection as unhandled before the caller gets to catch it.
+    if (forCollateral || cfg.collateralCoins === 0) return await build(utxos);
+    const spare = utxos.filter((u) => u.satoshis < COLLATERAL_COIN_SATS);
+    if (spare.length === utxos.length) return await build(utxos);
+    try {
+      return await build(spare);
+    } catch (err) {
+      if (err instanceof InsufficientFundsError || err instanceof TooFragmentedError) {
+        return await build(utxos);
+      }
+      throw err;
+    }
+  }
+
+  private recordKeyPayout(
+    key: ApiKeyRow,
+    built: BuiltTx,
+    address: string,
+    satoshis: number,
+    now: number,
+  ): void {
+    const sql = this.ctx.storage.sql;
+    sql.exec(
+      `INSERT INTO key_payouts (key_id, txid, address, satoshis, created_at)
+       VALUES (?, ?, ?, ?, ?)`,
+      key.id,
+      built.txid,
+      address,
+      satoshis,
+      now,
+    );
+    sql.exec(
+      `UPDATE api_keys SET last_used_at = ?, payouts = payouts + 1,
+              paid_sats = paid_sats + ? WHERE hash = ?`,
+      now,
+      satoshis,
+      key.hash,
+    );
+  }
+
+  /**
+   * Whether `hash` names an active key. Not serialized: the Worker uses it to
+   * turn away unknown keys (and charge them the edge limit) before they queue
+   * behind the spending lock. `authorizeKeyPayout` re-checks inside the lock.
+   */
+  async isActiveApiKey(hash: string): Promise<boolean> {
+    return (
+      this.config.apiKeys.enabled &&
+      this.ctx.storage.sql
+        .exec(`SELECT 1 FROM api_keys WHERE hash = ? AND revoked_at IS NULL`, hash)
+        .toArray().length > 0
+    );
+  }
+
+  /**
+   * Authenticate an API key and settle what this payout may be.
+   *
+   * Runs inside the payout lock, so a revocation or a per-day limit takes
+   * effect against the very next payout rather than racing it.
+   */
+  private authorizeKeyPayout(
+    input: PayoutRequest,
+    now: number,
+  ): { ok: true; key: ApiKeyRow; satoshis: number } | Extract<PayoutResult, { ok: false }> {
+    const cfg = this.config;
+    const sql = this.ctx.storage.sql;
+    const row = sql
+      .exec<ApiKeyRow>(`SELECT * FROM api_keys WHERE hash = ?`, input.apiKeyHash ?? "")
+      .toArray()[0];
+    if (!cfg.apiKeys.enabled || !row || row.revoked_at !== null) {
+      return { ok: false, code: "unauthorized" };
+    }
+
+    let satoshis: number;
+    if (row.tier === "mn") {
+      if (input.requestedSats !== undefined && input.requestedSats !== MN_COLLATERAL_SATS) {
+        return {
+          ok: false,
+          code: "bad_request",
+          detail: "An mn key always pays exactly one 1000 DASH collateral; omit amount",
+        };
+      }
+      satoshis = MN_COLLATERAL_SATS;
+    } else {
+      satoshis = input.requestedSats ?? cfg.payoutSats;
+      if (satoshis > cfg.apiKeys.maxPerRequestSats) {
+        return {
+          ok: false,
+          code: "bad_request",
+          detail: `amount may be at most ${cfg.apiKeys.maxPerRequestSats / COIN} DASH per request`,
+        };
+      }
+    }
+
+    if (row.per_day !== null) {
+      const hits = sql
+        .exec<{ oldest: number | null; n: number }>(
+          `SELECT MIN(created_at) AS oldest, COUNT(*) AS n
+             FROM key_payouts WHERE key_id = ? AND created_at > ?`,
+          row.id,
+          now - DAY_MS,
+        )
+        .toArray()[0];
+      if (hits && hits.n >= row.per_day) {
+        const oldest = hits.oldest ?? now;
+        const retryAfter = Math.max(1, Math.ceil((oldest + DAY_MS - now) / 1000));
+        return { ok: false, code: "rate_limited", retryAfter };
+      }
+    }
+
+    return { ok: true, key: row, satoshis };
+  }
+
+  /**
+   * Mint an API key. The plaintext is returned once and never stored.
+   *
+   * Pure SQL with no await, so the single thread already makes it atomic; it
+   * does not need the spending lock.
+   */
+  async createApiKey(input: {
+    label: string;
+    tier: KeyTier;
+    perDay?: number | null;
+  }): Promise<{ token: string; key: ApiKeyInfo }> {
+    const token = generateApiKey();
+    const hash = hashApiKey(token);
+    const perDay = input.perDay === undefined ? DEFAULT_PER_DAY[input.tier] : input.perDay;
+    const now = Date.now();
+    this.ctx.storage.sql.exec(
+      `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      hash,
+      keyId(hash),
+      input.label,
+      input.tier,
+      perDay,
+      now,
+    );
+    return {
+      token,
+      key: {
+        id: keyId(hash),
+        label: input.label,
+        tier: input.tier,
+        perDay,
+        createdAt: now,
+        revokedAt: null,
+        lastUsedAt: null,
+        payouts: 0,
+        paidSats: 0,
+      },
+    };
+  }
+
+  async listApiKeys(): Promise<ApiKeyInfo[]> {
+    return this.ctx.storage.sql
+      .exec<ApiKeyRow>(`SELECT * FROM api_keys ORDER BY created_at`)
+      .toArray()
+      .map(apiKeyInfo);
+  }
+
+  /** Returns false when no active key has that id. */
+  async revokeApiKey(id: string): Promise<boolean> {
+    return (
+      this.ctx.storage.sql.exec(
+        `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+        Date.now(),
+        id,
+      ).rowsWritten > 0
+    );
   }
 
   /**
@@ -798,8 +1118,13 @@ export class Treasury extends DurableObject<Env> {
         address: key.address,
         balanceSats: view.utxos.reduce((acc, u) => acc + u.satoshis, 0),
         availableUtxos: view.utxos.length,
-        poolUtxos: view.utxos.filter((u) => u.satoshis >= this.config.poolUtxoSats)
-          .length,
+        // Same rule as maintenance: a kept collateral coin is not throughput.
+        poolUtxos: view.utxos.filter(
+          (u) =>
+            u.satoshis >= this.config.poolUtxoSats &&
+            (this.config.collateralCoins === 0 || u.satoshis < COLLATERAL_COIN_SATS),
+        ).length,
+        collateralUtxos: view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length,
         blockHeight: view.tipHeight,
         source: view.source,
         providers: view.statuses,
@@ -1208,15 +1533,23 @@ export class Treasury extends DurableObject<Env> {
       return { action: "blocked", detail: describeError(err) };
     }
 
-    const pool = view.utxos.filter((u) => u.satoshis >= cfg.poolUtxoSats);
+    // A kept collateral coin is not throughput: counting it would hide a pool
+    // that has actually run low.
+    const kept = cfg.collateralCoins > 0 ? COLLATERAL_COIN_SATS : Infinity;
+    const pool = view.utxos.filter(
+      (u) => u.satoshis >= cfg.poolUtxoSats && u.satoshis < kept,
+    );
     if (pool.length >= cfg.poolMin) {
-      return {
-        action: "none",
-        detail: `${pool.length} pool coins available (min ${cfg.poolMin})`,
-      };
+      return this.consolidate(key, view, pool.length, now);
     }
 
-    const biggest = [...view.utxos].sort((a, b) => b.satoshis - a.satoshis)[0];
+    // Split from the largest coin that is not a kept collateral coin; fall back
+    // to one only when nothing else can refill the pool, since the public
+    // faucet running dry is worse than an mn payout waiting.
+    const descending = [...view.utxos].sort((a, b) => b.satoshis - a.satoshis);
+    const biggest =
+      descending.find((u) => u.satoshis < kept && u.satoshis * 0.99 >= 2 * cfg.poolUtxoSats) ??
+      descending[0];
     if (!biggest) {
       return { action: "blocked", detail: "no spendable coins" };
     }
@@ -1258,6 +1591,78 @@ export class Treasury extends DurableObject<Env> {
     return {
       action: "split",
       detail: `split into ${count} coins of ${cfg.poolUtxoSats} duffs`,
+      txid: built.txid,
+    };
+  }
+
+  /**
+   * Grow a collateral coin out of small ones, one bounded slice per cron run.
+   *
+   * Each pass merges the coin being grown (the largest below collateral size)
+   * with the largest confirmed small coins into one output, which becomes the
+   * next pass's starting point. The smallest `poolTarget` pool coins and
+   * in-flight change are left alone, and nothing happens unless the small
+   * coins together could actually reach a collateral.
+   */
+  private async consolidate(
+    key: FaucetKey,
+    view: UtxoSnapshot,
+    poolCount: number,
+    now: number,
+  ): Promise<MaintenanceResult> {
+    const cfg = this.config;
+    const poolNote = `${poolCount} pool coins available (min ${cfg.poolMin})`;
+    const ready = view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length;
+    if (ready >= cfg.collateralCoins) return { action: "none", detail: poolNote };
+
+    // The largest coin below collateral size is the one being grown, and is
+    // always in the slice — even when it is pool-sized itself.
+    const [grown, ...rest] = view.utxos
+      .filter((u) => u.satoshis < COLLATERAL_COIN_SATS)
+      .sort((a, b) => b.satoshis - a.satoshis);
+    // Keep the smallest `poolTarget` pool coins for payouts.
+    const isPoolCoin = (u: Utxo) =>
+      u.satoshis >= cfg.poolUtxoSats && u.satoshis < 2 * cfg.poolUtxoSats;
+    const keep = new Set(
+      rest
+        .filter(isPoolCoin)
+        .slice(-cfg.poolTarget)
+        .map((u) => outpointKey(u.txid, u.outputIndex)),
+    );
+    // Everything else, confirmed, is material. Unconfirmed coins are payout
+    // change still in flight: sweeping it would drain the pool faster and can
+    // join several mempool chains past the 25-ancestor limit.
+    const material = rest.filter(
+      (u) => u.height !== null && !keep.has(outpointKey(u.txid, u.outputIndex)),
+    );
+    const candidates = grown ? [grown, ...material] : [];
+    const available = candidates.reduce((acc, u) => acc + u.satoshis, 0);
+    if (available < COLLATERAL_COIN_SATS || candidates.length < 2) {
+      return {
+        action: "none",
+        detail: `${poolNote}; ${available} duffs outside the pool cannot reach a collateral coin`,
+      };
+    }
+
+    const slice = candidates.slice(0, cfg.maxPayoutInputs);
+    if (cfg.dryRun) {
+      return { action: "none", detail: `dry run: would consolidate ${slice.length} coins` };
+    }
+
+    let built: BuiltTx;
+    try {
+      built = await buildConsolidation({ key, inputs: slice });
+    } catch (err) {
+      return { action: "blocked", detail: describeError(err) };
+    }
+    const outcome = await this.settleBroadcast(built, now);
+    if (!outcome.ok) {
+      return { action: "blocked", detail: "consolidation broadcast could not be confirmed" };
+    }
+    this.recordSpend(built, now);
+    return {
+      action: "consolidate",
+      detail: `merged ${slice.length} coins into ${built.ownOutputs[0].satoshis} duffs`,
       txid: built.txid,
     };
   }

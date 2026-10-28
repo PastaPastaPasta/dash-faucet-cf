@@ -1,3 +1,12 @@
+import {
+  KEY_TIERS,
+  MN_COLLATERAL_SATS,
+  type KeyTier,
+  bearerToken,
+  digestEquals,
+  hashApiKey,
+  looksLikeApiKey,
+} from "./apikeys";
 import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
 import {
   COIN,
@@ -120,11 +129,17 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       rateLimits: cfg.rateLimits,
       balanceSats: snap.balanceSats,
       poolUtxos: snap.poolUtxos,
+      // Coins that can pay an mn key's 1000 DASH collateral in one input.
+      collateralUtxos: snap.collateralUtxos,
       spentTodaySats: snap.spentToday,
       dailyBudgetSats: cfg.dailyBudgetSats,
       source: snap.source,
       providers: snap.providers,
       dryRun: cfg.dryRun,
+      // API keys (`Authorization: Bearer dfk_…`) skip the captcha; see README.
+      apiKeysEnabled: cfg.apiKeys.enabled,
+      keyMaxPerRequest: toDash(cfg.apiKeys.maxPerRequestSats),
+      mnCollateralAmount: toDash(MN_COLLATERAL_SATS),
       invitationsEnabled: cfg.invitations.enabled,
       invitationNetwork: cfg.invitations.network,
       invitationAmount: toDash(cfg.invitations.amountSats),
@@ -168,6 +183,13 @@ const PAYOUT_FAILURES: Record<
     message: "That is the faucet's own deposit address — send to a wallet you control",
   },
   chain_unavailable: { status: 503, message: "Chain providers unavailable" },
+  unauthorized: { status: 401, message: "Invalid or revoked API key" },
+  bad_request: { status: 400, message: "Invalid request" },
+  fragmented: {
+    status: 503,
+    message:
+      "No coin large enough for this amount yet; the faucet merges small coins every 10 minutes, so try again later",
+  },
   error: { status: 500, message: "Internal server error" },
 };
 
@@ -179,6 +201,10 @@ const PAYOUT_FAILURES: Record<
  */
 function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   const { status, message } = PAYOUT_FAILURES[result.code];
+  if (result.code === "bad_request") return errorJson(status, result.detail);
+  if (result.code === "unauthorized") {
+    return errorJson(status, message, {}, { "WWW-Authenticate": "Bearer" });
+  }
   if (!("retryAfter" in result)) {
     return errorJson(status, message, { detailMessage: result.detail });
   }
@@ -289,6 +315,61 @@ async function verifyCaptcha(
   return { ok: true, tier: "soft" };
 }
 
+/**
+ * Cheap first line of defence, before any work or outbound calls. Per-colo
+ * and ephemeral; the Treasury owns the durable limits.
+ */
+async function edgeLimited(env: Env, key: string): Promise<Response | undefined> {
+  if (!env.EDGE_LIMIT || (await env.EDGE_LIMIT.limit({ key })).success) return undefined;
+  return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, { "Retry-After": "60" });
+}
+
+/** The recipient's address and pubKeyHash, or the 400 for a bad address. */
+async function parseRecipient(
+  body: { address?: string },
+  cfg: FaucetConfig,
+): Promise<{ address: string; pubKeyHash: string } | Response> {
+  const address = (body.address ?? "").trim();
+  try {
+    return { address, pubKeyHash: await addressToPubKeyHash(address, cfg.network) };
+  } catch (err) {
+    if (err instanceof AddressError) return errorJson(400, err.message);
+    throw err;
+  }
+}
+
+function payoutSuccess(
+  result: Extract<PayoutResult, { ok: true }>,
+  address: string,
+  cfg: FaucetConfig,
+): Response {
+  return json({
+    txid: result.txid,
+    amount: toDash(result.satoshis),
+    address,
+    network: cfg.network,
+    replay: result.replay,
+    ...(result.keyId ? { keyId: result.keyId } : {}),
+    ...(result.dryRun ? { dryRun: true } : {}),
+    ...(result.accepted.length ? { relays: result.accepted } : {}),
+  });
+}
+
+/**
+ * `amount` in DASH as whole duffs, or undefined when it is not a usable
+ * amount. Anything finer than a duff is a unit mistake, not a request; the
+ * floor keeps a typo from building an unrelayable dust output.
+ */
+function parseAmountSats(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const sats = Math.round(value * COIN);
+  if (!Number.isSafeInteger(sats) || sats < MIN_KEY_PAYOUT_SATS) return undefined;
+  return Math.abs(value * COIN - sats) <= 1e-3 ? sats : undefined;
+}
+
+/** 0.001 DASH: comfortably above dust, below anything anyone asks for. */
+const MIN_KEY_PAYOUT_SATS = 100_000;
+
 async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
   const ip = clientIp(request);
@@ -298,6 +379,7 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     turnstileToken?: string;
     capToken?: string;
     hardCapToken?: string;
+    amount?: unknown;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -315,28 +397,20 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     return errorJson(400, "Address and captcha tokens must be strings");
   }
 
-  // Cheap first line of defence, before any work or outbound calls. Per-colo
-  // and ephemeral; the Treasury owns the durable limit.
-  if (env.EDGE_LIMIT) {
-    const { success } = await env.EDGE_LIMIT.limit({ key: ip });
-    if (!success) {
-      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, {
-        "Retry-After": "60",
-      });
-    }
+  const token = bearerToken(request);
+  if (token !== undefined) return handleKeyFaucet(env, cfg, ip, token, body);
+  if (body.amount !== undefined) {
+    return errorJson(400, "amount requires an API key");
   }
+
+  const limited = await edgeLimited(env, ip);
+  if (limited) return limited;
 
   // Address first: it is pure local arithmetic, and checking it before the
   // captcha means a typo costs the user a retry rather than a fresh proof of
   // work (verifying the capToken consumes it).
-  let pubKeyHash: string;
-  const address = (body.address ?? "").trim();
-  try {
-    pubKeyHash = await addressToPubKeyHash(address, cfg.network);
-  } catch (err) {
-    if (err instanceof AddressError) return errorJson(400, err.message);
-    throw err;
-  }
+  const recipient = await parseRecipient(body, cfg);
+  if (recipient instanceof Response) return recipient;
 
   const captcha = await verifyCaptcha(env, cfg, ip, body);
   if (!captcha.ok) {
@@ -349,23 +423,108 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  const result = await treasury(env).payout({
-    address,
-    pubKeyHash,
-    ip,
-    tier: captcha.tier,
-  });
+  const result = await treasury(env).payout({ ...recipient, ip, tier: captcha.tier });
   if (!result.ok) return payoutFailure(result, canEscalate(cfg, captcha.tier));
+  return payoutSuccess(result, recipient.address, cfg);
+}
 
-  return json({
-    txid: result.txid,
-    amount: toDash(result.satoshis),
-    address,
-    network: cfg.network,
-    replay: result.replay,
-    ...(result.dryRun ? { dryRun: true } : {}),
-    ...(result.accepted.length ? { relays: result.accepted } : {}),
-  });
+/**
+ * Payout for an API-key caller: no captcha, no per-IP limit, and an optional
+ * `amount` in DASH. Unknown keys are turned away — and charged the edge limit,
+ * so this path cannot be used to skip it — before they reach the spending
+ * lock; the Treasury re-checks the key, and applies its tier, inside the lock.
+ */
+async function handleKeyFaucet(
+  env: Env,
+  cfg: FaucetConfig,
+  ip: string,
+  token: string,
+  body: { address?: string; amount?: unknown },
+): Promise<Response> {
+  const apiKeyHash = hashApiKey(token);
+  if (!looksLikeApiKey(token) || !(await treasury(env).isActiveApiKey(apiKeyHash))) {
+    return (await edgeLimited(env, ip)) ?? payoutFailure({ ok: false, code: "unauthorized" }, false);
+  }
+
+  let requestedSats: number | undefined;
+  if (body.amount !== undefined) {
+    requestedSats = parseAmountSats(body.amount);
+    if (requestedSats === undefined) {
+      return errorJson(400, "amount must be a number of DASH, at least 0.001, with at most 8 decimals");
+    }
+  }
+
+  const recipient = await parseRecipient(body, cfg);
+  if (recipient instanceof Response) return recipient;
+
+  const result = await treasury(env).payout({ ...recipient, ip, apiKeyHash, requestedSats });
+  if (!result.ok) return payoutFailure(result, false);
+  return payoutSuccess(result, recipient.address, cfg);
+}
+
+/** True when the request carries the admin bearer token. */
+function isAdmin(request: Request, cfg: FaucetConfig): boolean {
+  const token = bearerToken(request);
+  const header = request.headers.get("Authorization") ?? "";
+  if (!cfg.apiKeys.adminTokenSha256 || !token || !/^Bearer\s/i.test(header)) return false;
+  return digestEquals(hashApiKey(token), cfg.apiKeys.adminTokenSha256);
+}
+
+/**
+ * `/api/admin/keys` — mint (POST), list (GET) and revoke (DELETE …/<id>) API
+ * keys. 404 when no admin token is configured, so the surface does not exist.
+ */
+async function handleAdminKeys(request: Request, env: Env, path: string): Promise<Response> {
+  const cfg = resolveConfig(env);
+  if (!cfg.apiKeys.enabled || !cfg.apiKeys.adminTokenSha256) {
+    return errorJson(404, "Not found");
+  }
+  if (!isAdmin(request, cfg)) {
+    return errorJson(401, "Admin token required", {}, { "WWW-Authenticate": "Bearer" });
+  }
+  const noStore = { "Cache-Control": "no-store" };
+
+  if (path === "/api/admin/keys" && request.method === "GET") {
+    return json({ keys: await treasury(env).listApiKeys() }, 200, noStore);
+  }
+
+  if (path === "/api/admin/keys" && request.method === "POST") {
+    let body: { label?: unknown; tier?: unknown; perDay?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return errorJson(400, "Request body must be JSON");
+    }
+    if (!isJsonObject(body)) return errorJson(400, "Request body must be a JSON object");
+    const { label, tier, perDay } = body;
+    if (typeof label !== "string" || label.trim() === "" || label.length > 100) {
+      return errorJson(400, "label must be a non-empty string of at most 100 characters");
+    }
+    if (typeof tier !== "string" || !KEY_TIERS.includes(tier as KeyTier)) {
+      return errorJson(400, `tier must be one of: ${KEY_TIERS.join(", ")}`);
+    }
+    if (
+      perDay !== undefined &&
+      perDay !== null &&
+      !(typeof perDay === "number" && Number.isInteger(perDay) && perDay >= 1)
+    ) {
+      return errorJson(400, "perDay must be a positive integer or null (unlimited)");
+    }
+    const created = await treasury(env).createApiKey({
+      label: label.trim(),
+      tier: tier as KeyTier,
+      perDay: perDay as number | null | undefined,
+    });
+    return json(created, 201, noStore);
+  }
+
+  const revoke = /^\/api\/admin\/keys\/([0-9a-f]{12})$/.exec(path);
+  if (revoke && request.method === "DELETE") {
+    const revoked = await treasury(env).revokeApiKey(revoke[1]);
+    return revoked ? json({ revoked: revoke[1] }, 200, noStore) : errorJson(404, "No active key with that id");
+  }
+
+  return errorJson(404, "Not found");
 }
 
 type InvitationFailure = Extract<InvitationIssueResult, { ok: false }>;
@@ -420,14 +579,8 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   }
 
   const ip = clientIp(request);
-  if (env.EDGE_LIMIT) {
-    const { success } = await env.EDGE_LIMIT.limit({ key: `invite:${ip}` });
-    if (!success) {
-      return errorJson(429, "Rate limit exceeded", { retryAfter: 60 }, {
-        "Retry-After": "60",
-      });
-    }
-  }
+  const limited = await edgeLimited(env, `invite:${ip}`);
+  if (limited) return limited;
 
   const captcha = await verifyTurnstile(
     cfg.turnstileSecret,
@@ -513,6 +666,9 @@ async function route(request: Request, env: Env): Promise<Response> {
   }
   if (url.pathname === "/api/invitation-faucet" && request.method === "POST") {
     return handleInvitation(request, env);
+  }
+  if (url.pathname === "/api/admin/keys" || url.pathname.startsWith("/api/admin/keys/")) {
+    return handleAdminKeys(request, env, url.pathname);
   }
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/")) {
     return errorJson(404, "Not found");

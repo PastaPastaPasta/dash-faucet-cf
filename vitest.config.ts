@@ -65,6 +65,13 @@ export default defineConfig({
                 INVITATION_MAX_PER_REQUEST: "3",
                 INVITATION_PLATFORM_EXPLORER_URL: "https://platform.test",
                 DRY_RUN: "0",
+                // sha256("test-admin-token")
+                ADMIN_TOKEN_SHA256: "17d6bfe05d1b1fb7bc499f8e3f639c7b3eda4c40f321eef8887a0c04c89a99c5",
+                KEY_RESERVE_SATS: "100000000",
+                KEY_MAX_PER_REQUEST_SATS: "200000000000",
+                // Low enough that a test can build a payout that needs more.
+                MAX_PAYOUT_INPUTS: "5",
+                COLLATERAL_COINS: "1",
               },
             },
           }),
