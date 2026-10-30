@@ -35,6 +35,8 @@ export interface CodeInfo {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  /** Admin who last edited, disabled or re-enabled it; null if never. */
+  updatedBy: string | null;
 }
 
 export interface CodeRow {
@@ -53,6 +55,7 @@ export interface CodeRow {
   created_by: string;
   created_at: number;
   updated_at: number;
+  updated_by: string | null;
 }
 
 export interface Redemption {
@@ -110,13 +113,25 @@ export function migrateAccounts(sql: SqlStorage, opts: { selfServeKeysExpire: bo
   // Keys minted before login existed have no owner and never expire.
   if (!keyColumns.has("owner")) sql.exec(`ALTER TABLE api_keys ADD COLUMN owner TEXT`);
   if (!keyColumns.has("expires_at")) sql.exec(`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`);
+  // Who minted or revoked a key: an owner (self-serve) or an admin identity.
+  if (!keyColumns.has("created_by")) sql.exec(`ALTER TABLE api_keys ADD COLUMN created_by TEXT`);
+  if (!keyColumns.has("revoked_by")) sql.exec(`ALTER TABLE api_keys ADD COLUMN revoked_by TEXT`);
+  const codeColumns = new Set(
+    sql
+      .exec<{ name: string }>(`PRAGMA table_info(codes)`)
+      .toArray()
+      .map((row) => row.name),
+  );
+  if (!codeColumns.has("updated_by")) sql.exec(`ALTER TABLE codes ADD COLUMN updated_by TEXT`);
   sql.exec(`CREATE INDEX IF NOT EXISTS api_keys_owner ON api_keys (owner)`);
   // Self-serve keys follow the current policy: when they no longer expire,
-  // neither do the ones issued while they did.
+  // neither do the live ones issued while they did. A key that already
+  // expired stays expired; its owner was told so.
   if (!opts.selfServeKeysExpire) {
     sql.exec(
       `UPDATE api_keys SET expires_at = NULL
-        WHERE owner IS NOT NULL AND expires_at IS NOT NULL AND revoked_at IS NULL`,
+        WHERE owner IS NOT NULL AND expires_at > ? AND revoked_at IS NULL`,
+      Date.now(),
     );
   }
 }
@@ -188,6 +203,7 @@ function codeInfo(row: CodeRow): CodeInfo {
     createdBy: row.created_by,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    updatedBy: row.updated_by,
   };
 }
 
@@ -275,19 +291,21 @@ export function updateCode(
   sql: SqlStorage,
   id: string,
   patch: CodePatch,
+  by: string,
   now: number,
 ): CodeInfo | null {
   const current = getCode(sql, id);
   if (!current) return null;
   sql.exec(
     `UPDATE codes SET label = ?, amount_sats = ?, max_redemptions = ?, expires_at = ?,
-       disabled = ?, updated_at = ? WHERE id = ?`,
+       disabled = ?, updated_at = ?, updated_by = ? WHERE id = ?`,
     patch.label ?? current.label,
     patch.amountSats ?? current.amountSats,
     patch.maxRedemptions ?? current.maxRedemptions,
     patch.expiresAt === undefined ? current.expiresAt : patch.expiresAt,
     (patch.disabled ?? current.disabled) ? 1 : 0,
     now,
+    by,
     id,
   );
   return getCode(sql, id);

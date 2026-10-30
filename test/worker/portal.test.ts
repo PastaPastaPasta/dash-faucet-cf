@@ -304,14 +304,20 @@ describe("self-serve keys", () => {
       insert("a".repeat(64), "google:1", null);
       insert("b".repeat(64), "google:1", 5);
       insert("c".repeat(64), null, null);
+      // Already expired: must not come back to life.
+      sql.exec(
+        `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at)
+         VALUES (?, ?, 'old', 'trusted', NULL, 0, 'google:1', ?)`,
+        "d".repeat(64), "d".repeat(12), Date.now() - 1000,
+      );
       migrateAccounts(sql, { selfServeKeysExpire: false });
       return sql
         .exec<{ id: string; expires_at: number | null }>(`SELECT id, expires_at FROM api_keys ORDER BY id`)
         .toArray();
     });
-    // The live self-serve key no longer expires; a revoked one and an
-    // admin-minted one are left as they were.
-    expect(left.map((k) => k.expires_at === null)).toEqual([true, false, false]);
+    // The live self-serve key no longer expires; a revoked one, an
+    // admin-minted one and an already-expired one are left as they were.
+    expect(left.map((k) => k.expires_at === null)).toEqual([true, false, false, false]);
   });
 
   it("caps active keys per person", async () => {
@@ -403,6 +409,11 @@ describe("admin", () => {
     const mn = await call(admin, "POST", "/api/admin/keys", { label: "operator", tier: "mn" });
     expect(mn.status).toBe(201);
     expect(mn.body.key.tier).toBe("mn");
+
+    // Every mint and revocation names who did it.
+    const after = (await call(admin, "GET", "/api/admin/keys")).body.keys;
+    expect(after.find((k: any) => k.id === own.id)).toMatchObject({ createdBy: "google:g-1", revokedBy: "google:admin@dash.org" });
+    expect(after.find((k: any) => k.id === mn.body.key.id)).toMatchObject({ createdBy: "google:admin@dash.org", revokedBy: null });
   });
 
   it("creates, edits and disables codes; codes pay through the captcha path", async () => {
@@ -442,7 +453,12 @@ describe("admin", () => {
 
     // Disabled: refused, with the same answer as an unknown code.
     const disabled = await call(admin, "PATCH", `/api/admin/codes/${code.id}`, { disabled: true, amount: 30 });
-    expect(disabled.body.code).toMatchObject({ disabled: true, amountSats: 30 * 100_000_000 });
+    expect(disabled.body.code).toMatchObject({
+      disabled: true,
+      amountSats: 30 * 100_000_000,
+      createdBy: "google:admin@dash.org",
+      updatedBy: "google:admin@dash.org",
+    });
     const off = await redeem("DASHCON-24", second, "203.0.113.80");
     expect(off.status).toBe(400);
     expect(((await off.json()) as any).error).toBe("Invalid, expired or fully redeemed code");

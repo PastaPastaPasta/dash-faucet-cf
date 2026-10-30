@@ -158,6 +158,9 @@ export interface ApiKeyInfo {
   owner: string | null;
   ownerEmail: string | null;
   expiresAt: number | null;
+  /** Who minted it: the owner, an admin identity, or "admin-token". */
+  createdBy: string | null;
+  revokedBy: string | null;
   /** Payouts allowed per rolling 24 h; null means unlimited. */
   perDay: number | null;
   createdAt: number;
@@ -173,6 +176,8 @@ interface MintKeyInput {
   perDay?: number | null;
   owner?: Identity;
   expiresAt?: number | null;
+  /** Admin identity minting it; self-serve keys are created by their owner. */
+  createdBy?: string;
 }
 
 interface ApiKeyRow {
@@ -189,6 +194,8 @@ interface ApiKeyRow {
   paid_sats: number;
   owner: string | null;
   expires_at: number | null;
+  created_by: string | null;
+  revoked_by: string | null;
   /** Only present when the query joins `users`. */
   owner_email: string | null;
 }
@@ -201,6 +208,8 @@ function apiKeyInfo(row: ApiKeyRow): ApiKeyInfo {
     owner: row.owner,
     ownerEmail: row.owner_email ?? null,
     expiresAt: row.expires_at,
+    createdBy: row.created_by,
+    revokedBy: row.revoked_by,
     perDay: row.per_day,
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
@@ -1113,9 +1122,10 @@ export class Treasury extends DurableObject<Env> {
     const now = Date.now();
     const owner = input.owner?.id ?? null;
     const expiresAt = input.expiresAt ?? null;
+    const createdBy = input.createdBy ?? owner;
     this.ctx.storage.sql.exec(
-      `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       hash,
       keyId(hash),
       input.label,
@@ -1124,6 +1134,7 @@ export class Treasury extends DurableObject<Env> {
       now,
       owner,
       expiresAt,
+      createdBy,
     );
     return {
       token,
@@ -1134,6 +1145,8 @@ export class Treasury extends DurableObject<Env> {
         owner,
         ownerEmail: input.owner?.email ?? null,
         expiresAt,
+        createdBy,
+        revokedBy: null,
         perDay,
         createdAt: now,
         revokedAt: null,
@@ -1161,15 +1174,17 @@ export class Treasury extends DurableObject<Env> {
 
   /**
    * Returns false when no active key has that id — or, with `owner`, none of
-   * theirs does, so one person can never revoke another's key.
+   * theirs does, so one person can never revoke another's key. `by` (an admin
+   * identity) is recorded; an owner revoking their own key records themself.
    */
-  async revokeApiKey(id: string, owner?: string): Promise<boolean> {
+  async revokeApiKey(id: string, owner?: string, by?: string): Promise<boolean> {
     const who = owner ?? null;
     return (
       this.ctx.storage.sql.exec(
-        `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
+        `UPDATE api_keys SET revoked_at = ?, revoked_by = ? WHERE id = ? AND revoked_at IS NULL
            AND (? IS NULL OR owner = ?)`,
         Date.now(),
+        by ?? who,
         id,
         who,
         who,
@@ -1211,7 +1226,12 @@ export class Treasury extends DurableObject<Env> {
         .toArray()[0];
       if (!old) return { ok: false, reason: "not_found" };
       label = old.label;
-      sql.exec(`UPDATE api_keys SET revoked_at = ? WHERE id = ?`, now, input.replacing);
+      sql.exec(
+        `UPDATE api_keys SET revoked_at = ?, revoked_by = ? WHERE id = ?`,
+        now,
+        input.who.id,
+        input.replacing,
+      );
     } else {
       const live = sql
         .exec<{ n: number }>(
@@ -1250,8 +1270,8 @@ export class Treasury extends DurableObject<Env> {
     return code ? { code, redemptions: listRedemptions(this.ctx.storage.sql, id) } : null;
   }
 
-  async updateCode(id: string, patch: CodePatch): Promise<CodeInfo | null> {
-    return updateCode(this.ctx.storage.sql, id, patch, Date.now());
+  async updateCode(id: string, patch: CodePatch, by: string): Promise<CodeInfo | null> {
+    return updateCode(this.ctx.storage.sql, id, patch, by, Date.now());
   }
 
   /**

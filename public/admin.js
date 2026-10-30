@@ -25,6 +25,13 @@
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   }
 
+  /** "google:pasta@dash.org" → "pasta@dash.org"; ids and the admin token as they are. */
+  function actorName(actor) {
+    if (!actor) return "";
+    if (actor === "admin-token") return "the admin token";
+    return actor.startsWith("google:") ? actor.slice("google:".length) : actor;
+  }
+
   function shareLink(code) {
     return `${location.origin}/?code=${encodeURIComponent(code)}`;
   }
@@ -73,7 +80,8 @@
       el("tr", {},
         el("td", {},
           el("span", { class: "mono" }, code.code),
-          el("span", { class: "sub" }, `${code.label}${code.kind === "voucher" ? " (voucher)" : ""}`)),
+          el("span", { class: "sub" }, `${code.label}${code.kind === "voucher" ? " (voucher)" : ""}`),
+          el("span", { class: "sub" }, `by ${actorName(code.updatedBy || code.createdBy)}${code.updatedBy ? " (last change)" : ""}`)),
         el("td", {}, dash(code.amountSats)),
         el("td", { class: "usage" }, usage(code)),
         el("td", {}, code.expiresAt ? date(code.expiresAt) : "never"),
@@ -103,7 +111,8 @@
     $("editLabel").value = code.label;
     $("editAmount").value = code.amountSats / 1e8;
     $("editMax").value = code.maxRedemptions;
-    $("editExpiry").value = toDateInput(code.expiresAt);
+    const shownExpiry = toDateInput(code.expiresAt);
+    $("editExpiry").value = shownExpiry;
     $("editForm").onsubmit = async (event) => {
       event.preventDefault();
       $("editDialog").close();
@@ -111,7 +120,9 @@
         label: $("editLabel").value.trim(),
         amount: Number($("editAmount").value),
         maxRedemptions: Number($("editMax").value),
-        expiresAt: expiry($("editExpiry")),
+        // Only when the date was changed: re-sending it would move the expiry
+        // to the end of that day in this admin's time zone.
+        ...($("editExpiry").value !== shownExpiry ? { expiresAt: expiry($("editExpiry")) } : {}),
       });
     };
     $("editDialog").showModal();
@@ -179,11 +190,15 @@
       const state = keyState(key);
       return el("tr", {},
         el("td", {}, key.label, el("span", { class: "sub mono" }, key.id)),
-        el("td", {}, key.ownerEmail || (key.owner ? key.owner : el("span", { class: "muted" }, "minted by an admin"))),
+        el("td", {}, key.ownerEmail || key.owner || el("span", { class: "muted" }, `minted by ${actorName(key.createdBy) || "an admin"}`)),
         el("td", {}, pill(TIER_NAMES[key.tier] || key.tier, key.tier === "mn" ? "warn" : "info")),
         el("td", {}, key.lastUsedAt ? ago(key.lastUsedAt) : "never"),
         el("td", {}, key.payouts ? `${dash(key.paidSats)} (${key.payouts})` : "—"),
-        el("td", {}, state === "active" ? pill("active", "ok") : pill(state, "off")),
+        el("td", {},
+          state === "active" ? pill("active", "ok") : pill(state, "off"),
+          key.revokedBy
+            ? el("span", { class: "sub" }, key.revokedBy === key.owner ? "by its owner" : `by ${actorName(key.revokedBy)}`)
+            : null),
         el("td", { class: "actions" }, state === "active"
           ? el("button", {
               class: "danger small",
