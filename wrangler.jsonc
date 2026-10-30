@@ -22,7 +22,13 @@
 
   "env": {
     "testnet": {
-      "assets": { "directory": "./public", "binding": "ASSETS" },
+      // The portal pages go through the Worker first, so on any host but the
+      // login origin they redirect there (session cookies are host-only).
+      "assets": {
+        "directory": "./public",
+        "binding": "ASSETS",
+        "run_worker_first": ["/keys", "/keys.html", "/admin", "/admin.html"]
+      },
       "routes": [
         { "pattern": "faucet.dashhq.org", "custom_domain": true },
         { "pattern": "faucet.thepasta.org", "custom_domain": true }
@@ -105,6 +111,18 @@
         // Keep one coin of 1001+ tDASH on hand for mn keys, merged from small
         // coins by the cron, MAX_PAYOUT_INPUTS at a time.
         "COLLATERAL_COINS": "1",
+        // Self-serve keys: sign in at AUTH_ORIGIN/keys with a verified dash.org
+        // Google Workspace account, or a GitHub account that is a dashpay member
+        // or has a verified dash.org address. Client ids/secrets and
+        // SESSION_SECRET are Worker secrets, uploaded by the deploy workflow
+        // from the `testnet` GitHub environment. Admins are pinned by email
+        // (Google Workspace) and numeric id (GitHub, immune to renames).
+        "AUTH_ORIGIN": "https://faucet.dashhq.org",
+        "AUTH_EMAIL_DOMAIN": "dash.org",
+        "AUTH_GITHUB_ORG": "dashpay",
+        "AUTH_ADMINS": "google:pasta@dash.org,github:6443210",
+        "SELF_SERVE_KEY_TTL_DAYS": "180",
+        "MAX_KEYS_PER_USER": "5",
         "DRY_RUN": "0"
       }
     },

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>Admin · Dash Faucet</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/portal.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><a href="/">Dash Faucet</a> · Admin</h1>
+      <div class="who" id="who"></div>
+    </header>
+
+    <section class="card" id="signIn" hidden></section>
+    <section class="card" id="notAdmin" hidden>
+      <h2>Not an admin</h2>
+      <p class="note">This account can manage its own keys on <a href="/keys">/keys</a>, but not codes or other people's keys.</p>
+    </section>
+
+    <section id="panel" hidden>
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tabCodes" aria-selected="true">Codes</button>
+        <button role="tab" id="tabKeys" aria-selected="false">Keys</button>
+      </div>
+      <div class="error" id="adminError" hidden></div>
+
+      <div id="codesPane">
+        <div class="card">
+          <h2>New event code</h2>
+          <p class="note">A typeable code many people can redeem, once per address and network each. Redeeming still needs the captcha.</p>
+          <form class="row" id="eventForm">
+            <label class="field">Code <input id="eventCode" placeholder="DASHCON-24" maxlength="32" required></label>
+            <label class="field">Label <input id="eventLabel" placeholder="DashCon 2026" maxlength="100" required></label>
+            <label class="field">tDASH each <input id="eventAmount" type="number" min="0.001" step="0.001" value="10" required></label>
+            <label class="field">Max redemptions <input id="eventMax" type="number" min="1" step="1" value="100" required></label>
+            <label class="field">Expires (optional) <input id="eventExpiry" type="datetime-local"></label>
+            <button type="submit">Create</button>
+          </form>
+        </div>
+        <div class="card">
+          <h2>New vouchers</h2>
+          <p class="note">Generated single-use codes, e.g. to hand out on paper.</p>
+          <form class="row" id="voucherForm">
+            <label class="field">How many <input id="voucherCount" type="number" min="1" max="200" step="1" value="10" required></label>
+            <label class="field">Label <input id="voucherLabel" placeholder="Meetup handouts" maxlength="100" required></label>
+            <label class="field">tDASH each <input id="voucherAmount" type="number" min="0.001" step="0.001" value="25" required></label>
+            <label class="field">Expires (optional) <input id="voucherExpiry" type="datetime-local"></label>
+            <button type="submit">Generate</button>
+          </form>
+          <div class="secret" id="newVouchers" hidden>
+            <strong>New vouchers</strong>
+            <pre id="newVoucherList"></pre>
+            <button id="copyVouchers" class="small">Copy all</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>Codes</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Code</th><th>Label</th><th>Kind</th><th>Each</th><th>Used</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+              <tbody id="codeRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div id="keysPane" hidden>
+        <div class="card">
+          <h2>Mint a key</h2>
+          <p class="note"><span class="mono">mn</span> keys pay exactly one 1000 tDASH masternode collateral per call.
+            <span class="mono">trusted</span> keys minted here have no owner and never expire (for services and CI).</p>
+          <form class="row" id="mintForm">
+            <label class="field">Label <input id="mintLabel" placeholder="Operator name" maxlength="100" required></label>
+            <label class="field">Tier
+              <select id="mintTier"><option value="mn">mn (1000 tDASH collateral)</option><option value="trusted">trusted</option></select>
+            </label>
+            <label class="field">Payouts per day (blank = tier default) <input id="mintPerDay" type="number" min="1" step="1"></label>
+            <button type="submit">Mint</button>
+          </form>
+          <div class="secret" id="mintedKey" hidden>
+            <strong>The new key, shown only once. Send it to its owner privately.</strong>
+            <code id="mintedValue"></code>
+            <button id="copyMinted" class="small">Copy key</button>
+          </div>
+        </div>
+        <div class="card">
+          <h2>All keys</h2>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Label</th><th>Owner</th><th>Tier</th><th>Created</th><th>Expires</th><th>Last used</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+              <tbody id="allKeyRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="editDialog">
+    <h3>Edit <span class="mono" id="editCode"></span></h3>
+    <form class="row" id="editForm" method="dialog">
+      <label class="field">Label <input id="editLabel" maxlength="100" required></label>
+      <label class="field">tDASH each <input id="editAmount" type="number" min="0.001" step="0.001" required></label>
+      <label class="field">Max redemptions <input id="editMax" type="number" min="1" step="1" required></label>
+      <label class="field">Expires (blank = never) <input id="editExpiry" type="datetime-local"></label>
+      <button type="submit" value="save">Save</button>
+      <button type="button" class="secondary" id="editCancel">Cancel</button>
+    </form>
+  </dialog>
+
+  <dialog id="detailDialog">
+    <h3>Redemptions of <span class="mono" id="detailCode"></span></h3>
+    <p class="note" id="detailLink"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>When</th><th>Address</th><th>Amount</th><th>Transaction</th></tr></thead>
+        <tbody id="detailRows"></tbody>
+      </table>
+    </div>
+    <div class="row"><button type="button" class="secondary" id="detailClose">Close</button></div>
+  </dialog>
+
+  <script src="/portal.js"></script>
+  <script src="/admin.js"></script>
+</body>
+</html>

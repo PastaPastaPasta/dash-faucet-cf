@@ -10,6 +10,23 @@ import {
   resolveInvitationTreasuryConfig,
 } from "./config";
 import {
+  type CodeInfo,
+  type CodePatch,
+  type CodeRow,
+  type Identity,
+  type NewCodes,
+  type Redemption,
+  checkCode,
+  createCodes,
+  getCode,
+  listCodes,
+  listRedemptions,
+  migrateAccounts,
+  recordRedemption,
+  updateCode,
+  upsertUser,
+} from "./accounts";
+import {
   DEFAULT_PER_DAY,
   KeyTier,
   MN_COLLATERAL_SATS,
@@ -108,12 +125,22 @@ export interface PayoutRequest {
   apiKeyHash?: string;
   /** Amount an API-key caller asked for; ignored without a key. */
   requestedSats?: number;
+  /**
+   * Normalized redemption code (see `codeKey`). Like a key, it replaces the
+   * public per-IP, per-address and daily-budget limits with its own; unlike a
+   * key, the caller has still passed a captcha.
+   */
+  codeKey?: string;
 }
 
 export interface ApiKeyInfo {
   id: string;
   label: string;
   tier: KeyTier;
+  /** `google:<sub>` / `github:<id>` for self-serve keys; null for admin-minted ones. */
+  owner: string | null;
+  ownerEmail: string | null;
+  expiresAt: number | null;
   /** Payouts allowed per rolling 24 h; null means unlimited. */
   perDay: number | null;
   createdAt: number;
@@ -135,6 +162,10 @@ interface ApiKeyRow {
   last_used_at: number | null;
   payouts: number;
   paid_sats: number;
+  owner: string | null;
+  expires_at: number | null;
+  /** Only present when the query joins `users`. */
+  owner_email: string | null;
 }
 
 function apiKeyInfo(row: ApiKeyRow): ApiKeyInfo {
@@ -142,6 +173,9 @@ function apiKeyInfo(row: ApiKeyRow): ApiKeyInfo {
     id: row.id,
     label: row.label,
     tier: row.tier as KeyTier,
+    owner: row.owner,
+    ownerEmail: row.owner_email ?? null,
+    expiresAt: row.expires_at,
     perDay: row.per_day,
     createdAt: row.created_at,
     revokedAt: row.revoked_at,
@@ -160,10 +194,14 @@ export type PayoutResult =
       dryRun: boolean;
       accepted: string[];
       keyId?: string;
+      /** Label of the code that paid, when one did. */
+      codeLabel?: string;
     }
   | { ok: false; code: "rate_limited"; retryAfter: number }
   | { ok: false; code: "budget_exhausted"; retryAfter: number }
   | { ok: false; code: "unauthorized" }
+  | { ok: false; code: "code_invalid" }
+  | { ok: false; code: "code_used" }
   | { ok: false; code: "bad_request"; detail: string }
   | { ok: false; code: "fragmented"; detail: string }
   | { ok: false; code: "insufficient_funds"; detail: string }
@@ -383,6 +421,7 @@ export class Treasury extends DurableObject<Env> {
       );
     }
     this.backfillInvitationAmounts();
+    migrateAccounts(this.ctx.storage.sql);
   }
 
   /**
@@ -666,11 +705,19 @@ export class Treasury extends DurableObject<Env> {
 
     let satoshis = cfg.payoutSats;
     let apiKey: ApiKeyRow | undefined;
+    let code: CodeRow | undefined;
     if (input.apiKeyHash !== undefined) {
       const auth = this.authorizeKeyPayout(input, now);
       if (!auth.ok) return auth;
       apiKey = auth.key;
       satoshis = auth.satoshis;
+    } else if (input.codeKey !== undefined) {
+      // Decided inside the payout lock, so two people racing for a code's
+      // last redemption cannot both get it.
+      const check = checkCode(sql, input.codeKey, input.address, input.ip, now);
+      if (!check.ok) return { ok: false, code: check.reason === "used" ? "code_used" : "code_invalid" };
+      code = check.code;
+      satoshis = code.amount_sats;
     } else {
       // 1. Idempotency. A repeated request for the same address on the same day
       //    returns the original transaction instead of paying twice.
@@ -734,7 +781,7 @@ export class Treasury extends DurableObject<Env> {
       return { ok: false, code: "chain_unavailable", detail: describeError(err) };
     }
 
-    if (apiKey) {
+    if (apiKey || code) {
       const balance = view.utxos.reduce((acc, u) => acc + u.satoshis, 0);
       if (balance - satoshis < cfg.apiKeys.reserveSats) {
         return {
@@ -769,7 +816,7 @@ export class Treasury extends DurableObject<Env> {
       return { ok: false, code: "error", detail: "could not build transaction" };
     }
 
-    const keyResult = apiKey ? { keyId: apiKey.id } : {};
+    const keyResult = apiKey ? { keyId: apiKey.id } : code ? { codeLabel: code.label } : {};
     if (cfg.dryRun) {
       // Build and sign, but change no state and touch no network.
       return {
@@ -789,6 +836,10 @@ export class Treasury extends DurableObject<Env> {
       // key's retry cannot collect a second collateral, and so the audit log
       // shows a payout that may have landed.
       if (apiKey && outcome.uncertain) this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
+      // Same for a code: a retry must not redeem it twice.
+      if (code && outcome.uncertain) {
+        recordRedemption(sql, code, input.address, input.ip, built.txid, satoshis, now);
+      }
       return outcome.result;
     }
 
@@ -799,6 +850,10 @@ export class Treasury extends DurableObject<Env> {
       // consume an address's daily claim nor an IP's allowance nor the public
       // daily budget, so trusted use can never lock the public out.
       this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
+    } else if (code) {
+      // Code payouts, too, stay out of the public ledgers: the code's own cap
+      // and per-address/per-network rule are its limits.
+      recordRedemption(sql, code, input.address, input.ip, built.txid, satoshis, now);
     } else {
       sql.exec(
         `INSERT OR REPLACE INTO claims (recipient, day, txid, satoshis, created_at)
@@ -894,7 +949,12 @@ export class Treasury extends DurableObject<Env> {
     return (
       this.config.apiKeys.enabled &&
       this.ctx.storage.sql
-        .exec(`SELECT 1 FROM api_keys WHERE hash = ? AND revoked_at IS NULL`, hash)
+        .exec(
+          `SELECT 1 FROM api_keys WHERE hash = ? AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)`,
+          hash,
+          Date.now(),
+        )
         .toArray().length > 0
     );
   }
@@ -914,7 +974,12 @@ export class Treasury extends DurableObject<Env> {
     const row = sql
       .exec<ApiKeyRow>(`SELECT * FROM api_keys WHERE hash = ?`, input.apiKeyHash ?? "")
       .toArray()[0];
-    if (!cfg.apiKeys.enabled || !row || row.revoked_at !== null) {
+    if (
+      !cfg.apiKeys.enabled ||
+      !row ||
+      row.revoked_at !== null ||
+      (row.expires_at !== null && row.expires_at <= now)
+    ) {
       return { ok: false, code: "unauthorized" };
     }
 
@@ -964,24 +1029,34 @@ export class Treasury extends DurableObject<Env> {
    * Pure SQL with no await, so the single thread already makes it atomic; it
    * does not need the spending lock.
    */
-  async createApiKey(input: {
+  async createApiKey(input: Parameters<Treasury["mintKey"]>[0]): Promise<{ token: string; key: ApiKeyInfo }> {
+    return this.mintKey(input);
+  }
+
+  private mintKey(input: {
     label: string;
     tier: KeyTier;
     perDay?: number | null;
-  }): Promise<{ token: string; key: ApiKeyInfo }> {
+    owner?: Identity;
+    expiresAt?: number | null;
+  }): { token: string; key: ApiKeyInfo } {
     const token = generateApiKey();
     const hash = hashApiKey(token);
     const perDay = input.perDay === undefined ? DEFAULT_PER_DAY[input.tier] : input.perDay;
     const now = Date.now();
+    const owner = input.owner?.id ?? null;
+    const expiresAt = input.expiresAt ?? null;
     this.ctx.storage.sql.exec(
-      `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       hash,
       keyId(hash),
       input.label,
       input.tier,
       perDay,
       now,
+      owner,
+      expiresAt,
     );
     return {
       token,
@@ -989,6 +1064,9 @@ export class Treasury extends DurableObject<Env> {
         id: keyId(hash),
         label: input.label,
         tier: input.tier,
+        owner,
+        ownerEmail: input.owner?.email ?? null,
+        expiresAt,
         perDay,
         createdAt: now,
         revokedAt: null,
@@ -999,22 +1077,114 @@ export class Treasury extends DurableObject<Env> {
     };
   }
 
-  async listApiKeys(): Promise<ApiKeyInfo[]> {
-    return this.ctx.storage.sql
-      .exec<ApiKeyRow>(`SELECT * FROM api_keys ORDER BY created_at`)
-      .toArray()
-      .map(apiKeyInfo);
+  /** Every key, or only `owner`'s. Never includes hashes. */
+  async listApiKeys(owner?: string): Promise<ApiKeyInfo[]> {
+    const select = `SELECT k.*, u.email AS owner_email FROM api_keys k
+      LEFT JOIN users u ON u.id = k.owner`;
+    const rows =
+      owner === undefined
+        ? this.ctx.storage.sql.exec<ApiKeyRow>(`${select} ORDER BY k.created_at`)
+        : this.ctx.storage.sql.exec<ApiKeyRow>(
+            `${select} WHERE k.owner = ? ORDER BY k.created_at`,
+            owner,
+          );
+    return rows.toArray().map(apiKeyInfo);
   }
 
-  /** Returns false when no active key has that id. */
-  async revokeApiKey(id: string): Promise<boolean> {
-    return (
-      this.ctx.storage.sql.exec(
-        `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
-        Date.now(),
-        id,
-      ).rowsWritten > 0
-    );
+  /**
+   * Returns false when no active key has that id — or, with `owner`, none of
+   * theirs does, so one person can never revoke another's key.
+   */
+  async revokeApiKey(id: string, owner?: string): Promise<boolean> {
+    const now = Date.now();
+    const cursor =
+      owner === undefined
+        ? this.ctx.storage.sql.exec(
+            `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
+            now,
+            id,
+          )
+        : this.ctx.storage.sql.exec(
+            `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND owner = ? AND revoked_at IS NULL`,
+            now,
+            id,
+            owner,
+          );
+    return cursor.rowsWritten > 0;
+  }
+
+  // --- self-serve accounts -----------------------------------------------------
+
+  async recordLogin(who: Identity): Promise<void> {
+    upsertUser(this.ctx.storage.sql, who, Date.now());
+  }
+
+  /**
+   * A self-serve `trusted` key for `who`, capped at `maxActive` live keys.
+   * With `replacing`, that key (which must be theirs and live) is revoked in
+   * the same step: a rotation never leaves them with both, or with neither.
+   */
+  async issueOwnKey(input: {
+    who: Identity;
+    label: string;
+    maxActive: number;
+    ttlMs: number;
+    replacing?: string;
+  }): Promise<{ ok: true; token: string; key: ApiKeyInfo } | { ok: false; reason: "limit" | "not_found" }> {
+    const sql = this.ctx.storage.sql;
+    const now = Date.now();
+    let label = input.label;
+    if (input.replacing !== undefined) {
+      const old = sql
+        .exec<{ label: string }>(
+          `SELECT label FROM api_keys WHERE id = ? AND owner = ? AND revoked_at IS NULL`,
+          input.replacing,
+          input.who.id,
+        )
+        .toArray()[0];
+      if (!old) return { ok: false, reason: "not_found" };
+      label = old.label;
+      sql.exec(`UPDATE api_keys SET revoked_at = ? WHERE id = ?`, now, input.replacing);
+    } else {
+      const live = sql
+        .exec<{ n: number }>(
+          `SELECT COUNT(*) AS n FROM api_keys WHERE owner = ? AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)`,
+          input.who.id,
+          now,
+        )
+        .toArray()[0].n;
+      if (live >= input.maxActive) return { ok: false, reason: "limit" };
+    }
+    // Never an `await` between the checks above and this insert, so the
+    // Durable Object's single thread keeps the cap exact.
+    const created = this.mintKey({
+      label,
+      tier: "trusted",
+      perDay: null,
+      owner: input.who,
+      expiresAt: now + input.ttlMs,
+    });
+    return { ok: true, ...created };
+  }
+
+  // --- codes -------------------------------------------------------------------
+
+  async createCodes(input: NewCodes) {
+    return createCodes(this.ctx.storage.sql, input, Date.now());
+  }
+
+  async listCodes(): Promise<CodeInfo[]> {
+    return listCodes(this.ctx.storage.sql);
+  }
+
+  async getCode(id: string): Promise<{ code: CodeInfo; redemptions: Redemption[] } | null> {
+    const code = getCode(this.ctx.storage.sql, id);
+    return code ? { code, redemptions: listRedemptions(this.ctx.storage.sql, id) } : null;
+  }
+
+  async updateCode(id: string, patch: CodePatch): Promise<CodeInfo | null> {
+    return updateCode(this.ctx.storage.sql, id, patch, Date.now());
   }
 
   /**
