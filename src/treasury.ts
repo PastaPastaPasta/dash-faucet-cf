@@ -868,7 +868,7 @@ export class Treasury extends DurableObject<Env> {
       this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
     } else if (code) {
       // Code payouts, too, stay out of the public ledgers: the code's own cap
-      // and per-address/per-network rule are its limits.
+      // and once-per-address rule are its limits.
       recordRedemption(sql, code, input.address, built.txid, satoshis, now);
     } else {
       sql.exec(
