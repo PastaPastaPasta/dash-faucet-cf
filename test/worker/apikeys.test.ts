@@ -214,6 +214,29 @@ describe("HTTP", () => {
     expect(denied.status).toBe(401);
   });
 
+  it("answers a payout still being merged with 503, its detail and Retry-After", async () => {
+    chain.height = 500;
+    // 1999 tDASH takes 20 of these, past the input cap of 5 — and more than
+    // any change an earlier test left pending in this shared Treasury.
+    chain.coins = Array.from({ length: 25 }, (_, i) => ({
+      txid: (i + 0x700).toString(16).padStart(64, "0"),
+      vout: 0,
+      satoshis: 100 * COIN,
+      height: 10,
+    }));
+    const { token } = await mint("trusted");
+    const response = await SELF.fetch(url("/api/core-faucet"), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ address: RECIPIENT.testnet.address, amount: 1999 }),
+    });
+    expect(response.status).toBe(503);
+    expect(Number(response.headers.get("Retry-After"))).toBeGreaterThan(0);
+    const body = (await response.json()) as { retryAfter: number; detailMessage: string };
+    expect(body.retryAfter).toBeGreaterThan(0);
+    expect(body.detailMessage).toMatch(/inputs/);
+  });
+
   it("rejects malformed keys and amounts", async () => {
     const post = (headers: Record<string, string>, body: unknown) =>
       SELF.fetch(url("/api/core-faucet"), {

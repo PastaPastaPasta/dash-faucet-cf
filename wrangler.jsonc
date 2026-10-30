@@ -105,11 +105,13 @@
         // Key payouts never take the wallet below 100 tDASH, so the public
         // faucet keeps paying.
         "KEY_RESERVE_SATS": "10000000000",
-        // ~0.35 ms of CPU per signed input; keep a payout well inside the
-        // free plan's ~10 ms.
-        "MAX_PAYOUT_INPUTS": "20",
-        // Keep one coin of 1001+ tDASH on hand for mn keys, merged from small
-        // coins by the cron, MAX_PAYOUT_INPUTS at a time.
+        // Coins one payout or merge may spend: ~74 kB, inside Core's 100 kB
+        // standard size. Signing runs in the Durable Object, ~0.3 ms per
+        // input on the edge against its 30 s CPU limit.
+        "MAX_PAYOUT_INPUTS": "500",
+        // Keep one coin of 1001+ tDASH on hand for mn keys. Merged as soon as
+        // one is missing (an alarm follows every spend of it), not just by
+        // the cron.
         "COLLATERAL_COINS": "1",
         // Self-serve keys: sign in at AUTH_ORIGIN/keys with a verified dash.org
         // Google Workspace account. (GitHub sign-in, for dashpay members or a

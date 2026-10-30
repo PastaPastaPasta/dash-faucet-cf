@@ -174,7 +174,7 @@ const PAYOUT_FAILURES: Record<
   fragmented: {
     status: 503,
     message:
-      "No coin large enough for this amount yet; the faucet merges small coins every 10 minutes, so try again later",
+      "The faucet is merging coins to cover this amount; try again after the next block",
   },
   error: { status: 500, message: "Internal server error" },
 };
@@ -196,6 +196,7 @@ function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   }
 
   const extra: Record<string, unknown> = { retryAfter: result.retryAfter };
+  if ("detail" in result) extra.detailMessage = result.detail;
   if (result.code === "rate_limited" && escalatable) {
     extra.requiresHardCaptcha = true;
   }

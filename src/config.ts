@@ -153,10 +153,11 @@ export interface FaucetConfig {
   wif: string;
   dryRun: boolean;
   /**
-   * Inputs one payout may spend. Signing costs ~0.35 ms per input and the
-   * Workers free plan allows ~10 ms of CPU, so a large payout assembled from
-   * hundreds of small coins would be killed mid-build. Past this the request
-   * fails cleanly and waits for a coin large enough.
+   * Inputs one transaction (a payout or a merge) may spend. CPU is not what
+   * bounds it: signing runs in the Treasury Durable Object, which gets 30 s
+   * per invocation even on the free plan, and costs ~0.3 ms per input there.
+   * Relays are: Core refuses a transaction over 100 kB, and a coin's whole
+   * unconfirmed ancestry over 101 kB. At most `MAX_STANDARD_INPUTS`.
    */
   maxPayoutInputs: number;
   /**
@@ -377,6 +378,20 @@ function authConfig(env: Env, network: NetworkName): AuthConfig {
   };
 }
 
+/**
+ * ~148 bytes per signed P2PKH input: 600 is ~89 kB, leaving room under the
+ * 101 kB ancestor limit for the single-input payouts chained off its change.
+ */
+const MAX_STANDARD_INPUTS = 600;
+
+function maxInputs(raw: string | undefined): number {
+  const value = positiveInt("MAX_PAYOUT_INPUTS", raw, 500);
+  if (value > MAX_STANDARD_INPUTS) {
+    throw new Error(`config MAX_PAYOUT_INPUTS must be at most ${MAX_STANDARD_INPUTS}`);
+  }
+  return value;
+}
+
 function adminTokenSha256(raw: string | undefined): string {
   const value = (raw ?? "").trim().toLowerCase();
   if (value && !/^[0-9a-f]{64}$/.test(value)) {
@@ -465,7 +480,7 @@ export function resolveConfig(env: Env): FaucetConfig {
     capSecret: env.CAP_SECRET ?? "",
     wif: env.FAUCET_WIF,
     dryRun: env.DRY_RUN === "1",
-    maxPayoutInputs: positiveInt("MAX_PAYOUT_INPUTS", env.MAX_PAYOUT_INPUTS, 20),
+    maxPayoutInputs: maxInputs(env.MAX_PAYOUT_INPUTS),
     auth: authConfig(env, network),
     collateralCoins: int("COLLATERAL_COINS", env.COLLATERAL_COINS, 0),
     apiKeys: {

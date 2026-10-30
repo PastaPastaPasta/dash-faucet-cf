@@ -1,34 +1,25 @@
-import { env } from "cloudflare:test";
+import { env, runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeEach, describe, expect, it } from "vitest";
 import { hashApiKey } from "../../src/apikeys";
-import { FakeChain } from "./fakechain";
-import { RECIPIENT } from "../fixtures";
+import { FakeChain, parseTx } from "./fakechain";
+import { FAUCET_SCRIPT_TESTNET, RECIPIENT } from "../fixtures";
 
 const chain = new FakeChain();
 const COIN = 100_000_000;
 const POOL = 20_000_000; // POOL_UTXO_SATS in vitest.config.ts
 
-/** Txids a raw transaction spends. dashtx's own parser rejects valid 105-byte scriptSigs. */
+/** Txids a raw transaction spends. */
 function inputsOf(hex: string): string[] {
-  const bytes = hex.match(/../g)!.map((b) => parseInt(b, 16));
-  let at = 4; // 2-byte version + 2-byte type
-  const varint = () => {
-    const first = bytes[at++];
-    if (first < 0xfd) return first;
-    const width = first === 0xfd ? 2 : first === 0xfe ? 4 : 8;
-    let value = 0;
-    for (let i = 0; i < width; i++) value += bytes[at++] * 2 ** (8 * i);
-    return value;
-  };
-  const count = varint();
-  const txids: string[] = [];
-  for (let i = 0; i < count; i++) {
-    txids.push(bytes.slice(at, at + 32).reverse().map((b) => b.toString(16).padStart(2, "0")).join(""));
-    at += 36;
-    const scriptLength = varint();
-    at += scriptLength + 4;
-  }
-  return txids;
+  return parseTx(hex).inputs.map((i) => i.txid);
+}
+
+/** Mine the most recent broadcast. */
+function mineLast(): Promise<void> {
+  return chain.confirm(chain.broadcastAttempts.at(-1)!.hex, FAUCET_SCRIPT_TESTNET);
+}
+
+function bookedAlarm(t: ReturnType<typeof treasury>): Promise<number | null> {
+  return runInDurableObject(t, (_, state) => state.storage.getAlarm());
 }
 
 let seq = 0;
@@ -56,7 +47,7 @@ beforeEach(() => {
 });
 
 describe("collateral coin", () => {
-  it("grows from small coins one bounded slice per pass, then funds an mn payout alone", async () => {
+  it("grows from small coins one bounded slice per block, then funds an mn payout alone", async () => {
     chain.coins = [...coins(4, POOL), ...coins(60, 20 * COIN, 100)];
     const t = treasury();
 
@@ -71,6 +62,8 @@ describe("collateral coin", () => {
       expect(passes).toBeLessThan(30);
       // MAX_PAYOUT_INPUTS is 5: no pass may sign more than that.
       expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex).length).toBeLessThanOrEqual(5);
+      // A merge spends confirmed coins only, so the next one needs a block.
+      await mineLast();
     }
     expect(passes).toBeGreaterThan(1);
     expect((await t.snapshot()).collateralUtxos).toBe(1);
@@ -147,5 +140,104 @@ describe("collateral coin", () => {
     // 500 tDASH: the small coins cannot cover it within the input cap.
     expect((await pay(2, 500 * COIN)).ok).toBe(true);
     expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toContain(collateral.txid);
+  });
+});
+
+describe("real-time merging", () => {
+  async function keyFor(t: ReturnType<typeof treasury>, tier: "mn" | "trusted") {
+    const { token } = await t.createApiKey({ label: tier, tier });
+    return hashApiKey(token);
+  }
+  const to = (n: number) => ({
+    address: `${RECIPIENT.testnet.address}-${n}`,
+    pubKeyHash: RECIPIENT.testnet.pubKeyHash.slice(0, 38) + n.toString(16).padStart(2, "0"),
+    ip: "203.0.113.80",
+  });
+
+  it("pays an mn key from many confirmed coins when no collateral coin exists", async () => {
+    chain.coins = [...coins(4, POOL), ...coins(5, 210 * COIN, 100)];
+    const t = treasury();
+    const paid = await t.payout({ ...to(1), apiKeyHash: await keyFor(t, "mn") });
+    expect(paid.ok && paid.satoshis).toBe(1000 * COIN);
+
+    const tx = parseTx(chain.broadcastAttempts.at(-1)!.hex);
+    expect(tx.inputs).toHaveLength(5);
+    // Still exactly one 1000 DASH output: the collateral.
+    expect(tx.outputs.filter((o) => o.satoshis === 1000 * COIN)).toHaveLength(1);
+  });
+
+  it("rebuilds the collateral coin right after a payout spends it", async () => {
+    const collateral = { txid: "c".repeat(64), vout: 0, satoshis: 1002 * COIN, height: 10 };
+    chain.coins = [collateral, ...coins(4, POOL), ...coins(5, 250 * COIN, 100)];
+    const t = treasury();
+    const paid = await t.payout({ ...to(2), apiKeyHash: await keyFor(t, "mn") });
+    expect(paid.ok).toBe(true);
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toEqual([collateral.txid]);
+    expect((await t.snapshot()).collateralUtxos).toBe(0);
+
+    // Booked within seconds, not at the next cron.
+    const booked = await bookedAlarm(t);
+    expect(booked).not.toBeNull();
+    expect(booked! - Date.now()).toBeLessThan(10_000);
+
+    expect(await runDurableObjectAlarm(t)).toBe(true);
+    const merge = parseTx(chain.broadcastAttempts.at(-1)!.hex);
+    expect(merge.inputs).toHaveLength(5);
+    const pool = new Set(coins(4, POOL).map((c) => c.txid));
+    expect(merge.inputs.some((i) => pool.has(i.txid))).toBe(false);
+    expect((await t.snapshot()).collateralUtxos).toBe(1);
+  });
+
+  it("answers fragmented while coins confirm, then merges them as soon as they do", async () => {
+    chain.coins = [...coins(4, POOL), ...coins(2, 600 * COIN, 100)];
+    const t = treasury();
+
+    // Leaves 600 confirmed and ~500 of unconfirmed change.
+    const trusted = await t.payout({ ...to(3), apiKeyHash: await keyFor(t, "trusted"), requestedSats: 100 * COIN });
+    expect(trusted.ok).toBe(true);
+    const payoutHex = chain.broadcastAttempts.at(-1)!.hex;
+
+    const mn = await keyFor(t, "mn");
+    const early = await t.payout({ ...to(4), apiKeyHash: mn });
+    expect(early.ok).toBe(false);
+    if (early.ok) return;
+    expect(early.code).toBe("fragmented");
+    expect("retryAfter" in early && early.retryAfter).toBeGreaterThan(0);
+    // Unconfirmed change is never one of several inputs.
+    expect(chain.broadcastAttempts.at(-1)!.hex).toBe(payoutHex);
+
+    // Nothing to merge yet: it looks again in a minute rather than giving up.
+    expect(await runDurableObjectAlarm(t)).toBe(true);
+    expect(chain.broadcastAttempts.at(-1)!.hex).toBe(payoutHex);
+    const again = await bookedAlarm(t);
+    expect(again! - Date.now()).toBeGreaterThan(30_000);
+
+    // The block lands: the next look merges, and the mn payout is one input.
+    await chain.confirm(payoutHex, FAUCET_SCRIPT_TESTNET);
+    expect(await runDurableObjectAlarm(t)).toBe(true);
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toHaveLength(2);
+    expect((await t.snapshot()).collateralUtxos).toBe(1);
+
+    const paid = await t.payout({ ...to(4), apiKeyHash: mn });
+    expect(paid.ok && paid.satoshis).toBe(1000 * COIN);
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toHaveLength(1);
+  });
+
+  it("stops looking when confirmed coins fall short only by the fee", async () => {
+    chain.coins = [...coins(4, POOL), ...coins(1, 600 * COIN, 100), ...coins(1, 401 * COIN + 100, 200)];
+    const t = treasury();
+    const result = await t.maintain();
+    expect(result.action).toBe("none");
+    expect(chain.broadcastAttempts).toHaveLength(0);
+    expect(await bookedAlarm(t)).toBeNull();
+  });
+
+  it("books nothing for a public payout that leaves the collateral coin alone", async () => {
+    const collateral = { txid: "c".repeat(64), vout: 0, satoshis: 1002 * COIN, height: 10 };
+    chain.coins = [collateral, ...coins(4, POOL)];
+    const t = treasury();
+    expect((await t.payout(to(5))).ok).toBe(true);
+    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).not.toContain(collateral.txid);
+    expect(await bookedAlarm(t)).toBeNull();
   });
 });
