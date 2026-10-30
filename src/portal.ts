@@ -41,6 +41,28 @@ const MAX_REDEMPTIONS = 100_000;
 /** Pages served from the login origin; on any other host they redirect there. */
 const PORTAL_PAGES = new Set(["/keys", "/admin", "/keys.html", "/admin.html"]);
 
+/**
+ * Set here rather than in `_headers`: that file does not reliably reach
+ * responses a Worker returns from `env.ASSETS.fetch`, and these pages handle
+ * sessions and freshly minted keys.
+ */
+const PAGE_HEADERS: Record<string, string> = {
+  "Content-Security-Policy":
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  "X-Frame-Options": "DENY",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "Cache-Control": "no-store",
+};
+
+async function portalPage(request: Request, env: Env): Promise<Response> {
+  const asset = await env.ASSETS.fetch(request);
+  const headers = new Headers(asset.headers);
+  for (const [name, value] of Object.entries(PAGE_HEADERS)) headers.set(name, value);
+  return new Response(asset.body, { status: asset.status, statusText: asset.statusText, headers });
+}
+
 function noStore(body: unknown, status = 200): Response {
   return json(body, status, NO_STORE);
 }
@@ -83,7 +105,7 @@ export async function handlePortal(request: Request, env: Env, url: URL): Promis
   if ((isAuth || PORTAL_PAGES.has(path)) && auth.origin && url.host !== new URL(auth.origin).host) {
     return Response.redirect(`${auth.origin}${path}${url.search}`, 302);
   }
-  if (PORTAL_PAGES.has(path)) return null;
+  if (PORTAL_PAGES.has(path)) return portalPage(request, env);
 
   if (isAuth) return handleAuth(request, cfg, env, url);
   if (isMe) return handleMe(request, cfg, env, path);

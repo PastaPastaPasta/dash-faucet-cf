@@ -467,3 +467,15 @@ describe("admin", () => {
     expect(wrong.status).toBe(401);
   });
 });
+
+describe("portal pages", () => {
+  it.each(["/keys", "/admin"])("%s is served with a strict CSP and no caching", async (path) => {
+    const res = await SELF.fetch(`${ORIGIN}${path}`, { redirect: "manual" });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Security-Policy")).toContain("script-src 'self'");
+    expect(res.headers.get("Content-Security-Policy")).toContain("frame-ancestors 'none'");
+    expect(res.headers.get("X-Frame-Options")).toBe("DENY");
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(await res.text()).toContain("<title>");
+  });
+});
