@@ -174,7 +174,7 @@ const PAYOUT_FAILURES: Record<
   fragmented: {
     status: 503,
     message:
-      "No coin large enough for this amount yet; the faucet merges small coins every 10 minutes, so try again later",
+      "No coin large enough for this amount yet; coins must be merged or confirmed first, so try again later",
   },
   error: { status: 500, message: "Internal server error" },
 };
@@ -191,16 +191,19 @@ function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   if (result.code === "unauthorized") {
     return errorJson(status, message, {}, { "WWW-Authenticate": "Bearer" });
   }
-  if (!("retryAfter" in result)) {
-    return errorJson(status, message, "detail" in result ? { detailMessage: result.detail } : {});
+  const detail = "detail" in result ? result.detail : undefined;
+  const retryAfter = "retryAfter" in result ? result.retryAfter : undefined;
+  if (retryAfter === undefined) {
+    return errorJson(status, message, detail === undefined ? {} : { detailMessage: detail });
   }
 
-  const extra: Record<string, unknown> = { retryAfter: result.retryAfter };
+  const extra: Record<string, unknown> = { retryAfter };
+  if (detail !== undefined) extra.detailMessage = detail;
   if (result.code === "rate_limited" && escalatable) {
     extra.requiresHardCaptcha = true;
   }
   return errorJson(status, message, extra, {
-    "Retry-After": String(result.retryAfter),
+    "Retry-After": String(retryAfter),
   });
 }
 

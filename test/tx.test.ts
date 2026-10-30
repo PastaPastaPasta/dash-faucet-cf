@@ -5,11 +5,13 @@ import {
   InsufficientFundsError,
   SelfPayError,
   TooFragmentedError,
+  UnconfirmedFundsError,
   buildConsolidation,
   buildPayout,
   buildSplit,
   buildInvitationAssetLock,
   selectInputs,
+  selectMergeInputs,
 } from "../src/tx";
 import { FAUCET, FAUCET_SCRIPT_TESTNET, RECIPIENT, utxo } from "./fixtures";
 
@@ -217,5 +219,63 @@ describe("input cap and consolidation", () => {
     expect(built.fee).toBeGreaterThan(0);
     expect(built.fee).toBeLessThan(10_000);
     expect(built.txid).toBe(txidOf(built.hex));
+  });
+});
+
+describe("multi-input selection", () => {
+  const pending = (byte: string, satoshis: number) => ({ ...utxo(byte, 0, satoshis), height: null });
+
+  it("may spend one unconfirmed coin, but never several", () => {
+    expect(selectInputs([pending("1", 300_000_000)], 100_000_000)).toHaveLength(1);
+    expect(() =>
+      selectInputs([pending("1", 60_000_000), pending("2", 60_000_000)], 100_000_000),
+    ).toThrow(UnconfirmedFundsError);
+  });
+
+  it("covers a large amount from confirmed coins, leaving unconfirmed ones out", () => {
+    const coins = [pending("1", 900_000_000), ...Array.from({ length: 6 }, (_, i) => utxo((i + 2).toString(16), 0, 200_000_000))];
+    const picked = selectInputs(coins, 1_000_000_000);
+    expect(picked).toHaveLength(6);
+    expect(picked.every((u) => u.height !== null)).toBe(true);
+  });
+
+  it("calls a shortfall insufficient only when unconfirmed coins would not cover it either", () => {
+    expect(() =>
+      selectInputs([utxo("1", 0, 50_000_000), pending("2", 40_000_000)], 100_000_000),
+    ).toThrow(InsufficientFundsError);
+  });
+});
+
+describe("merge selection", () => {
+  const coin = (n: number, satoshis: number) => utxo(n.toString(16).padStart(2, "0"), 0, satoshis);
+
+  it("reaches the target with the fewest large coins and sweeps the smallest", () => {
+    const big = [coin(1, 900_000_000), coin(2, 800_000_000)];
+    const dust = Array.from({ length: 10 }, (_, i) => coin(i + 10, 1_000_000 + i));
+    const { inputs, reaches } = selectMergeInputs([...dust, ...big], 1_000_000_000, 6);
+    expect(reaches).toBe(true);
+    expect(inputs).toHaveLength(6);
+    // Both large coins are needed; the other four slots take the smallest.
+    expect(inputs.slice(0, 2)).toEqual(big);
+    expect(inputs.slice(2).map((u) => u.satoshis).sort()).toEqual([1_000_000, 1_000_001, 1_000_002, 1_000_003]);
+  });
+
+  it("takes every coin when there are fewer than the budget", () => {
+    const coins = [coin(1, 600_000_000), coin(2, 500_000_000)];
+    const { inputs, reaches } = selectMergeInputs(coins, 1_000_000_000, 500);
+    expect(reaches).toBe(true);
+    expect(inputs).toHaveLength(2);
+  });
+
+  it("falls back to the largest coins when the budget cannot reach the target", () => {
+    const coins = Array.from({ length: 8 }, (_, i) => coin(i + 1, (i + 1) * 100_000_000));
+    const { inputs, reaches } = selectMergeInputs(coins, 3_000_000_000, 3);
+    expect(reaches).toBe(false);
+    expect(inputs.map((u) => u.satoshis)).toEqual([800_000_000, 700_000_000, 600_000_000]);
+  });
+
+  it("counts the fee against the target", () => {
+    const { reaches } = selectMergeInputs([coin(1, 600_000_000), coin(2, 400_000_000)], 1_000_000_000, 5);
+    expect(reaches).toBe(false);
   });
 });

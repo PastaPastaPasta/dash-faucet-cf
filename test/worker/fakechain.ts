@@ -14,6 +14,46 @@ export interface Coin {
   height?: number;
 }
 
+export interface ParsedTx {
+  inputs: Array<{ txid: string; vout: number }>;
+  outputs: Array<{ satoshis: number; script: string }>;
+}
+
+/** Inputs and outputs of a raw transaction. dashtx's own parser rejects valid 105-byte scriptSigs. */
+export function parseTx(hex: string): ParsedTx {
+  const bytes = hex.match(/../g)!.map((b) => parseInt(b, 16));
+  let at = 4; // 2-byte version + 2-byte type
+  const le = (width: number) => {
+    let value = 0;
+    for (let i = 0; i < width; i++) value += bytes[at++] * 2 ** (8 * i);
+    return value;
+  };
+  const varint = () => {
+    const first = bytes[at++];
+    if (first < 0xfd) return first;
+    return le(first === 0xfd ? 2 : first === 0xfe ? 4 : 8);
+  };
+  const hexOf = (from: number, to: number) =>
+    bytes.slice(from, to).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+  const inputs: ParsedTx["inputs"] = [];
+  for (let i = 0, n = varint(); i < n; i++) {
+    const txid = hexOf(at, at + 32).match(/../g)!.reverse().join("");
+    at += 32;
+    inputs.push({ txid, vout: le(4) });
+    const scriptSig = varint();
+    at += scriptSig + 4; // and the sequence
+  }
+  const outputs: ParsedTx["outputs"] = [];
+  for (let i = 0, n = varint(); i < n; i++) {
+    const satoshis = le(8);
+    const length = varint();
+    outputs.push({ satoshis, script: hexOf(at, at + length) });
+    at += length;
+  }
+  return { inputs, outputs };
+}
+
 /** One relay's broadcast attempt: which wire it came over, and the raw tx. */
 export interface BroadcastAttempt {
   relay: "insight" | "dashrpc" | "dapi";
@@ -56,6 +96,27 @@ export class FakeChain {
   readonly platformIdentities = new Set<string>();
   /** When true, Platform Explorer answers every identity lookup with a 503. */
   platformDown = false;
+
+  /** Raw hex of the most recent broadcast, on whichever relay. */
+  get lastBroadcast(): string {
+    return this.broadcastAttempts.at(-1)!.hex;
+  }
+
+  /**
+   * Mine a broadcast transaction: its inputs leave the UTXO set, and its
+   * outputs paying `script` join it at the tip.
+   */
+  async confirm(hex: string, script: string): Promise<void> {
+    const { inputs, outputs } = parseTx(hex);
+    const spent = new Set(inputs.map((i) => `${i.txid}:${i.vout}`));
+    const txid = await DashTx.getId(hex);
+    this.coins = [
+      ...this.coins.filter((c) => !spent.has(`${c.txid}:${c.vout}`)),
+      ...outputs.flatMap((o, vout) =>
+        o.script === script ? [{ txid, vout, satoshis: o.satoshis, height: this.height }] : [],
+      ),
+    ];
+  }
 
   install(): void {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) =>

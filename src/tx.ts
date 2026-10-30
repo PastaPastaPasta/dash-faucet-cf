@@ -37,8 +37,8 @@ export class InsufficientFundsError extends Error {
 
 /**
  * The balance covers the payout, but only by spending more coins than one
- * request can afford to sign. Distinct from insufficient funds: waiting for the
- * pool to consolidate (or a larger deposit) fixes it.
+ * transaction may carry. Distinct from insufficient funds: a merge (or a
+ * larger deposit) fixes it.
  */
 export class TooFragmentedError extends Error {
   constructor(
@@ -47,6 +47,19 @@ export class TooFragmentedError extends Error {
   ) {
     super(`payout needs ${inputs} inputs; at most ${maxInputs} are allowed per payout`);
     this.name = "TooFragmentedError";
+  }
+}
+
+/**
+ * The balance covers the amount, but only with coins that have not confirmed
+ * yet, which a multi-input transaction may not spend. Fixed by the next block.
+ */
+export class UnconfirmedFundsError extends Error {
+  constructor(readonly confirmed: number, readonly required: number) {
+    super(
+      `${required} duffs needed; only ${confirmed} are confirmed, the rest is still confirming`,
+    );
+    this.name = "UnconfirmedFundsError";
   }
 }
 
@@ -121,9 +134,14 @@ function toTxInput(u: Utxo): TxInput {
 }
 
 /**
- * Prefer a single input that covers the payout. One input means one ECDSA
- * signature, which keeps the request inside the Workers CPU budget and keeps
- * each pool coin on its own independent mempool chain.
+ * Prefer a single input that covers the payout. One input keeps each pool coin
+ * on its own independent mempool chain.
+ *
+ * Otherwise take the largest *confirmed* coins. An unconfirmed coin drags its
+ * whole unconfirmed ancestry into the new transaction, and joining several such
+ * chains — or one large merge — can break the 25-transaction / 101 kB ancestor
+ * limits every relay enforces. A transaction that spends one coin extends one
+ * chain; one that spends many starts from the chain tip.
  */
 export function selectInputs(
   utxos: Utxo[],
@@ -131,32 +149,68 @@ export function selectInputs(
   numOutputs = 2,
   extraPayloadBytes = 0,
 ): Utxo[] {
+  const required = (inputs: number) =>
+    target + feeCeiling(Math.max(1, inputs), numOutputs, extraPayloadBytes);
   const ascending = [...utxos].sort((a, b) => a.satoshis - b.satoshis);
 
-  const single = ascending.find(
-    (u) =>
-      u.satoshis >= target + feeCeiling(1, numOutputs, extraPayloadBytes),
-  );
+  const single = ascending.find((u) => u.satoshis >= required(1));
   if (single) return [single];
 
-  const picked: Utxo[] = [];
-  let sum = 0;
-  for (const u of [...ascending].reverse()) {
-    picked.push(u);
-    sum += u.satoshis;
-    if (
-      sum >= target + feeCeiling(picked.length, numOutputs, extraPayloadBytes)
-    ) {
-      return picked;
+  const largestFirst = (coins: Utxo[]): Utxo[] | null => {
+    const picked: Utxo[] = [];
+    let sum = 0;
+    for (const u of coins) {
+      picked.push(u);
+      sum += u.satoshis;
+      if (sum >= required(picked.length)) return picked;
     }
-  }
+    return null;
+  };
+  const descending = [...ascending].reverse();
+  const confirmed = descending.filter((u) => u.height !== null);
+  const picked = largestFirst(confirmed);
+  if (picked) return picked;
 
+  if (largestFirst(descending)) {
+    throw new UnconfirmedFundsError(
+      confirmed.reduce((acc, u) => acc + u.satoshis, 0),
+      required(confirmed.length),
+    );
+  }
   const available = utxos.reduce((acc, u) => acc + u.satoshis, 0);
-  throw new InsufficientFundsError(
-    available,
-    target +
-      feeCeiling(Math.max(1, utxos.length), numOutputs, extraPayloadBytes),
-  );
+  throw new InsufficientFundsError(available, required(utxos.length));
+}
+
+/**
+ * Pick at most `maxInputs` coins whose merge reaches `target` after its fee,
+ * sweeping as many small coins as the input budget allows: the fewest largest
+ * coins that still reach it, topped up with the smallest. Small coins are the
+ * ones nothing else can spend — a coin under one payout is dead weight until
+ * it is merged.
+ *
+ * When no `maxInputs` coins reach the target, returns the `maxInputs` largest
+ * and `reaches: false`: a partial merge that a later one, once it confirms,
+ * finishes.
+ */
+export function selectMergeInputs(
+  coins: Utxo[],
+  target: number,
+  maxInputs: number,
+): { inputs: Utxo[]; reaches: boolean } {
+  const descending = [...coins].sort((a, b) => b.satoshis - a.satoshis);
+  const n = descending.length;
+  const size = Math.min(maxInputs, n);
+  const goal = target + feeCeiling(size, 1);
+  const prefix = [0];
+  for (const u of descending) prefix.push(prefix[prefix.length - 1] + u.satoshis);
+  // The j largest coins, with the other size - j slots given to the smallest.
+  const sumWith = (j: number) => prefix[j] + prefix[n] - prefix[n - size + j];
+  let j = 0;
+  while (j < size && sumWith(j) < goal) j += 1;
+  return {
+    inputs: [...descending.slice(0, j), ...descending.slice(n - (size - j))],
+    reaches: sumWith(j) >= goal,
+  };
 }
 
 function uint64LeHex(value: number): string {
@@ -366,8 +420,8 @@ export async function buildSplit(opts: {
  * Build and sign a self-send that merges `inputs` into one coin.
  *
  * This is how the faucet grows a coin large enough for a masternode
- * collateral out of hundreds of small ones: a payout may only sign a bounded
- * number of inputs, so the merging happens a slice at a time, in the cron.
+ * collateral out of hundreds of small ones, so that an `mn` payout stays a
+ * single input. See `selectMergeInputs` for which coins go in.
  */
 export async function buildConsolidation(opts: {
   key: FaucetKey;

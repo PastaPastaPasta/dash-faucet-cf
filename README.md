@@ -216,18 +216,44 @@ curl -X POST https://faucet.thepasta.org/api/core-faucet \
 | `mn` | exactly 1000 DASH in one output — a masternode collateral; `amount` must be omitted | 1 per rolling 24 h by default |
 
 What still applies to every key: a payout may never leave the wallet below
-`KEY_RESERVE_SATS` (before the fee), and may spend at most `MAX_PAYOUT_INPUTS`
-coins, because signing costs ~0.35 ms of CPU per input against the free plan's
-~10 ms. A large amount the wallet can only cover with many small coins returns
-`503` until a large enough coin exists.
+`KEY_RESERVE_SATS` (before the fee).
 
-For `mn` keys the cron keeps `COLLATERAL_COINS` coins of at least 1001 DASH on
-hand. Whenever the pool is healthy and the wallet is short of them, each pass
-merges up to `MAX_PAYOUT_INPUTS` of the largest small coins into one — the
-coin being grown is always the largest, so it is always in the slice — while
-the smallest `POOL_TARGET` pool coins stay untouched. Pool refills split from
-the largest coin *below* collateral size. `/api/status` reports
-`collateralUtxos`. Depositing a single coin of 1001+ tDASH skips the wait.
+A payout one coin cannot cover is built from up to `MAX_PAYOUT_INPUTS` (500)
+of the largest *confirmed* coins, so a large amount needs no big coin. CPU
+does not limit this: signing runs in the Treasury Durable Object, which gets
+30 s of CPU per invocation even on the free plan. Measured on the edge, it
+costs ~0.3 ms per input (1000 inputs in ~250 ms). Relay policy is the limit
+instead: Core refuses transactions over 100 kB (~650 inputs), and any
+unconfirmed chain over 25 transactions or 101 kB. That is also why only one
+unconfirmed coin may ever go into a transaction, and only on its own.
+
+When the confirmed coins cannot cover an amount, the payout answers `503`
+with `Retry-After` (60 s) and starts merging at once. That happens when the
+amount needs coins still confirming, or more than `MAX_PAYOUT_INPUTS` of
+them. In that second case, maintenance merges toward a coin that pays the
+amount by itself (plus 1 DASH of headroom) for the next hour, so the retry
+is a single input. It spends the kept collateral coin on that only when
+nothing else reaches the amount. An amount no merge can reach gets its `503`
+without `Retry-After`, and never holds up a collateral coin.
+
+For `mn` keys the Treasury keeps `COLLATERAL_COINS` coins of at least 1001
+DASH on hand, so an `mn` payout is normally one input. Merging runs as soon
+as one is missing, not on the next cron:
+- Spending a collateral coin, any key payout, and any `503` above each book a
+  Durable Object alarm a couple of seconds out.
+- Maintenance books itself again while there is work left: seconds after a
+  merge or split, and every minute while the coins a merge needs are still
+  confirming.
+- The 10-minute cron runs the same maintenance as a backstop. It is what
+  notices deposits.
+
+A merge spends confirmed coins only. It reaches 1001 DASH with the fewest
+large coins it can, and fills the rest of its `MAX_PAYOUT_INPUTS` with the
+smallest, since those are the coins nothing else can spend. The smallest
+`POOL_TARGET` pool coins stay untouched. When even `MAX_PAYOUT_INPUTS` coins
+fall short, it merges the largest and finishes the job a block later. Pool
+refills split from the largest coin *below* collateral size. `/api/status`
+reports `collateralUtxos`.
 
 The response is the usual payout body plus `keyId`. Errors: `401` (unknown or
 revoked key), `400` (bad `amount`), `429` with `Retry-After` (an `mn` key's
@@ -504,8 +530,8 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `ADMIN_TOKEN_SHA256` | SHA-256 (hex) of the admin token for `/api/admin/keys`; blank disables it |
 | `KEY_MAX_PER_REQUEST_SATS` | Largest single API-key payout (default 5000 DASH) |
 | `KEY_RESERVE_SATS` | API-key payouts never leave the balance below this (default 0) |
-| `MAX_PAYOUT_INPUTS` | Coins one payout (or consolidation) may spend (default 20) |
-| `COLLATERAL_COINS` | Coins of 1001+ DASH the cron keeps for `mn` keys by merging small coins (default 0, off) |
+| `MAX_PAYOUT_INPUTS` | Coins one payout or merge may spend (default 500, at most 600: Core's 100 kB standard size) |
+| `COLLATERAL_COINS` | Coins of 1001+ DASH kept for `mn` keys by merging small coins as soon as one is missing (default 0: no merging at all, and no `Retry-After` on a fragmented payout) |
 | `AUTH_ORIGIN` | Origin that serves login, `/keys` and `/admin`; blank disables login |
 | `AUTH_EMAIL_DOMAIN` / `AUTH_GITHUB_ORG` | Who may sign in (default `dash.org` / `dashpay`) |
 | `AUTH_ADMINS` | Comma-separated `google:<email>` / `github:<numeric id>` admins |
