@@ -15,11 +15,20 @@ function inputsOf(hex: string): string[] {
 
 /** Mine the most recent broadcast. */
 function mineLast(): Promise<void> {
-  return chain.confirm(chain.broadcastAttempts.at(-1)!.hex, FAUCET_SCRIPT_TESTNET);
+  return chain.confirm(chain.lastBroadcast, FAUCET_SCRIPT_TESTNET);
 }
 
 function bookedAlarm(t: ReturnType<typeof treasury>): Promise<number | null> {
   return runInDurableObject(t, (_, state) => state.storage.getAlarm());
+}
+
+/**
+ * Run the follow-up a test just booked. Booked alarms are real timers a few
+ * seconds out, so on a slow machine it may have fired already; either way it
+ * has run once this returns.
+ */
+async function followUp(t: ReturnType<typeof treasury>): Promise<void> {
+  await runDurableObjectAlarm(t);
 }
 
 let seq = 0;
@@ -61,9 +70,11 @@ describe("collateral coin", () => {
       passes += 1;
       expect(passes).toBeLessThan(30);
       // MAX_PAYOUT_INPUTS is 5: no pass may sign more than that.
-      expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex).length).toBeLessThanOrEqual(5);
+      expect(inputsOf(chain.lastBroadcast).length).toBeLessThanOrEqual(5);
       // A merge spends confirmed coins only, so the next one needs a block.
+      // Each pass also books a follow-up; this loop is the follow-up here.
       await mineLast();
+      await runInDurableObject(t, (_, state) => state.storage.deleteAlarm());
     }
     expect(passes).toBeGreaterThan(1);
     expect((await t.snapshot()).collateralUtxos).toBe(1);
@@ -85,7 +96,7 @@ describe("collateral coin", () => {
     const t = treasury();
     await t.maintain();
     const poolTxids = new Set(coins(4, POOL).map((c) => c.txid));
-    const spent = inputsOf(chain.broadcastAttempts.at(-1)!.hex);
+    const spent = inputsOf(chain.lastBroadcast);
     expect(spent).toHaveLength(5);
     const material = new Set(coins(60, 20 * COIN, 100).map((c) => c.txid));
     for (const txid of spent) {
@@ -106,7 +117,7 @@ describe("collateral coin", () => {
     chain.coins = [collateral, ...coins(1, 3 * COIN)];
     const result = await treasury().maintain();
     expect(result.action).toBe("split");
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).not.toContain(collateral.txid);
+    expect(inputsOf(chain.lastBroadcast)).not.toContain(collateral.txid);
   });
 
   it("keeps growing a pool-sized coin when the pool is at or under POOL_TARGET", async () => {
@@ -117,7 +128,7 @@ describe("collateral coin", () => {
     const t = treasury();
     const result = await t.maintain();
     expect(result.action).toBe("consolidate");
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toContain(grown.txid);
+    expect(inputsOf(chain.lastBroadcast)).toContain(grown.txid);
   });
 
   it("spends a collateral coin on an ordinary payout only when nothing else covers it", async () => {
@@ -135,11 +146,11 @@ describe("collateral coin", () => {
       });
 
     expect((await pay(1, 50 * COIN)).ok).toBe(true);
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).not.toContain(collateral.txid);
+    expect(inputsOf(chain.lastBroadcast)).not.toContain(collateral.txid);
 
     // 500 tDASH: the small coins cannot cover it within the input cap.
     expect((await pay(2, 500 * COIN)).ok).toBe(true);
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toContain(collateral.txid);
+    expect(inputsOf(chain.lastBroadcast)).toContain(collateral.txid);
   });
 });
 
@@ -160,7 +171,7 @@ describe("real-time merging", () => {
     const paid = await t.payout({ ...to(1), apiKeyHash: await keyFor(t, "mn") });
     expect(paid.ok && paid.satoshis).toBe(1000 * COIN);
 
-    const tx = parseTx(chain.broadcastAttempts.at(-1)!.hex);
+    const tx = parseTx(chain.lastBroadcast);
     expect(tx.inputs).toHaveLength(5);
     // Still exactly one 1000 DASH output: the collateral.
     expect(tx.outputs.filter((o) => o.satoshis === 1000 * COIN)).toHaveLength(1);
@@ -172,7 +183,7 @@ describe("real-time merging", () => {
     const t = treasury();
     const paid = await t.payout({ ...to(2), apiKeyHash: await keyFor(t, "mn") });
     expect(paid.ok).toBe(true);
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toEqual([collateral.txid]);
+    expect(inputsOf(chain.lastBroadcast)).toEqual([collateral.txid]);
     expect((await t.snapshot()).collateralUtxos).toBe(0);
 
     // Booked within seconds, not at the next cron.
@@ -180,8 +191,8 @@ describe("real-time merging", () => {
     expect(booked).not.toBeNull();
     expect(booked! - Date.now()).toBeLessThan(10_000);
 
-    expect(await runDurableObjectAlarm(t)).toBe(true);
-    const merge = parseTx(chain.broadcastAttempts.at(-1)!.hex);
+    await followUp(t);
+    const merge = parseTx(chain.lastBroadcast);
     expect(merge.inputs).toHaveLength(5);
     const pool = new Set(coins(4, POOL).map((c) => c.txid));
     expect(merge.inputs.some((i) => pool.has(i.txid))).toBe(false);
@@ -195,7 +206,7 @@ describe("real-time merging", () => {
     // Leaves 600 confirmed and ~500 of unconfirmed change.
     const trusted = await t.payout({ ...to(3), apiKeyHash: await keyFor(t, "trusted"), requestedSats: 100 * COIN });
     expect(trusted.ok).toBe(true);
-    const payoutHex = chain.broadcastAttempts.at(-1)!.hex;
+    const payoutHex = chain.lastBroadcast;
 
     const mn = await keyFor(t, "mn");
     const early = await t.payout({ ...to(4), apiKeyHash: mn });
@@ -204,23 +215,52 @@ describe("real-time merging", () => {
     expect(early.code).toBe("fragmented");
     expect("retryAfter" in early && early.retryAfter).toBeGreaterThan(0);
     // Unconfirmed change is never one of several inputs.
-    expect(chain.broadcastAttempts.at(-1)!.hex).toBe(payoutHex);
+    expect(chain.lastBroadcast).toBe(payoutHex);
 
     // Nothing to merge yet: it looks again in a minute rather than giving up.
-    expect(await runDurableObjectAlarm(t)).toBe(true);
-    expect(chain.broadcastAttempts.at(-1)!.hex).toBe(payoutHex);
+    await followUp(t);
+    expect(chain.lastBroadcast).toBe(payoutHex);
     const again = await bookedAlarm(t);
     expect(again! - Date.now()).toBeGreaterThan(30_000);
 
     // The block lands: the next look merges, and the mn payout is one input.
     await chain.confirm(payoutHex, FAUCET_SCRIPT_TESTNET);
+    // The one-minute look, run now rather than waited for.
     expect(await runDurableObjectAlarm(t)).toBe(true);
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toHaveLength(2);
+    expect(inputsOf(chain.lastBroadcast)).toHaveLength(2);
     expect((await t.snapshot()).collateralUtxos).toBe(1);
 
     const paid = await t.payout({ ...to(4), apiKeyHash: mn });
     expect(paid.ok && paid.satoshis).toBe(1000 * COIN);
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).toHaveLength(1);
+    expect(inputsOf(chain.lastBroadcast)).toHaveLength(1);
+  });
+
+  it("merges toward a large trusted amount that needs more coins than one transaction", async () => {
+    const collateral = { txid: "c".repeat(64), vout: 0, satoshis: 1002 * COIN, height: 10 };
+    chain.coins = [collateral, ...coins(4, POOL), ...coins(12, 150 * COIN, 100)];
+    const t = treasury();
+    const trusted = await keyFor(t, "trusted");
+
+    // 1700 tDASH takes 12 coins; MAX_PAYOUT_INPUTS is 5.
+    const early = await t.payout({ ...to(6), apiKeyHash: trusted, requestedSats: 1700 * COIN });
+    expect(early.ok).toBe(false);
+    if (early.ok) return;
+    expect(early.code).toBe("fragmented");
+    expect(chain.broadcastAttempts).toHaveLength(0);
+
+    // Five coins cannot reach it: merge the largest, then finish a block later.
+    await followUp(t);
+    expect(inputsOf(chain.lastBroadcast)).toHaveLength(5);
+    await mineLast();
+    expect((await t.maintain()).action).toBe("consolidate");
+    const grown = parseTx(chain.lastBroadcast).outputs[0].satoshis;
+    expect(grown).toBeGreaterThanOrEqual(1701 * COIN);
+
+    // Settled: no further merging, and the retry pays from that one coin.
+    expect((await t.maintain()).action).toBe("none");
+    const paid = await t.payout({ ...to(6), apiKeyHash: trusted, requestedSats: 1700 * COIN });
+    expect(paid.ok && paid.satoshis).toBe(1700 * COIN);
+    expect(inputsOf(chain.lastBroadcast)).toHaveLength(1);
   });
 
   it("stops looking when confirmed coins fall short only by the fee", async () => {
@@ -237,7 +277,7 @@ describe("real-time merging", () => {
     chain.coins = [collateral, ...coins(4, POOL)];
     const t = treasury();
     expect((await t.payout(to(5))).ok).toBe(true);
-    expect(inputsOf(chain.broadcastAttempts.at(-1)!.hex)).not.toContain(collateral.txid);
+    expect(inputsOf(chain.lastBroadcast)).not.toContain(collateral.txid);
     expect(await bookedAlarm(t)).toBeNull();
   });
 });

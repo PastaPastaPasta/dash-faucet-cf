@@ -97,6 +97,11 @@ export class FakeChain {
   /** When true, Platform Explorer answers every identity lookup with a 503. */
   platformDown = false;
 
+  /** Raw hex of the most recent broadcast, on whichever relay. */
+  get lastBroadcast(): string {
+    return this.broadcastAttempts.at(-1)!.hex;
+  }
+
   /**
    * Mine a broadcast transaction: its inputs leave the UTXO set, and its
    * outputs paying `script` join it at the tip.

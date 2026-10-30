@@ -149,12 +149,11 @@ export function selectInputs(
   numOutputs = 2,
   extraPayloadBytes = 0,
 ): Utxo[] {
+  const required = (inputs: number) =>
+    target + feeCeiling(Math.max(1, inputs), numOutputs, extraPayloadBytes);
   const ascending = [...utxos].sort((a, b) => a.satoshis - b.satoshis);
 
-  const single = ascending.find(
-    (u) =>
-      u.satoshis >= target + feeCeiling(1, numOutputs, extraPayloadBytes),
-  );
+  const single = ascending.find((u) => u.satoshis >= required(1));
   if (single) return [single];
 
   const largestFirst = (coins: Utxo[]): Utxo[] | null => {
@@ -163,13 +162,11 @@ export function selectInputs(
     for (const u of coins) {
       picked.push(u);
       sum += u.satoshis;
-      if (sum >= target + feeCeiling(picked.length, numOutputs, extraPayloadBytes)) {
-        return picked;
-      }
+      if (sum >= required(picked.length)) return picked;
     }
     return null;
   };
-  const descending = ascending.reverse();
+  const descending = [...ascending].reverse();
   const confirmed = descending.filter((u) => u.height !== null);
   const picked = largestFirst(confirmed);
   if (picked) return picked;
@@ -177,15 +174,11 @@ export function selectInputs(
   if (largestFirst(descending)) {
     throw new UnconfirmedFundsError(
       confirmed.reduce((acc, u) => acc + u.satoshis, 0),
-      target + feeCeiling(Math.max(1, confirmed.length), numOutputs, extraPayloadBytes),
+      required(confirmed.length),
     );
   }
   const available = utxos.reduce((acc, u) => acc + u.satoshis, 0);
-  throw new InsufficientFundsError(
-    available,
-    target +
-      feeCeiling(Math.max(1, utxos.length), numOutputs, extraPayloadBytes),
-  );
+  throw new InsufficientFundsError(available, required(utxos.length));
 }
 
 /**
@@ -205,28 +198,19 @@ export function selectMergeInputs(
   maxInputs: number,
 ): { inputs: Utxo[]; reaches: boolean } {
   const descending = [...coins].sort((a, b) => b.satoshis - a.satoshis);
-  const size = Math.min(maxInputs, descending.length);
+  const n = descending.length;
+  const size = Math.min(maxInputs, n);
   const goal = target + feeCeiling(size, 1);
-  // With j of the largest coins, the other size - j slots go to the smallest.
-  let smallest = descending
-    .slice(descending.length - size)
-    .reduce((acc, u) => acc + u.satoshis, 0);
-  let largest = 0;
-  for (let j = 0; j <= size; j += 1) {
-    if (largest + smallest >= goal) {
-      return {
-        inputs: [
-          ...descending.slice(0, j),
-          ...descending.slice(descending.length - (size - j)),
-        ],
-        reaches: true,
-      };
-    }
-    if (j === size) break;
-    largest += descending[j].satoshis;
-    smallest -= descending[descending.length - (size - j)].satoshis;
-  }
-  return { inputs: descending.slice(0, size), reaches: false };
+  const prefix = [0];
+  for (const u of descending) prefix.push(prefix[prefix.length - 1] + u.satoshis);
+  // The j largest coins, with the other size - j slots given to the smallest.
+  const sumWith = (j: number) => prefix[j] + prefix[n] - prefix[n - size + j];
+  let j = 0;
+  while (j < size && sumWith(j) < goal) j += 1;
+  return {
+    inputs: [...descending.slice(0, j), ...descending.slice(n - (size - j))],
+    reaches: sumWith(j) >= goal,
+  };
 }
 
 function uint64LeHex(value: number): string {

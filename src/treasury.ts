@@ -113,9 +113,14 @@ const COLLATERAL_COIN_SATS = MN_COLLATERAL_SATS + COIN;
 const FOLLOW_UP_MS = 2_000;
 /**
  * How often maintenance looks again while the coins a merge needs are still
- * confirming. Testnet blocks come about every 2.5 minutes.
+ * confirming. Dash blocks come about every 2.5 minutes.
  */
 const CONFIRMATION_POLL_MS = 60_000;
+/**
+ * How long maintenance keeps merging toward an amount a payout could not
+ * cover within `maxPayoutInputs` coins. Long enough for the caller to retry.
+ */
+const MERGE_DEMAND_TTL_MS = HOUR_MS;
 
 export interface PayoutRequest {
   address: string;
@@ -227,7 +232,8 @@ export type PayoutResult =
   | { ok: false; code: "code_invalid" }
   | { ok: false; code: "code_used" }
   | { ok: false; code: "bad_request"; detail: string }
-  | { ok: false; code: "fragmented"; detail: string; retryAfter: number }
+  /** `retryAfter` only where coins are being merged for it (`merging`). */
+  | { ok: false; code: "fragmented"; detail: string; retryAfter?: number }
   | { ok: false; code: "insufficient_funds"; detail: string }
   | { ok: false; code: "self_pay"; detail: string }
   | { ok: false; code: "chain_unavailable"; detail: string }
@@ -432,6 +438,11 @@ export class Treasury extends DurableObject<Env> {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS key_payouts_lookup ON key_payouts (key_id, created_at);
+      -- Coin sizes payouts asked for and that only a merge can provide.
+      CREATE TABLE IF NOT EXISTS merge_demand (
+        satoshis   INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
     `);
 
     const columns = new Set(
@@ -497,6 +508,7 @@ export class Treasury extends DurableObject<Env> {
     sql.exec(`DELETE FROM used_cap WHERE expires_at < ?`, now);
     // 100 blocks is ~4 h, so a day-old verdict is about a long-mature coin.
     sql.exec(`DELETE FROM coinbase_checks WHERE checked_at < ?`, now - DAY_MS);
+    sql.exec(`DELETE FROM merge_demand WHERE created_at < ?`, now - MERGE_DEMAND_TTL_MS);
     sql.exec(
       `DELETE FROM invitation_hits WHERE created_at < ?`,
       now - this.config.invitations.rateWindowMs,
@@ -832,14 +844,20 @@ export class Treasury extends DurableObject<Env> {
         return { ok: false, code: "insufficient_funds", detail: err.message };
       }
       if (err instanceof TooFragmentedError || err instanceof UnconfirmedFundsError) {
+        const fragmented = { ok: false, code: "fragmented", detail: err.message } as const;
+        if (!this.merging) return fragmented;
+        // More coins than one transaction carries: only a coin that pays the
+        // amount by itself helps, so ask maintenance for one.
+        if (err instanceof TooFragmentedError) {
+          sql.exec(
+            `INSERT INTO merge_demand (satoshis, created_at) VALUES (?, ?)`,
+            satoshis + COIN,
+            now,
+          );
+        }
         // Start merging now, so a retry after the next block finds a coin.
         await this.scheduleMaintenance(FOLLOW_UP_MS);
-        return {
-          ok: false,
-          code: "fragmented",
-          detail: err.message,
-          retryAfter: CONFIRMATION_POLL_MS / 1000,
-        };
+        return { ...fragmented, retryAfter: CONFIRMATION_POLL_MS / 1000 };
       }
       if (err instanceof SelfPayError) {
         return { ok: false, code: "self_pay", detail: err.message };
@@ -881,13 +899,6 @@ export class Treasury extends DurableObject<Env> {
 
     // 4. Commit. Everything below is local bookkeeping for an accepted tx.
     this.recordSpend(built, now);
-    // A spent collateral coin is rebuilt now, not at the next cron. Key
-    // payouts are the large ones, so after any of them, check too.
-    const spent = new Set(built.inputs.map((i) => outpointKey(i.txid, i.outputIndex)));
-    const spentCollateral = view.utxos.some(
-      (u) => u.satoshis >= COLLATERAL_COIN_SATS && spent.has(outpointKey(u.txid, u.outputIndex)),
-    );
-    if (apiKey || spentCollateral) await this.scheduleMaintenance(FOLLOW_UP_MS);
     if (apiKey) {
       // Key payouts sit outside the public ledgers on purpose: they neither
       // consume an address's daily claim nor an IP's allowance nor the public
@@ -915,6 +926,15 @@ export class Treasury extends DurableObject<Env> {
         satoshis,
       );
     }
+
+    // A spent collateral coin is rebuilt now, not at the next cron. Key
+    // payouts are the large ones, so after any of them, check too. Last, so
+    // nothing can come between the broadcast and its bookkeeping.
+    const spent = new Set(built.inputs.map((i) => outpointKey(i.txid, i.outputIndex)));
+    const spentCollateral = view.utxos.some(
+      (u) => u.satoshis >= COLLATERAL_COIN_SATS && spent.has(outpointKey(u.txid, u.outputIndex)),
+    );
+    if (apiKey || spentCollateral) await this.scheduleMaintenance(FOLLOW_UP_MS);
 
     return {
       ok: true,
@@ -1758,15 +1778,42 @@ export class Treasury extends DurableObject<Env> {
   }
 
   /**
-   * Bring the next maintenance pass forward to `delayMs` from now. Only
-   * collateral coins need it — the pool is fine on the cron — so a deployment
-   * without them never books one.
+   * Whether this deployment merges coins between crons. Only collateral coins
+   * and large key payouts need it — the pool is fine on the cron — so it is
+   * off wherever `COLLATERAL_COINS` is 0, which is everywhere but testnet.
+   */
+  private get merging(): boolean {
+    return this.config.collateralCoins > 0 && !this.config.dryRun;
+  }
+
+  /**
+   * Bring the next maintenance pass forward to `delayMs` from now. Best
+   * effort: the cron is the fallback, and callers include a payout that has
+   * already been broadcast and must still be recorded.
    */
   private async scheduleMaintenance(delayMs: number): Promise<void> {
-    if (this.config.collateralCoins === 0 || this.config.dryRun) return;
-    const at = Date.now() + delayMs;
-    const booked = await this.ctx.storage.getAlarm();
-    if (booked === null || booked > at) await this.ctx.storage.setAlarm(at);
+    if (!this.merging) return;
+    try {
+      const at = Date.now() + delayMs;
+      const booked = await this.ctx.storage.getAlarm();
+      if (booked === null || booked > at) await this.ctx.storage.setAlarm(at);
+    } catch (err) {
+      console.error(`treasury: could not book maintenance: ${describeError(err)}`);
+    }
+  }
+
+  /**
+   * The largest coin a recent payout needed and no coin yet covers; 0 when
+   * there is none. A demand some coin now meets is settled and dropped.
+   */
+  private mergeDemand(view: UtxoSnapshot): number {
+    const sql = this.ctx.storage.sql;
+    const largest = Math.max(0, ...view.utxos.map((u) => u.satoshis));
+    sql.exec(`DELETE FROM merge_demand WHERE satoshis <= ?`, largest);
+    const row = sql
+      .exec<{ satoshis: number | null }>(`SELECT MAX(satoshis) AS satoshis FROM merge_demand`)
+      .toArray()[0];
+    return row?.satoshis ?? 0;
   }
 
   private async maintainLocked(): Promise<MaintenanceResult> {
@@ -1845,11 +1892,12 @@ export class Treasury extends DurableObject<Env> {
   }
 
   /**
-   * Merge small coins into a collateral coin, in one transaction whenever
+   * Merge small coins into a collateral coin — or into a larger one a recent
+   * payout asked for (see `mergeDemand`) — in one transaction whenever
    * `maxPayoutInputs` confirmed coins can reach it.
    *
    * The smallest `poolTarget` pool coins are left for payouts, and nothing
-   * happens unless the rest could actually reach a collateral. A merge spends
+   * happens unless the rest could actually reach the goal. A merge spends
    * confirmed coins only (see `selectInputs`), so when the coins it needs are
    * still confirming the result is `waiting`, and maintenance looks again
    * shortly. When even `maxPayoutInputs` of the largest confirmed coins fall
@@ -1865,10 +1913,14 @@ export class Treasury extends DurableObject<Env> {
     const cfg = this.config;
     const poolNote = `${poolCount} pool coins available (min ${cfg.poolMin})`;
     const ready = view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length;
-    if (ready >= cfg.collateralCoins) return { action: "none", detail: poolNote };
+    const goal = Math.max(
+      ready < cfg.collateralCoins ? COLLATERAL_COIN_SATS : 0,
+      this.mergeDemand(view),
+    );
+    if (goal === 0) return { action: "none", detail: poolNote };
 
     const below = view.utxos
-      .filter((u) => u.satoshis < COLLATERAL_COIN_SATS)
+      .filter((u) => u.satoshis < goal)
       .sort((a, b) => b.satoshis - a.satoshis);
     // Keep the smallest `poolTarget` pool coins for payouts.
     const isPoolCoin = (u: Utxo) =>
@@ -1880,33 +1932,31 @@ export class Treasury extends DurableObject<Env> {
         .map((u) => outpointKey(u.txid, u.outputIndex)),
     );
     const material = below.filter((u) => !keep.has(outpointKey(u.txid, u.outputIndex)));
+    // Every material coin is below the goal, so one alone never reaches it.
     const available = material.reduce((acc, u) => acc + u.satoshis, 0);
-    if (available < COLLATERAL_COIN_SATS || material.length < 2) {
+    if (available < goal) {
       return {
         action: "none",
-        detail: `${poolNote}; ${available} duffs outside the pool cannot reach a collateral coin`,
+        detail: `${poolNote}; ${available} duffs outside the pool cannot reach a ${goal}-duff coin`,
       };
     }
 
     const confirmed = material.filter((u) => u.height !== null);
-    const { inputs, reaches } = selectMergeInputs(
-      confirmed,
-      COLLATERAL_COIN_SATS,
-      cfg.maxPayoutInputs,
-    );
-    // Short of the target with every confirmed coin in it: the rest is
-    // still confirming, and merging part of it now would only add a block.
-    if (inputs.length < 2 || (!reaches && inputs.length === confirmed.length)) {
-      const pending = material.length - confirmed.length;
-      if (pending === 0) {
-        return {
-          action: "none",
-          detail: `${poolNote}; ${available} duffs outside the pool cannot cover a collateral coin and its fee`,
-        };
-      }
+    const pending = material.length - confirmed.length;
+    const { inputs, reaches } = selectMergeInputs(confirmed, goal, cfg.maxPayoutInputs);
+    // Short with every confirmed coin already in: merging part of it now
+    // would only add a block. (Fewer than two inputs is never a merge.)
+    const stuck = !reaches && (inputs.length < 2 || inputs.length === confirmed.length);
+    if (stuck && pending === 0) {
+      return {
+        action: "none",
+        detail: `${poolNote}; ${available} duffs outside the pool cannot cover a ${goal}-duff coin and its fee`,
+      };
+    }
+    if (stuck) {
       return {
         action: "waiting",
-        detail: `${poolNote}; waiting for ${pending} coin(s) to confirm before merging a collateral coin`,
+        detail: `${poolNote}; waiting for ${pending} coin(s) to confirm before merging a ${goal}-duff coin`,
       };
     }
 

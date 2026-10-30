@@ -229,8 +229,10 @@ unconfirmed coin may ever go into a transaction, and only on its own.
 
 When the confirmed coins cannot cover an amount, the payout answers `503`
 with `Retry-After` (60 s) and starts merging at once. That happens when the
-amount needs more than `MAX_PAYOUT_INPUTS` of them, or needs coins still
-confirming.
+amount needs coins still confirming, or more than `MAX_PAYOUT_INPUTS` of
+them. In that second case, maintenance merges toward a coin that pays the
+amount by itself (plus 1 DASH of headroom) for the next hour, so the retry
+is a single input.
 
 For `mn` keys the Treasury keeps `COLLATERAL_COINS` coins of at least 1001
 DASH on hand, so an `mn` payout is normally one input. Merging runs as soon
@@ -527,7 +529,7 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `KEY_MAX_PER_REQUEST_SATS` | Largest single API-key payout (default 5000 DASH) |
 | `KEY_RESERVE_SATS` | API-key payouts never leave the balance below this (default 0) |
 | `MAX_PAYOUT_INPUTS` | Coins one payout or merge may spend (default 500, at most 600: Core's 100 kB standard size) |
-| `COLLATERAL_COINS` | Coins of 1001+ DASH kept for `mn` keys by merging small coins as soon as one is missing (default 0, off) |
+| `COLLATERAL_COINS` | Coins of 1001+ DASH kept for `mn` keys by merging small coins as soon as one is missing (default 0: no merging at all, and no `Retry-After` on a fragmented payout) |
 | `AUTH_ORIGIN` | Origin that serves login, `/keys` and `/admin`; blank disables login |
 | `AUTH_EMAIL_DOMAIN` / `AUTH_GITHUB_ORG` | Who may sign in (default `dash.org` / `dashpay`) |
 | `AUTH_ADMINS` | Comma-separated `google:<email>` / `github:<numeric id>` admins |
