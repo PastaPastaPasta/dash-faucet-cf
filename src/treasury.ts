@@ -461,7 +461,7 @@ export class Treasury extends DurableObject<Env> {
       );
     }
     this.backfillInvitationAmounts();
-    migrateAccounts(this.ctx.storage.sql);
+    migrateAccounts(this.ctx.storage.sql, { selfServeKeysExpire: this.config.auth.keyTtlMs > 0 });
   }
 
   /**
@@ -1230,7 +1230,7 @@ export class Treasury extends DurableObject<Env> {
       tier: "trusted",
       perDay: null,
       owner: input.who,
-      expiresAt: now + input.ttlMs,
+      expiresAt: input.ttlMs > 0 ? now + input.ttlMs : null,
     });
     return { ok: true, ...created };
   }

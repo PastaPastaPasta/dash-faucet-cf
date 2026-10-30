@@ -1,6 +1,7 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import DashKeys from "dashkeys";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { migrateAccounts } from "../../src/accounts";
 import { b64url } from "../../src/auth";
 import { TREASURY_ID } from "../../src/treasury";
 import { FakeChain } from "./fakechain";
@@ -247,7 +248,8 @@ describe("self-serve keys", () => {
     expect(created.status).toBe(201);
     expect(created.body.token).toMatch(/^dfk_/);
     expect(created.body.key).toMatchObject({ tier: "trusted", owner: "google:g-1", label: "laptop" });
-    expect(created.body.key.expiresAt).toBeGreaterThan(Date.now() + 179 * 86_400_000);
+    // SELF_SERVE_KEY_TTL_DAYS defaults to 0: self-serve keys never expire.
+    expect(created.body.key.expiresAt).toBeNull();
 
     const listed = await call(cookie!, "GET", "/api/me/keys");
     expect(listed.body.keys).toHaveLength(1);
@@ -287,6 +289,29 @@ describe("self-serve keys", () => {
     expect(pay.status).toBe(401);
     // Rotating would otherwise mint a live key without counting against the cap.
     expect((await call(cookie!, "POST", `/api/me/keys/${created.key.id}/rotate`)).status).toBe(404);
+  });
+
+  it("lift an old expiry once the policy says keys never expire", async () => {
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const left = await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const insert = (hash: string, owner: string | null, revoked: number | null) =>
+        sql.exec(
+          `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at, revoked_at)
+           VALUES (?, ?, 'old', 'trusted', NULL, 0, ?, ?, ?)`,
+          hash, hash.slice(0, 12), owner, Date.now() + 1000, revoked,
+        );
+      insert("a".repeat(64), "google:1", null);
+      insert("b".repeat(64), "google:1", 5);
+      insert("c".repeat(64), null, null);
+      migrateAccounts(sql, { selfServeKeysExpire: false });
+      return sql
+        .exec<{ id: string; expires_at: number | null }>(`SELECT id, expires_at FROM api_keys ORDER BY id`)
+        .toArray();
+    });
+    // The live self-serve key no longer expires; a revoked one and an
+    // admin-minted one are left as they were.
+    expect(left.map((k) => k.expires_at === null)).toEqual([true, false, false]);
   });
 
   it("caps active keys per person", async () => {

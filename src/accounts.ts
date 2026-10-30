@@ -62,7 +62,7 @@ export interface Redemption {
   createdAt: number;
 }
 
-export function migrateAccounts(sql: SqlStorage): void {
+export function migrateAccounts(sql: SqlStorage, opts: { selfServeKeysExpire: boolean }): void {
   sql.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id            TEXT    PRIMARY KEY,
@@ -111,6 +111,14 @@ export function migrateAccounts(sql: SqlStorage): void {
   if (!keyColumns.has("owner")) sql.exec(`ALTER TABLE api_keys ADD COLUMN owner TEXT`);
   if (!keyColumns.has("expires_at")) sql.exec(`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`);
   sql.exec(`CREATE INDEX IF NOT EXISTS api_keys_owner ON api_keys (owner)`);
+  // Self-serve keys follow the current policy: when they no longer expire,
+  // neither do the ones issued while they did.
+  if (!opts.selfServeKeysExpire) {
+    sql.exec(
+      `UPDATE api_keys SET expires_at = NULL
+        WHERE owner IS NOT NULL AND expires_at IS NOT NULL AND revoked_at IS NULL`,
+    );
+  }
 }
 
 export function upsertUser(sql: SqlStorage, who: Identity, now: number): void {

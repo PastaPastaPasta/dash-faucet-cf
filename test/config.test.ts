@@ -184,3 +184,18 @@ describe("API keys", () => {
     );
   });
 });
+
+describe("login config", () => {
+  it("accepts admin addresses, Workspace domains and GitHub ids, and nothing else", () => {
+    const admins = resolveConfig(env({ AUTH_ADMINS: "google:@dash.org, github:42 ,Google:Pasta@Dash.org" })).auth.admins;
+    expect([...admins]).toEqual(["google:@dash.org", "github:42", "google:pasta@dash.org"]);
+    for (const bad of ["google:dash.org", "github:pasta", "admin", "google:@"]) {
+      expect(() => resolveConfig(env({ AUTH_ADMINS: bad }))).toThrow(/AUTH_ADMINS/);
+    }
+  });
+
+  it("issues non-expiring self-serve keys unless a lifetime is set", () => {
+    expect(resolveConfig(env()).auth.keyTtlMs).toBe(0);
+    expect(resolveConfig(env({ SELF_SERVE_KEY_TTL_DAYS: "90" })).auth.keyTtlMs).toBe(90 * 86_400_000);
+  });
+});

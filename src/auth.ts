@@ -136,7 +136,11 @@ export function adminHandle(session: Session): string {
 }
 
 export function isAdminSession(session: Session, cfg: AuthConfig): boolean {
-  return cfg.admins.has(adminHandle(session));
+  if (cfg.admins.has(adminHandle(session))) return true;
+  // `google:@dash.org`: every Google account in that Workspace. The address
+  // was checked against the verified ID token's `hd` at login.
+  const at = session.email.lastIndexOf("@");
+  return session.provider === "google" && at > 0 && cfg.admins.has(`google:${session.email.slice(at).toLowerCase()}`);
 }
 
 /** The browser says this request comes from our own pages. */
