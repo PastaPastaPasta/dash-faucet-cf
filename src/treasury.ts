@@ -849,24 +849,20 @@ export class Treasury extends DurableObject<Env> {
       }
       if (err instanceof TooFragmentedError || err instanceof UnconfirmedFundsError) {
         const fragmented = { ok: false, code: "fragmented", detail: err.message } as const;
-        if (!this.merging) {
-          // The next block fixes unconfirmed coins with no merge at all.
-          return err instanceof UnconfirmedFundsError
-            ? { ...fragmented, retryAfter: CONFIRMATION_POLL_MS / 1000 }
-            : fragmented;
+        const retry = { ...fragmented, retryAfter: CONFIRMATION_POLL_MS / 1000 };
+        // The next block fixes unconfirmed coins with no merge at all.
+        if (err instanceof UnconfirmedFundsError) {
+          await this.scheduleMaintenance(FOLLOW_UP_MS);
+          return retry;
         }
         // More coins than one transaction carries: only a coin that pays the
-        // amount by itself helps, so ask maintenance for one.
-        if (err instanceof TooFragmentedError) {
-          sql.exec(
-            `INSERT INTO merge_demand (satoshis, created_at) VALUES (?, ?)`,
-            satoshis + COIN,
-            now,
-          );
-        }
-        // Start merging now, so a retry after the next block finds a coin.
+        // amount by itself helps. Ask maintenance for one, unless no merge
+        // could build it — then a retry would never succeed either.
+        const demand = satoshis + COIN;
+        if (!this.merging || this.planMerge(view, demand).action === "none") return fragmented;
+        sql.exec(`INSERT INTO merge_demand (satoshis, created_at) VALUES (?, ?)`, demand, now);
         await this.scheduleMaintenance(FOLLOW_UP_MS);
-        return { ...fragmented, retryAfter: CONFIRMATION_POLL_MS / 1000 };
+        return retry;
       }
       if (err instanceof SelfPayError) {
         return { ok: false, code: "self_pay", detail: err.message };

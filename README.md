@@ -233,8 +233,8 @@ amount needs coins still confirming, or more than `MAX_PAYOUT_INPUTS` of
 them. In that second case, maintenance merges toward a coin that pays the
 amount by itself (plus 1 DASH of headroom) for the next hour, so the retry
 is a single input. It spends the kept collateral coin on that only when
-nothing else reaches the amount, and drops an amount no merge can reach
-rather than let it hold up a collateral coin.
+nothing else reaches the amount. An amount no merge can reach gets its `503`
+without `Retry-After`, and never holds up a collateral coin.
 
 For `mn` keys the Treasury keeps `COLLATERAL_COINS` coins of at least 1001
 DASH on hand, so an `mn` payout is normally one input. Merging runs as soon

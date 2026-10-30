@@ -274,13 +274,16 @@ describe("real-time merging", () => {
     expect(inputsOf(chain.lastBroadcast)).toHaveLength(1);
   });
 
-  it("drops a demand no merge can reach, so a collateral coin still gets built", async () => {
+  it("promises no retry for an amount no merge can reach, and still builds a collateral coin", async () => {
     chain.coins = [...coins(4, POOL), ...coins(12, 150 * COIN, 100)];
     const t = treasury();
     // 1799.5 tDASH asks for a 1800.5 coin; only 1800 is outside the pool.
     const early = await t.payout({ ...to(7), apiKeyHash: await keyFor(t, "trusted"), requestedSats: 1799.5 * COIN });
     await takeAlarm(t);
     expect(early.ok).toBe(false);
+    if (early.ok) return;
+    expect(early.code).toBe("fragmented");
+    expect("retryAfter" in early).toBe(false);
 
     expect((await followUp(t)).action).toBe("consolidate");
     const merged = parseTx(chain.lastBroadcast).outputs[0].satoshis;
