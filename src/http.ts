@@ -2,7 +2,7 @@
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PATCH, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",
 };
 
@@ -134,4 +134,17 @@ export async function verifyTurnstile(
   } catch {
     return { ok: false, reason: "Captcha verification unavailable" };
   }
+}
+
+/** The request's JSON object body, or the 400 to send instead. */
+export async function readJsonObject(
+  request: Request,
+): Promise<Record<string, unknown> | Response> {
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return errorJson(400, "Request body must be JSON");
+  }
+  return isJsonObject(body) ? body : errorJson(400, "Request body must be a JSON object");
 }

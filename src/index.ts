@@ -1,21 +1,20 @@
+import { INVALID_CODE, parseCodeField } from "./accounts";
 import {
-  KEY_TIERS,
   MN_COLLATERAL_SATS,
-  type KeyTier,
   bearerToken,
-  digestEquals,
   hashApiKey,
   looksLikeApiKey,
+  parseAmountSats,
 } from "./apikeys";
 import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
 import {
-  COIN,
   Env,
   FaucetConfig,
   ProofTier,
   canEscalate,
   capTier,
   resolveConfig,
+  toDash,
 } from "./config";
 import { describeError } from "./errors";
 import { hashInvitationSignal, invitationDevice } from "./invitation";
@@ -23,39 +22,22 @@ import { AddressError, addressToPubKeyHash } from "./keys";
 import {
   clientIp,
   errorJson,
-  isJsonObject,
+  readJsonObject,
   json,
   preflight,
   rawClientIp,
   verifyTurnstile,
 } from "./http";
-import {
-  TREASURY_ID,
-  type InvitationIssueResult,
-  type PayoutResult,
-} from "./treasury";
+import { invitationTreasury, treasury } from "./durable";
+import { handlePortal } from "./portal";
+import { type InvitationIssueResult, type PayoutResult } from "./treasury";
 
 // Only the Durable Object class may be re-exported here: workerd validates the
 // entry module's named exports and rejects anything that is not a handler or a
 // class, so constants have to live in the module that defines them.
 export { InvitationTreasury, Treasury } from "./treasury";
 
-function treasury(env: Env) {
-  return env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
-}
 
-function invitationTreasury(env: Env) {
-  if (!env.INVITATION_TREASURY) {
-    throw new Error("INVITATION_TREASURY binding is not configured");
-  }
-  return env.INVITATION_TREASURY.get(
-    env.INVITATION_TREASURY.idFromName(TREASURY_ID),
-  );
-}
-
-function toDash(satoshis: number): number {
-  return satoshis / COIN;
-}
 
 /**
  * Base URL native clients POST the cap.js handshake to.
@@ -138,6 +120,8 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       dryRun: cfg.dryRun,
       // API keys (`Authorization: Bearer dfk_…`) skip the captcha; see README.
       apiKeysEnabled: cfg.apiKeys.enabled,
+      // Where people sign in for their own API key; null when login is off.
+      accountUrl: cfg.auth.origin ? `${cfg.auth.origin}/keys` : null,
       keyMaxPerRequest: toDash(cfg.apiKeys.maxPerRequestSats),
       mnCollateralAmount: toDash(MN_COLLATERAL_SATS),
       invitationsEnabled: cfg.invitations.enabled,
@@ -183,7 +167,9 @@ const PAYOUT_FAILURES: Record<
     message: "That is the faucet's own deposit address — send to a wallet you control",
   },
   chain_unavailable: { status: 503, message: "Chain providers unavailable" },
-  unauthorized: { status: 401, message: "Invalid or revoked API key" },
+  unauthorized: { status: 401, message: "Invalid, expired or revoked API key" },
+  code_invalid: { status: 400, message: INVALID_CODE },
+  code_used: { status: 400, message: "This code was already redeemed by this address" },
   bad_request: { status: 400, message: "Invalid request" },
   fragmented: {
     status: 503,
@@ -206,7 +192,7 @@ function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
     return errorJson(status, message, {}, { "WWW-Authenticate": "Bearer" });
   }
   if (!("retryAfter" in result)) {
-    return errorJson(status, message, { detailMessage: result.detail });
+    return errorJson(status, message, "detail" in result ? { detailMessage: result.detail } : {});
   }
 
   const extra: Record<string, unknown> = { retryAfter: result.retryAfter };
@@ -236,15 +222,9 @@ async function handleCapRedeem(request: Request, env: Env): Promise<Response> {
     return errorJson(503, "Proof-of-work captcha is not configured");
   }
 
-  let body: { token?: unknown; solutions?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return errorJson(400, "Request body must be JSON");
-  }
-  if (!isJsonObject(body)) {
-    return errorJson(400, "Request body must be a JSON object");
-  }
+  const parsed = await readJsonObject(request);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { token?: unknown; solutions?: unknown };
 
   // The challenge shape comes from the token, not from config, so retuning
   // CAP_C/CAP_S/CAP_D cannot invalidate a solve that is already in flight.
@@ -350,45 +330,29 @@ function payoutSuccess(
     network: cfg.network,
     replay: result.replay,
     ...(result.keyId ? { keyId: result.keyId } : {}),
+    ...(result.codeLabel ? { code: result.codeLabel } : {}),
     ...(result.dryRun ? { dryRun: true } : {}),
     ...(result.accepted.length ? { relays: result.accepted } : {}),
   });
 }
 
-/**
- * `amount` in DASH as whole duffs, or undefined when it is not a usable
- * amount. Anything finer than a duff is a unit mistake, not a request; the
- * floor keeps a typo from building an unrelayable dust output.
- */
-function parseAmountSats(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  const sats = Math.round(value * COIN);
-  if (!Number.isSafeInteger(sats) || sats < MIN_KEY_PAYOUT_SATS) return undefined;
-  return Math.abs(value * COIN - sats) <= 1e-3 ? sats : undefined;
-}
-
-/** 0.001 DASH: comfortably above dust, below anything anyone asks for. */
-const MIN_KEY_PAYOUT_SATS = 100_000;
 
 async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
   const ip = clientIp(request);
 
-  let body: {
+  const parsed = await readJsonObject(request);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as {
     address?: string;
     turnstileToken?: string;
     capToken?: string;
     hardCapToken?: string;
     amount?: unknown;
+    /** A redemption code; `promoCode` is the Python faucet's name for it. */
+    code?: unknown;
+    promoCode?: unknown;
   };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return errorJson(400, "Request body must be JSON");
-  }
-  if (!isJsonObject(body)) {
-    return errorJson(400, "Request body must be a JSON object");
-  }
   if (
     [body.address, body.turnstileToken, body.capToken, body.hardCapToken].some(
       (value) => value !== undefined && typeof value !== "string",
@@ -397,8 +361,14 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     return errorJson(400, "Address and captcha tokens must be strings");
   }
 
+  const code = parseCodeField(body.code ?? body.promoCode);
+  if (code && "error" in code) return errorJson(400, code.error);
+
   const token = bearerToken(request);
-  if (token !== undefined) return handleKeyFaucet(env, cfg, ip, token, body);
+  if (token !== undefined) {
+    if (code) return errorJson(400, "A code cannot be combined with an API key");
+    return handleKeyFaucet(env, cfg, ip, token, body);
+  }
   if (body.amount !== undefined) {
     return errorJson(400, "amount requires an API key");
   }
@@ -423,8 +393,14 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     );
   }
 
-  const result = await treasury(env).payout({ ...recipient, ip, tier: captcha.tier });
-  if (!result.ok) return payoutFailure(result, canEscalate(cfg, captcha.tier));
+  const result = await treasury(env).payout({
+    ...recipient,
+    ip,
+    tier: captcha.tier,
+    ...(code ? { codeKey: code.key } : {}),
+  });
+  // A code's refusal is about the code; a harder captcha would not change it.
+  if (!result.ok) return payoutFailure(result, !code && canEscalate(cfg, captcha.tier));
   return payoutSuccess(result, recipient.address, cfg);
 }
 
@@ -462,71 +438,6 @@ async function handleKeyFaucet(
   return payoutSuccess(result, recipient.address, cfg);
 }
 
-/** True when the request carries the admin bearer token. */
-function isAdmin(request: Request, cfg: FaucetConfig): boolean {
-  const token = bearerToken(request);
-  const header = request.headers.get("Authorization") ?? "";
-  if (!cfg.apiKeys.adminTokenSha256 || !token || !/^Bearer\s/i.test(header)) return false;
-  return digestEquals(hashApiKey(token), cfg.apiKeys.adminTokenSha256);
-}
-
-/**
- * `/api/admin/keys` — mint (POST), list (GET) and revoke (DELETE …/<id>) API
- * keys. 404 when no admin token is configured, so the surface does not exist.
- */
-async function handleAdminKeys(request: Request, env: Env, path: string): Promise<Response> {
-  const cfg = resolveConfig(env);
-  if (!cfg.apiKeys.enabled || !cfg.apiKeys.adminTokenSha256) {
-    return errorJson(404, "Not found");
-  }
-  if (!isAdmin(request, cfg)) {
-    return errorJson(401, "Admin token required", {}, { "WWW-Authenticate": "Bearer" });
-  }
-  const noStore = { "Cache-Control": "no-store" };
-
-  if (path === "/api/admin/keys" && request.method === "GET") {
-    return json({ keys: await treasury(env).listApiKeys() }, 200, noStore);
-  }
-
-  if (path === "/api/admin/keys" && request.method === "POST") {
-    let body: { label?: unknown; tier?: unknown; perDay?: unknown };
-    try {
-      body = (await request.json()) as typeof body;
-    } catch {
-      return errorJson(400, "Request body must be JSON");
-    }
-    if (!isJsonObject(body)) return errorJson(400, "Request body must be a JSON object");
-    const { label, tier, perDay } = body;
-    if (typeof label !== "string" || label.trim() === "" || label.length > 100) {
-      return errorJson(400, "label must be a non-empty string of at most 100 characters");
-    }
-    if (typeof tier !== "string" || !KEY_TIERS.includes(tier as KeyTier)) {
-      return errorJson(400, `tier must be one of: ${KEY_TIERS.join(", ")}`);
-    }
-    if (
-      perDay !== undefined &&
-      perDay !== null &&
-      !(typeof perDay === "number" && Number.isInteger(perDay) && perDay >= 1)
-    ) {
-      return errorJson(400, "perDay must be a positive integer or null (unlimited)");
-    }
-    const created = await treasury(env).createApiKey({
-      label: label.trim(),
-      tier: tier as KeyTier,
-      perDay: perDay as number | null | undefined,
-    });
-    return json(created, 201, noStore);
-  }
-
-  const revoke = /^\/api\/admin\/keys\/([0-9a-f]{12})$/.exec(path);
-  if (revoke && request.method === "DELETE") {
-    const revoked = await treasury(env).revokeApiKey(revoke[1]);
-    return revoked ? json({ revoked: revoke[1] }, 200, noStore) : errorJson(404, "No active key with that id");
-  }
-
-  return errorJson(404, "Not found");
-}
-
 type InvitationFailure = Extract<InvitationIssueResult, { ok: false }>;
 
 function invitationFailure(result: InvitationFailure): Response {
@@ -556,15 +467,9 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
     return errorJson(503, "Invitation captcha is not configured");
   }
 
-  let body: { turnstileToken?: unknown; count?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return errorJson(400, "Request body must be JSON");
-  }
-  if (!isJsonObject(body)) {
-    return errorJson(400, "Request body must be a JSON object");
-  }
+  const parsed = await readJsonObject(request);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { turnstileToken?: unknown; count?: unknown };
 
   const max = cfg.invitations.maxPerRequest;
   // `=== undefined`, not `??`: an explicit null is a malformed request.
@@ -667,9 +572,8 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/api/invitation-faucet" && request.method === "POST") {
     return handleInvitation(request, env);
   }
-  if (url.pathname === "/api/admin/keys" || url.pathname.startsWith("/api/admin/keys/")) {
-    return handleAdminKeys(request, env, url.pathname);
-  }
+  const portal = await handlePortal(request, env, url);
+  if (portal) return portal;
   if (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/")) {
     return errorJson(404, "Not found");
   }

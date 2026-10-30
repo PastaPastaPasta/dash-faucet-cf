@@ -173,6 +173,22 @@
             gap: 12px;
             align-items: center;
         }
+        .code-row {
+            margin-top: 10px;
+        }
+        .code-row input {
+            width: 100%;
+            padding: 9px 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(0,0,0,0.3);
+            color: #e0e0e0;
+            font-size: 0.9rem;
+        }
+        .footer-links a {
+            color: #9aa;
+            font-size: 0.85rem;
+        }
         .input-row input {
             flex: 1;
             padding: 12px 15px;
@@ -720,6 +736,9 @@
                         <span class="btn-text">Send</span>
                     </button>
                 </div>
+                <div class="code-row">
+                    <input type="text" id="codeInput" placeholder="Have a code? (optional)" autocomplete="off" spellcheck="false" maxlength="64">
+                </div>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
                     <strong id="capTitle">Hourly limit reached</strong>
@@ -844,6 +863,9 @@
         <footer class="site-footer">
             <div class="footer-status" id="statusBar">
                 Loading faucet status...
+            </div>
+            <div class="footer-links">
+                <a href="/keys">API keys for developers</a>
             </div>
             <div class="footer-github">
                 <a href="https://github.com/PastaPastaPasta/dash-faucet" target="_blank" rel="noopener noreferrer">
@@ -1306,6 +1328,8 @@
                     }
                 }
 
+                const code = $("codeInput").value.trim();
+                if (code) body.code = code;
                 btnText.textContent = "Sending...";
                 const response = await fetch("/api/core-faucet", {
                     method: "POST",
@@ -1363,6 +1387,7 @@
                 card.classList.remove("show-config");
                 card.classList.add("show-results", "success");
                 addressInput.value = "";
+                $("codeInput").value = "";
             } catch (error) {
                 showError(error.message);
                 // An escalated attempt that failed leaves the box open but
@@ -1571,6 +1596,12 @@
         }
 
         $("startBtn").addEventListener("click", showCoreFaucetConfig);
+        // Voucher and event links carry their code: open the form with it filled in.
+        const sharedCode = new URLSearchParams(location.search).get("code");
+        if (sharedCode) {
+            $("codeInput").value = sharedCode.slice(0, 64);
+            showCoreFaucetConfig();
+        }
         $("backLink").addEventListener("click", resetCoreFaucetCard);
         $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
         // Wrapped, not passed directly: the click event would arrive as `proof`.

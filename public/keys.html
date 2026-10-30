@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="no-referrer">
+  <title>API keys · Dash Faucet</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/portal.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><a href="/">Dash Faucet</a> · API keys</h1>
+      <div class="who" id="who"></div>
+    </header>
+
+    <section class="card" id="signIn" hidden></section>
+
+    <section id="account" hidden>
+      <div class="card">
+        <h2>Your API keys</h2>
+        <p class="note" id="keyRules"></p>
+        <div class="error" id="keysError" hidden></div>
+        <div class="secret" id="newKey" hidden>
+          <strong>Your new key. Copy it now; it is shown only once.</strong>
+          <code id="newKeyValue"></code>
+          <div class="row">
+            <button id="copyKey" class="small">Copy key</button>
+            <button id="hideKey" class="secondary small">I've saved it</button>
+          </div>
+          <p class="note spaced">Use it like this:</p>
+          <pre id="newKeyUsage"></pre>
+        </div>
+        <form class="row" id="createForm">
+          <label class="field">Label
+            <input id="keyLabel" maxlength="100" placeholder="e.g. laptop, CI, test harness" required>
+          </label>
+          <button type="submit">Create key</button>
+        </form>
+        <div class="table-wrap spaced">
+          <table>
+            <thead><tr><th>Label</th><th>Id</th><th>Created</th><th>Expires</th><th>Last used</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+            <tbody id="keyRows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Using a key</h2>
+        <p class="note">A key replaces the captcha and the per-IP limits on <span class="mono">POST /api/core-faucet</span>.
+          Send it as a bearer token; <span class="mono">amount</span> is optional (in tDASH, default 1).
+          Never put a key in a URL, a commit or a shared document. Revoke it here if it leaks.</p>
+        <pre id="usageExample"></pre>
+      </div>
+    </section>
+  </div>
+  <script src="/portal.js"></script>
+  <script src="/keys.js"></script>
+</body>
+</html>

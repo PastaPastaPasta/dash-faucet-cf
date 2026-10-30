@@ -233,7 +233,9 @@ The response is the usual payout body plus `keyId`. Errors: `401` (unknown or
 revoked key), `400` (bad `amount`), `429` with `Retry-After` (an `mn` key's
 daily limit).
 
-Keys are minted with the admin token, whose SHA-256 is `ADMIN_TOKEN_SHA256`.
+People get their own keys at **`/keys`** (see *Accounts* below); nobody has
+to mint them by hand. Admins can also mint keys, including `mn` keys, at
+`/admin` or with the admin token, whose SHA-256 is `ADMIN_TOKEN_SHA256`.
 Only each key's SHA-256 is stored; the plaintext is shown once.
 
 ```bash
@@ -244,6 +246,74 @@ curl -X POST https://faucet.thepasta.org/api/admin/keys -H "$ADMIN" \
 curl https://faucet.thepasta.org/api/admin/keys -H "$ADMIN"          # list, with usage
 curl -X DELETE https://faucet.thepasta.org/api/admin/keys/<id> -H "$ADMIN"  # revoke
 ```
+
+### Accounts: `/keys` and `/admin`
+
+Login lives on one origin, `AUTH_ORIGIN` (`https://faucet.dashhq.org`).
+Session cookies are host-only, so `/keys`, `/admin` and `/auth/*` on any other
+hostname redirect there.
+
+**Who may sign in.** Anyone the provider vouches for; there is no allowlist
+and no approval step.
+
+- **Google:** a `@dash.org` Google Workspace account. The callback checks the
+  ID token's RS256 signature against Google's published keys, `iss`, `aud`,
+  `exp`/`iat`, the OIDC `nonce`, `email_verified`, `hd == "dash.org"` and the
+  address's domain. The `hd` request parameter only pre-selects an account
+  and is never relied on. A personal Google account registered with a
+  dash.org address has no `hd` and is refused.
+- **GitHub** (supported, but not configured in production, which uses
+  Google only): an *active* member of the `dashpay` org, or an account with a
+  *verified* `@dash.org` address. The GitHub token is used for those two
+  reads and then revoked. Setting `OAUTH_GITHUB_CLIENT_ID`/`_SECRET` turns it
+  on.
+
+**Sessions** are HMAC-signed `__Host-` cookies (`HttpOnly; Secure;
+SameSite=Lax`, 12 h), with no server-side store. The OAuth round trip is
+bound by a second signed cookie holding `state`, `nonce` and the PKCE
+verifier, valid for 10 minutes and spent by the callback. After login the
+user only ever lands on `/keys` or `/admin`, so there is no open redirect.
+Every cookie-authenticated write needs the session's CSRF token in
+`X-CSRF-Token` *and* a same-origin `Origin` header. The pages are served with
+a strict CSP (`script-src 'self'`, no inline script), and they render server
+data as text only.
+
+**Self-serve keys** (`/api/me/keys`) are `trusted`, tied to the signed-in
+identity, and expire after `SELF_SERVE_KEY_TTL_DAYS` (180). Rotating gives a
+fresh value and expiry and revokes the old key in the same step. A person can
+hold `MAX_KEYS_PER_USER` (5) active keys, and can only list, rotate or revoke
+their own.
+
+**Admins** are the `AUTH_ADMINS` identities: `google:<email>` or
+`github:<numeric id>`, pinned by id so a renamed account cannot inherit
+access. At `/admin` they manage codes, list and revoke anyone's key, and mint
+`mn` or service keys. The admin bearer token still works for every
+`/api/admin/*` route.
+
+### Codes
+
+`POST /api/core-faucet` accepts `"code"` (or `"promoCode"`, the Python
+faucet's name). The captcha is still required, but the code replaces the
+public per-IP, per-address and daily-budget limits with its own:
+
+- **event codes:** typeable (`DASHCON-26`), with an amount, a redemption cap
+  and an optional expiry. Each address may redeem one once. There is
+  deliberately no per-IP rule, since a whole venue shares one NAT address. A
+  guess costs only a captcha, so anything valuable should use a code nobody
+  could guess.
+- **vouchers:** generated `XXXX-XXXX-XXXX` codes, single-use, created up to
+  200 at a time. `/?code=…` links open the faucet with the code filled in.
+
+Matching ignores case, spaces and dashes. Unknown, disabled, expired and
+fully redeemed codes all get the same `400`, so the endpoint does not reveal
+which codes exist. Redemption is decided inside the payout lock, so two
+people cannot both take a code's last use. A broadcast whose outcome is
+unknown still counts as a redemption. Code payouts never take the wallet
+below `KEY_RESERVE_SATS`.
+
+Admin API: `GET/POST /api/admin/codes`, then `GET/PATCH
+/api/admin/codes/<id>` with any of `label, amount, maxRedemptions, expiresAt,
+disabled`. `amount` is in DASH and `expiresAt` in epoch milliseconds.
 
 ### `POST /api/invitation-faucet`
 
@@ -436,6 +506,13 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `KEY_RESERVE_SATS` | API-key payouts never leave the balance below this (default 0) |
 | `MAX_PAYOUT_INPUTS` | Coins one payout (or consolidation) may spend (default 20) |
 | `COLLATERAL_COINS` | Coins of 1001+ DASH the cron keeps for `mn` keys by merging small coins (default 0, off) |
+| `AUTH_ORIGIN` | Origin that serves login, `/keys` and `/admin`; blank disables login |
+| `AUTH_EMAIL_DOMAIN` / `AUTH_GITHUB_ORG` | Who may sign in (default `dash.org` / `dashpay`) |
+| `AUTH_ADMINS` | Comma-separated `google:<email>` / `github:<numeric id>` admins |
+| `SELF_SERVE_KEY_TTL_DAYS` / `MAX_KEYS_PER_USER` | Self-serve key lifetime (180) and per-person cap (5) |
+| `SESSION_SECRET` | **secret**, ≥32 characters. Signs session and OAuth-state cookies; rotating it signs everyone out |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **secrets**. Google OAuth web client; redirect URI `AUTH_ORIGIN/auth/google/callback` |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | **secrets**. GitHub OAuth app; callback `AUTH_ORIGIN/auth/github/callback` |
 | `DRY_RUN` | `1` builds and signs but never broadcasts |
 | `FAUCET_WIF` | **secret** — the faucet's hot key |
 | `TURNSTILE_SECRET` | **secret** — blank disables captcha verification |
@@ -483,6 +560,13 @@ One-time setup in this repository's **Settings → Secrets and variables → Act
   Workers** API-token template, scoped to the existing faucet account and the
   `dashhq.org` and `thepasta.org` zones used by its custom domains.
 - Add the Actions variable `CLOUDFLARE_ACCOUNT_ID` for that account.
+
+The login secrets are the exception. Set them in the `testnet` environment as
+`SESSION_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
+`OAUTH_GITHUB_CLIENT_ID` and `OAUTH_GITHUB_CLIENT_SECRET` (GitHub reserves the
+`GITHUB_` prefix). Each deploy uploads the ones that are set with `wrangler
+deploy --secrets-file`, so changing one means setting it and re-running the
+workflow. A provider whose credentials are missing is simply not offered.
 
 Existing Worker secrets remain in Cloudflare; GitHub does not need the wallet
 keys or CAPTCHA secrets. To retry a deployment after updating credentials, use

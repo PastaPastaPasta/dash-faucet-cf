@@ -78,6 +78,18 @@ export interface Env {
   COLLATERAL_COINS?: string;
   /** `fetch` only for tests; production reaches evonodes over sockets. */
   EVONODE_TRANSPORT?: string;
+  /** Origin that serves login, `/keys` and `/admin`, e.g. `https://faucet.dashhq.org`. */
+  AUTH_ORIGIN?: string;
+  /** Google Workspace domain whose verified accounts may sign in. */
+  AUTH_EMAIL_DOMAIN?: string;
+  /** GitHub organization whose active members may sign in. */
+  AUTH_GITHUB_ORG?: string;
+  /** Comma-separated `google:<email>` / `github:<numeric id>` identities with admin rights. */
+  AUTH_ADMINS?: string;
+  /** Lifetime of a self-serve API key, in days. */
+  SELF_SERVE_KEY_TTL_DAYS?: string;
+  /** Active self-serve keys one person may hold. */
+  MAX_KEYS_PER_USER?: string;
 
   // secrets
   FAUCET_WIF: string;
@@ -85,6 +97,30 @@ export interface Env {
   CAP_SECRET?: string;
   INVITATION_SECRET?: string;
   INVITATION_FAUCET_WIF?: string;
+  /** HMAC key for session and OAuth-state cookies; at least 32 characters. */
+  SESSION_SECRET?: string;
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+}
+
+export interface OAuthClient {
+  clientId: string;
+  clientSecret: string;
+}
+
+export interface AuthConfig {
+  /** No trailing slash. Empty disables login entirely. */
+  origin: string;
+  sessionSecret: string;
+  emailDomain: string;
+  githubOrg: string;
+  admins: Set<string>;
+  google: OAuthClient | null;
+  github: OAuthClient | null;
+  keyTtlMs: number;
+  maxKeysPerUser: number;
 }
 
 export interface FaucetConfig {
@@ -129,6 +165,7 @@ export interface FaucetConfig {
    * input rather than hundreds. 0 disables consolidation.
    */
   collateralCoins: number;
+  auth: AuthConfig;
   apiKeys: {
     /**
      * Testnet only. A key pays without a captcha and an `mn` key pays 1000
@@ -298,6 +335,48 @@ function positiveInt(name: string, raw: string | undefined, fallback: number): n
   return value;
 }
 
+function oauthClient(id: string | undefined, secret: string | undefined): OAuthClient | null {
+  const clientId = (id ?? "").trim();
+  const clientSecret = (secret ?? "").trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
+
+/**
+ * Login is testnet-only, like the keys it hands out, and needs an origin and
+ * a session secret; each provider additionally needs its client credentials.
+ * A missing provider is simply not offered — the faucet itself keeps working.
+ */
+function authConfig(env: Env, network: NetworkName): AuthConfig {
+  const origin = (env.AUTH_ORIGIN ?? "").trim().replace(/\/+$/, "");
+  if (origin && !/^https:\/\/[a-z0-9.-]+(:\d+)?$/i.test(origin)) {
+    throw new Error(`AUTH_ORIGIN must be an https origin, got ${origin}`);
+  }
+  const sessionSecret = env.SESSION_SECRET ?? "";
+  const usable = network === "testnet" && origin !== "" && sessionSecret.length >= 32;
+  const admins = new Set(
+    (env.AUTH_ADMINS ?? "")
+      .split(",")
+      .map((entry) => entry.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  for (const admin of admins) {
+    if (!/^(google:[^@\s]+@[^@\s]+|github:\d+)$/.test(admin)) {
+      throw new Error(`AUTH_ADMINS entries must be google:<email> or github:<numeric id>, got ${admin}`);
+    }
+  }
+  return {
+    origin: usable ? origin : "",
+    sessionSecret: usable ? sessionSecret : "",
+    emailDomain: (env.AUTH_EMAIL_DOMAIN ?? "dash.org").trim().toLowerCase(),
+    githubOrg: (env.AUTH_GITHUB_ORG ?? "dashpay").trim(),
+    admins,
+    google: usable ? oauthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET) : null,
+    github: usable ? oauthClient(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET) : null,
+    keyTtlMs: positiveInt("SELF_SERVE_KEY_TTL_DAYS", env.SELF_SERVE_KEY_TTL_DAYS, 180) * 86_400_000,
+    maxKeysPerUser: positiveInt("MAX_KEYS_PER_USER", env.MAX_KEYS_PER_USER, 5),
+  };
+}
+
 function adminTokenSha256(raw: string | undefined): string {
   const value = (raw ?? "").trim().toLowerCase();
   if (value && !/^[0-9a-f]{64}$/.test(value)) {
@@ -387,6 +466,7 @@ export function resolveConfig(env: Env): FaucetConfig {
     wif: env.FAUCET_WIF,
     dryRun: env.DRY_RUN === "1",
     maxPayoutInputs: positiveInt("MAX_PAYOUT_INPUTS", env.MAX_PAYOUT_INPUTS, 20),
+    auth: authConfig(env, network),
     collateralCoins: int("COLLATERAL_COINS", env.COLLATERAL_COINS, 0),
     apiKeys: {
       enabled: network === "testnet",
@@ -463,3 +543,7 @@ export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
 }
 
 export const COIN = 100_000_000;
+
+export function toDash(satoshis: number): number {
+  return satoshis / COIN;
+}

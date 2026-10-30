@@ -1,0 +1,68 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  min-height: 100vh;
+  color: #e0e0e0;
+  padding: 20px;
+  line-height: 1.5;
+}
+.container { max-width: 980px; margin: 0 auto; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 24px 0 28px; flex-wrap: wrap; }
+header h1 { color: #008de4; font-size: 1.8rem; }
+header h1 a { color: inherit; text-decoration: none; }
+header .who { display: flex; align-items: center; gap: 12px; font-size: 0.9rem; color: #aab; flex-wrap: wrap; }
+a { color: #4fb3f6; }
+.card { background: rgba(255, 255, 255, 0.05); border-radius: 12px; padding: 24px; margin-bottom: 20px; }
+.card h2 { font-size: 1.2rem; margin-bottom: 12px; color: #fff; }
+.card p.note { color: #aab; font-size: 0.9rem; margin-bottom: 14px; }
+.btn, button {
+  background: #008de4; color: #fff; border: none; border-radius: 8px; padding: 10px 18px;
+  font-size: 0.95rem; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px;
+}
+.btn:hover, button:hover { background: #0070b8; }
+button.secondary, .btn.secondary { background: rgba(255, 255, 255, 0.12); }
+button.secondary:hover { background: rgba(255, 255, 255, 0.2); }
+button.danger { background: rgba(220, 53, 69, 0.75); }
+button.danger:hover { background: #c82333; }
+button.small { padding: 5px 10px; font-size: 0.82rem; }
+button:disabled { background: #555; cursor: default; }
+.providers { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.providers .btn { padding: 12px 22px; font-size: 1rem; }
+form.row, .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem; color: #aab; }
+input, select {
+  padding: 9px 12px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.3); color: #e0e0e0; font-size: 0.92rem; min-width: 0;
+}
+input[type=number] { width: 110px; }
+table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); vertical-align: middle; }
+th { color: #aab; font-weight: 600; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+td.mono, .mono { font-family: 'Monaco', 'Consolas', monospace; font-size: 0.82rem; }
+td .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.table-wrap { overflow-x: auto; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; background: rgba(255, 255, 255, 0.1); }
+.badge.ok { background: rgba(40, 167, 69, 0.25); color: #7fdc95; }
+.badge.off { background: rgba(220, 53, 69, 0.2); color: #f19aa3; }
+.badge.mn { background: rgba(240, 173, 78, 0.22); color: #f6c886; }
+.secret {
+  background: rgba(40, 167, 69, 0.12); border: 1px solid rgba(40, 167, 69, 0.5); border-radius: 10px;
+  padding: 16px; margin: 14px 0;
+}
+.secret strong { color: #7fdc95; }
+.secret code, pre {
+  display: block; margin: 8px 0; padding: 10px 12px; background: rgba(0, 0, 0, 0.35); border-radius: 6px;
+  font-family: 'Monaco', 'Consolas', monospace; font-size: 0.82rem; word-break: break-all; white-space: pre-wrap;
+}
+.error { background: rgba(220, 53, 69, 0.2); border: 1px solid rgba(220, 53, 69, 0.5); border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+.empty { color: #889; font-style: italic; padding: 10px 0; }
+.tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+.tabs button[aria-selected=true] { background: #008de4; }
+.tabs button[aria-selected=false] { background: rgba(255, 255, 255, 0.08); }
+dialog { background: #1e2340; color: #e0e0e0; border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 12px; padding: 22px; max-width: 640px; width: 92vw; }
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+dialog h3 { margin-bottom: 12px; }
+dialog .row { margin-top: 10px; }
+[hidden] { display: none !important; }
+.spaced { margin-top: 14px; }
