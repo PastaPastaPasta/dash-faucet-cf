@@ -255,6 +255,15 @@ fall short, it merges the largest and finishes the job a block later. Pool
 refills split from the largest coin *below* collateral size. `/api/status`
 reports `collateralUtxos`.
 
+With nothing to build, maintenance keeps the wallet tidy. Once more than 5
+loose coins have confirmed, it merges them smallest first (`MAX_PAYOUT_INPUTS`
+at a time). Loose coins are all but the kept pool and collateral coins:
+payout change, extra block rewards, deposits. So the wallet stays at the pool,
+the collateral coin and a handful more, and no payout needs many inputs. When
+the pool is low and no coin is big enough to refill it, it merges small coins
+first and splits the result on the next pass. It splits a collateral coin
+only when that cannot help.
+
 The response is the usual payout body plus `keyId`. Errors: `401` (unknown or
 revoked key), `400` (bad `amount`), `429` with `Retry-After` (an `mn` key's
 daily limit).

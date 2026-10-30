@@ -113,7 +113,8 @@ describe("collateral coin", () => {
   });
 
   it("does nothing when the small coins could never reach a collateral", async () => {
-    chain.coins = [...coins(4, POOL), ...coins(10, 20 * COIN, 100)];
+    // Five loose coins: few enough that tidying leaves them alone too.
+    chain.coins = [...coins(4, POOL), ...coins(5, 20 * COIN, 100)];
     const result = await treasury().maintain();
     expect(result.action).toBe("none");
     expect(chain.broadcastAttempts).toHaveLength(0);
@@ -308,5 +309,44 @@ describe("real-time merging", () => {
     expect((await t.payout(to(5))).ok).toBe(true);
     expect(inputsOf(chain.lastBroadcast)).not.toContain(collateral.txid);
     expect(await takeAlarm(t)).toBeNull();
+  });
+});
+
+describe("tidying", () => {
+  const collateral = { txid: "c".repeat(64), vout: 0, satoshis: 1002 * COIN, height: 10 };
+
+  it("merges loose coins, smallest first, once more than five have confirmed", async () => {
+    // The pool and the collateral coin are kept; 8 loose coins are not.
+    chain.coins = [collateral, ...coins(4, POOL), ...coins(7, COIN, 100), ...coins(1, 300 * COIN, 200)];
+    const t = treasury();
+    expect((await followUp(t)).action).toBe("consolidate");
+    const merged = inputsOf(chain.lastBroadcast);
+    // MAX_PAYOUT_INPUTS is 5: the five smallest, never a kept coin.
+    expect(merged).toHaveLength(5);
+    expect(new Set(merged)).toEqual(new Set(coins(5, COIN, 100).map((c) => c.txid)));
+
+    // Its output is still confirming: nothing more until the next block.
+    expect((await followUp(t)).action).toBe("none");
+    await mineLast();
+    // Four loose coins now: tidy enough.
+    expect((await followUp(t)).action).toBe("none");
+    expect((await t.snapshot()).collateralUtxos).toBe(1);
+  });
+
+  it("leaves five loose coins alone", async () => {
+    chain.coins = [collateral, ...coins(4, POOL), ...coins(5, COIN, 100)];
+    const t = treasury();
+    expect((await followUp(t)).action).toBe("none");
+    expect(chain.broadcastAttempts).toHaveLength(0);
+  });
+
+  it("merges small coins when none can refill the pool, then splits the result", async () => {
+    // No pool coin (POOL_MIN is 2) and nothing big enough to split.
+    chain.coins = [collateral, ...coins(10, 15_000_000, 100)];
+    const t = treasury();
+    expect((await followUp(t)).action).toBe("consolidate");
+    expect(inputsOf(chain.lastBroadcast)).not.toContain(collateral.txid);
+    expect((await followUp(t)).action).toBe("split");
+    expect(inputsOf(chain.lastBroadcast)).not.toContain(collateral.txid);
   });
 });
