@@ -81,6 +81,7 @@ jobs:
           # Upload whichever login secrets are set, alongside the deploy.
           # Additive: secrets set directly with `wrangler secret put` survive.
           secrets_file="$RUNNER_TEMP/worker-secrets.json"
+          trap 'rm -f "$secrets_file"' EXIT
           node -e '
             const names = ["SESSION_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"];
             const set = Object.fromEntries(names.filter((n) => process.env[n]).map((n) => [n, process.env[n]]));
@@ -92,7 +93,6 @@ jobs:
           else
             npm run deploy:testnet -- --secrets-file "$secrets_file"
           fi
-          rm -f "$secrets_file"
       - name: Verify public faucets
         if: steps.revision.outputs.current == 'true'
         run: |

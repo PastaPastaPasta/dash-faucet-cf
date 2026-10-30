@@ -543,3 +543,7 @@ export function resolveInvitationTreasuryConfig(env: Env): FaucetConfig {
 }
 
 export const COIN = 100_000_000;
+
+export function toDash(satoshis: number): number {
+  return satoshis / COIN;
+}

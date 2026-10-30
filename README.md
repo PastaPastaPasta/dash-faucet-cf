@@ -262,9 +262,11 @@ and no approval step.
   address's domain. The `hd` request parameter only pre-selects an account
   and is never relied on. A personal Google account registered with a
   dash.org address has no `hd` and is refused.
-- **GitHub:** an *active* member of the `dashpay` org, or an account with a
+- **GitHub** (supported, but not configured in production, which uses
+  Google only): an *active* member of the `dashpay` org, or an account with a
   *verified* `@dash.org` address. The GitHub token is used for those two
-  reads and then revoked.
+  reads and then revoked. Setting `OAUTH_GITHUB_CLIENT_ID`/`_SECRET` turns it
+  on.
 
 **Sessions** are HMAC-signed `__Host-` cookies (`HttpOnly; Secure;
 SameSite=Lax`, 12 h), with no server-side store. The OAuth round trip is
@@ -295,7 +297,10 @@ faucet's name). The captcha is still required, but the code replaces the
 public per-IP, per-address and daily-budget limits with its own:
 
 - **event codes:** typeable (`DASHCON-26`), with an amount, a redemption cap
-  and an optional expiry. Each address and each network may redeem one once.
+  and an optional expiry. Each address may redeem one once. There is
+  deliberately no per-IP rule, since a whole venue shares one NAT address. A
+  guess costs only a captcha, so anything valuable should use a code nobody
+  could guess.
 - **vouchers:** generated `XXXX-XXXX-XXXX` codes, single-use, created up to
   200 at a time. `/?code=…` links open the faucet with the code filled in.
 

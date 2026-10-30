@@ -271,6 +271,24 @@ describe("self-serve keys", () => {
     expect(revoked.status).toBe(200);
   });
 
+  it("stop paying once expired, and an expired key cannot be rotated", async () => {
+    googleClaims = dashOrg();
+    const { cookie } = await login("google");
+    const created = (await call(cookie!, "POST", "/api/me/keys", {})).body;
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE api_keys SET expires_at = ? WHERE id = ?`, Date.now() - 1, created.key.id);
+    });
+    const pay = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${created.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ address: RECIPIENT.testnet.address }),
+    });
+    expect(pay.status).toBe(401);
+    // Rotating would otherwise mint a live key without counting against the cap.
+    expect((await call(cookie!, "POST", `/api/me/keys/${created.key.id}/rotate`)).status).toBe(404);
+  });
+
   it("caps active keys per person", async () => {
     googleClaims = dashOrg();
     const { cookie } = await login("google");
@@ -382,29 +400,38 @@ describe("admin", () => {
         body: JSON.stringify({ address, code, turnstileToken: "ok" }),
       });
 
+    const second = await DashKeys.pkhToAddr(new Uint8Array(20).fill(9), { version: "testnet" });
+    const third = await DashKeys.pkhToAddr(new Uint8Array(20).fill(10), { version: "testnet" });
+
     const first = await redeem("dashcon 24", RECIPIENT.testnet.address, "203.0.113.80");
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({ amount: 25, code: "DashCon" });
 
-    // Same address or same network again: refused.
-    expect((await redeem("DASHCON-24", RECIPIENT.testnet.address, "203.0.113.81")).status).toBe(400);
+    // The same address again is refused, even from another network.
+    const again = await redeem("DASHCON-24", RECIPIENT.testnet.address, "203.0.113.81");
+    expect(again.status).toBe(400);
+    expect(((await again.json()) as any).error).toBe("This code was already redeemed by this address");
 
     const detail = await call(admin, "GET", `/api/admin/codes/${code.id}`);
     expect(detail.body.redemptions).toHaveLength(1);
 
+    // Disabled: refused, with the same answer as an unknown code.
     const disabled = await call(admin, "PATCH", `/api/admin/codes/${code.id}`, { disabled: true, amount: 30 });
     expect(disabled.body.code).toMatchObject({ disabled: true, amountSats: 30 * 100_000_000 });
-    const fresh = await DashKeys.pkhToAddr(new Uint8Array(20).fill(9), { version: "testnet" });
-    const off = await redeem("DASHCON-24", fresh, "203.0.113.82");
+    const off = await redeem("DASHCON-24", second, "203.0.113.80");
     expect(off.status).toBe(400);
     expect(((await off.json()) as any).error).toBe("Invalid, expired or fully redeemed code");
 
-    // Re-enabled, the same fresh address and network can redeem the second slot.
+    // Re-enabled, a second attendee behind the *same* venue NAT can redeem.
     await call(admin, "PATCH", `/api/admin/codes/${code.id}`, { disabled: false });
-    expect((await redeem("DASHCON-24", fresh, "203.0.113.82")).status).toBe(200);
-    // The cap of 2 is now reached.
-    const third = await DashKeys.pkhToAddr(new Uint8Array(20).fill(10), { version: "testnet" });
-    expect((await redeem("DASHCON-24", third, "203.0.113.83")).status).toBe(400);
+    const nat = await redeem("DASHCON-24", second, "203.0.113.80");
+    expect(nat.status).toBe(200);
+    expect(((await nat.json()) as any).amount).toBe(30);
+
+    // The cap of 2 is reached; raising it lets the next person in.
+    expect((await redeem("DASHCON-24", third, "203.0.113.84")).status).toBe(400);
+    await call(admin, "PATCH", `/api/admin/codes/${code.id}`, { maxRedemptions: 3 });
+    expect((await redeem("DASHCON-24", third, "203.0.113.84")).status).toBe(200);
   });
 
   it("issues single-use vouchers in a batch", async () => {

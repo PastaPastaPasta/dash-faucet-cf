@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { codeKey } from "../src/accounts";
-import { b64url, safeEqual, seal, unseal, verifyGoogleIdToken } from "../src/auth";
+import { digestEquals as safeEqual } from "../src/apikeys";
+import { b64url, seal, unseal, verifyGoogleIdToken } from "../src/auth";
 
 const SECRET = "unit-test-session-secret-0123456789";
 

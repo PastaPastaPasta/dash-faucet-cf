@@ -1,18 +1,20 @@
+import { INVALID_CODE, parseCodeField } from "./accounts";
 import {
   MN_COLLATERAL_SATS,
   bearerToken,
   hashApiKey,
   looksLikeApiKey,
+  parseAmountSats,
 } from "./apikeys";
 import { mintChallenge, verifyCapToken, verifySolutions } from "./cap";
 import {
-  COIN,
   Env,
   FaucetConfig,
   ProofTier,
   canEscalate,
   capTier,
   resolveConfig,
+  toDash,
 } from "./config";
 import { describeError } from "./errors";
 import { hashInvitationSignal, invitationDevice } from "./invitation";
@@ -20,14 +22,14 @@ import { AddressError, addressToPubKeyHash } from "./keys";
 import {
   clientIp,
   errorJson,
-  isJsonObject,
+  readJsonObject,
   json,
   preflight,
   rawClientIp,
   verifyTurnstile,
 } from "./http";
 import { invitationTreasury, treasury } from "./durable";
-import { handlePortal, parseAmountSats, parseCodeField } from "./portal";
+import { handlePortal } from "./portal";
 import { type InvitationIssueResult, type PayoutResult } from "./treasury";
 
 // Only the Durable Object class may be re-exported here: workerd validates the
@@ -36,9 +38,6 @@ import { type InvitationIssueResult, type PayoutResult } from "./treasury";
 export { InvitationTreasury, Treasury } from "./treasury";
 
 
-function toDash(satoshis: number): number {
-  return satoshis / COIN;
-}
 
 /**
  * Base URL native clients POST the cap.js handshake to.
@@ -123,7 +122,6 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       apiKeysEnabled: cfg.apiKeys.enabled,
       // Where people sign in for their own API key; null when login is off.
       accountUrl: cfg.auth.origin ? `${cfg.auth.origin}/keys` : null,
-      codesEnabled: cfg.apiKeys.enabled,
       keyMaxPerRequest: toDash(cfg.apiKeys.maxPerRequestSats),
       mnCollateralAmount: toDash(MN_COLLATERAL_SATS),
       invitationsEnabled: cfg.invitations.enabled,
@@ -170,8 +168,8 @@ const PAYOUT_FAILURES: Record<
   },
   chain_unavailable: { status: 503, message: "Chain providers unavailable" },
   unauthorized: { status: 401, message: "Invalid, expired or revoked API key" },
-  code_invalid: { status: 400, message: "Invalid, expired or fully redeemed code" },
-  code_used: { status: 400, message: "This code was already redeemed by this address or network" },
+  code_invalid: { status: 400, message: INVALID_CODE },
+  code_used: { status: 400, message: "This code was already redeemed by this address" },
   bad_request: { status: 400, message: "Invalid request" },
   fragmented: {
     status: 503,
@@ -224,15 +222,9 @@ async function handleCapRedeem(request: Request, env: Env): Promise<Response> {
     return errorJson(503, "Proof-of-work captcha is not configured");
   }
 
-  let body: { token?: unknown; solutions?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return errorJson(400, "Request body must be JSON");
-  }
-  if (!isJsonObject(body)) {
-    return errorJson(400, "Request body must be a JSON object");
-  }
+  const parsed = await readJsonObject(request);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { token?: unknown; solutions?: unknown };
 
   // The challenge shape comes from the token, not from config, so retuning
   // CAP_C/CAP_S/CAP_D cannot invalidate a solve that is already in flight.
@@ -349,7 +341,9 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const cfg = resolveConfig(env);
   const ip = clientIp(request);
 
-  let body: {
+  const parsed = await readJsonObject(request);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as {
     address?: string;
     turnstileToken?: string;
     capToken?: string;
@@ -359,14 +353,6 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     code?: unknown;
     promoCode?: unknown;
   };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return errorJson(400, "Request body must be JSON");
-  }
-  if (!isJsonObject(body)) {
-    return errorJson(400, "Request body must be a JSON object");
-  }
   if (
     [body.address, body.turnstileToken, body.capToken, body.hardCapToken].some(
       (value) => value !== undefined && typeof value !== "string",
@@ -481,15 +467,9 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
     return errorJson(503, "Invitation captcha is not configured");
   }
 
-  let body: { turnstileToken?: unknown; count?: unknown };
-  try {
-    body = (await request.json()) as typeof body;
-  } catch {
-    return errorJson(400, "Request body must be JSON");
-  }
-  if (!isJsonObject(body)) {
-    return errorJson(400, "Request body must be a JSON object");
-  }
+  const parsed = await readJsonObject(request);
+  if (parsed instanceof Response) return parsed;
+  const body = parsed as { turnstileToken?: unknown; count?: unknown };
 
   const max = cfg.invitations.maxPerRequest;
   // `=== undefined`, not `??`: an explicit null is a malformed request.

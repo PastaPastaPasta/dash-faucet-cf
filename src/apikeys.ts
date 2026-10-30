@@ -62,10 +62,25 @@ export function looksLikeApiKey(token: string): boolean {
   return token.startsWith(PREFIX) && token.length === PREFIX.length + 43;
 }
 
-/** Constant-time comparison of two equal-length hex digests. */
+/** Constant-time string comparison (digests, MACs, tokens). */
 export function digestEquals(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;
   for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return diff === 0;
+}
+
+/** 0.001 DASH: comfortably above dust, below anything anyone asks for. */
+const MIN_PAYOUT_SATS = 100_000;
+
+/**
+ * `amount` in DASH as whole duffs, or undefined when it is not a usable
+ * amount. Anything finer than a duff is a unit mistake, not a request; the
+ * floor keeps a typo from building an unrelayable dust output.
+ */
+export function parseAmountSats(value: unknown): number | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  const sats = Math.round(value * COIN);
+  if (!Number.isSafeInteger(sats) || sats < MIN_PAYOUT_SATS) return undefined;
+  return Math.abs(value * COIN - sats) <= 1e-3 ? sats : undefined;
 }

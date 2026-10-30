@@ -7,6 +7,8 @@
  * and the payout it allows are decided together.
  */
 
+import { bytesToHex } from "./keys";
+
 export type CodeKind = "event" | "voucher";
 
 /** A signed-in person: `google:<sub>` or `github:<numeric id>`. */
@@ -87,17 +89,16 @@ export function migrateAccounts(sql: SqlStorage): void {
       created_at      INTEGER NOT NULL,
       updated_at      INTEGER NOT NULL
     );
-    -- Audit log as well as the per-address and per-network check; never pruned.
+    -- Audit log as well as the once-per-address check; never pruned. No IPs:
+    -- an event behind one venue NAT must not be limited to one attendee.
     CREATE TABLE IF NOT EXISTS code_redemptions (
       code_id    TEXT    NOT NULL,
       address    TEXT    NOT NULL,
-      ip         TEXT    NOT NULL,
       txid       TEXT    NOT NULL,
       satoshis   INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS code_redemptions_address ON code_redemptions (code_id, address);
-    CREATE INDEX IF NOT EXISTS code_redemptions_ip ON code_redemptions (code_id, ip);
   `);
 
   const keyColumns = new Set(
@@ -151,9 +152,17 @@ export function generateVoucherCode(): string {
 }
 
 function randomId(): string {
-  return [...crypto.getRandomValues(new Uint8Array(6))]
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return bytesToHex(crypto.getRandomValues(new Uint8Array(6)));
+}
+
+export const INVALID_CODE = "Invalid, expired or fully redeemed code";
+
+/** The normalized key for a `code`/`promoCode` field, or the error to send. */
+export function parseCodeField(value: unknown): { key: string } | { error: string } | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || value.length > 64) return { error: "code must be a string" };
+  const key = codeKey(value);
+  return key.length >= 4 ? { key } : { error: INVALID_CODE };
 }
 
 function codeInfo(row: CodeRow): CodeInfo {
@@ -276,20 +285,19 @@ export function updateCode(
   return getCode(sql, id);
 }
 
-export type CodeCheck =
+type CodeCheck =
   | { ok: true; code: CodeRow }
   | { ok: false; reason: "invalid" | "used" };
 
 /**
- * Whether `key` may pay `address` from `ip` right now. Unknown, disabled,
- * expired and fully redeemed codes are deliberately indistinguishable, so the
- * endpoint is no oracle for which codes exist.
+ * Whether `key` may pay `address` right now: once per address per code.
+ * Unknown, disabled, expired and fully redeemed codes are deliberately
+ * indistinguishable, so the endpoint is no oracle for which codes exist.
  */
 export function checkCode(
   sql: SqlStorage,
   key: string,
   address: string,
-  ip: string,
   now: number,
 ): CodeCheck {
   const row = sql.exec<CodeRow>(`SELECT * FROM codes WHERE code_key = ?`, key).toArray()[0];
@@ -303,10 +311,9 @@ export function checkCode(
   }
   const prior = sql
     .exec(
-      `SELECT 1 FROM code_redemptions WHERE code_id = ? AND (address = ? OR ip = ?) LIMIT 1`,
+      `SELECT 1 FROM code_redemptions WHERE code_id = ? AND address = ? LIMIT 1`,
       row.id,
       address,
-      ip,
     )
     .toArray();
   return prior.length > 0 ? { ok: false, reason: "used" } : { ok: true, code: row };
@@ -316,17 +323,15 @@ export function recordRedemption(
   sql: SqlStorage,
   code: CodeRow,
   address: string,
-  ip: string,
   txid: string,
   satoshis: number,
   now: number,
 ): void {
   sql.exec(
-    `INSERT INTO code_redemptions (code_id, address, ip, txid, satoshis, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO code_redemptions (code_id, address, txid, satoshis, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
     code.id,
     address,
-    ip,
     txid,
     satoshis,
     now,

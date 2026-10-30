@@ -112,8 +112,9 @@
         // coins by the cron, MAX_PAYOUT_INPUTS at a time.
         "COLLATERAL_COINS": "1",
         // Self-serve keys: sign in at AUTH_ORIGIN/keys with a verified dash.org
-        // Google Workspace account, or a GitHub account that is a dashpay member
-        // or has a verified dash.org address. Client ids/secrets and
+        // Google Workspace account. (GitHub sign-in, for dashpay members or a
+        // verified dash.org address, turns on if its credentials are set; today
+        // it is not configured.) Client ids/secrets and
         // SESSION_SECRET are Worker secrets, uploaded by the deploy workflow
         // from the `testnet` GitHub environment. Admins are pinned by email
         // (Google Workspace) and numeric id (GitHub, immune to renames).

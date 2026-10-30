@@ -1,7 +1,7 @@
 "use strict";
 
 (() => {
-  const { el, date, dash, api, showError } = Portal;
+  const { el, date, dash, api, keyState, badge, fillRows, run } = Portal;
   const $ = (id) => document.getElementById(id);
 
   function usage(token) {
@@ -27,21 +27,18 @@
     $("newKey").scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
-  function status(key) {
-    if (key.revokedAt) return el("span", { class: "badge off" }, "revoked");
-    if (key.expiresAt && key.expiresAt <= Date.now()) return el("span", { class: "badge off" }, "expired");
-    return el("span", { class: "badge ok" }, "active");
+  function act(action) {
+    return run($("keysError"), action);
   }
 
-  async function refresh() {
-    $("keysError").hidden = true;
-    try {
+  function refresh() {
+    return act(async () => {
       const { keys } = await api("GET", "/api/me/keys");
       const rows = keys
         .slice()
         .reverse()
         .map((key) => {
-          const live = !key.revokedAt && !(key.expiresAt && key.expiresAt <= Date.now());
+          const state = keyState(key);
           return el("tr", {},
             el("td", {}, key.label),
             el("td", { class: "mono" }, key.id),
@@ -49,41 +46,33 @@
             el("td", {}, date(key.expiresAt)),
             el("td", {}, date(key.lastUsedAt)),
             el("td", {}, `${dash(key.paidSats)} (${key.payouts})`),
-            el("td", {}, status(key)),
-            el("td", {}, live
+            el("td", {}, badge(state, state === "active")),
+            el("td", {}, state === "active"
               ? el("div", { class: "actions" },
                   el("button", { class: "secondary small", onclick: () => rotate(key) }, "Rotate"),
                   el("button", { class: "danger small", onclick: () => revoke(key) }, "Revoke"))
               : null),
           );
         });
-      $("keyRows").replaceChildren(
-        ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 8, class: "empty" }, "No keys yet."))]),
-      );
-    } catch (error) {
-      showError($("keysError"), error);
-    }
+      fillRows($("keyRows"), rows, 8, "No keys yet.");
+    });
   }
 
-  async function rotate(key) {
+  function rotate(key) {
     if (!confirm(`Replace "${key.label}" with a new key? The old one stops working immediately.`)) return;
-    try {
+    return act(async () => {
       const created = await api("POST", `/api/me/keys/${key.id}/rotate`);
       showToken(created.token);
       await refresh();
-    } catch (error) {
-      showError($("keysError"), error);
-    }
+    });
   }
 
-  async function revoke(key) {
+  function revoke(key) {
     if (!confirm(`Revoke "${key.label}"? Anything using it stops working immediately.`)) return;
-    try {
+    return act(async () => {
       await api("DELETE", `/api/me/keys/${key.id}`);
       await refresh();
-    } catch (error) {
-      showError($("keysError"), error);
-    }
+    });
   }
 
   async function main() {
@@ -99,16 +88,14 @@
       `Keys are tied to your account and last ${me.keyTtlDays} days; rotate one to get a fresh value and expiry. ` +
       `You can hold up to ${me.maxKeys} active keys. A key can request up to ${me.keyMaxPerRequest} tDASH per call.`;
     $("usageExample").textContent = usage("dfk_…");
-    $("createForm").addEventListener("submit", async (event) => {
+    $("createForm").addEventListener("submit", (event) => {
       event.preventDefault();
-      try {
+      act(async () => {
         const created = await api("POST", "/api/me/keys", { label: $("keyLabel").value.trim() });
         $("keyLabel").value = "";
         showToken(created.token);
         await refresh();
-      } catch (error) {
-        showError($("keysError"), error);
-      }
+      });
     });
     await refresh();
   }

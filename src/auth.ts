@@ -20,10 +20,11 @@
 import { hmac } from "@noble/hashes/hmac.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 import type { Identity } from "./accounts";
+import { digestEquals } from "./apikeys";
 import type { AuthConfig, OAuthClient } from "./config";
 
 export type Provider = "google" | "github";
-export const PROVIDERS: readonly Provider[] = ["google", "github"];
+const PROVIDERS: readonly Provider[] = ["google", "github"];
 
 export interface Session extends Identity {
   /** Random per login; the CSRF token is derived from it. */
@@ -59,7 +60,7 @@ export function b64url(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-export function fromB64url(text: string): Uint8Array {
+function fromB64url(text: string): Uint8Array {
   if (!/^[A-Za-z0-9_-]*$/.test(text)) throw new Error("not base64url");
   const bin = atob(text.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (text.length % 4)) % 4));
   return Uint8Array.from(bin, (c) => c.charCodeAt(0));
@@ -71,14 +72,6 @@ function randomToken(bytes = 32): string {
 
 function mac(secret: string, purpose: string, data: string): string {
   return b64url(hmac(sha256, enc.encode(secret), enc.encode(`${purpose}.${data}`)));
-}
-
-/** Constant-time string comparison. */
-export function safeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
 }
 
 /** `payload.mac`, where the MAC binds the purpose so a state cookie is never a session. */
@@ -96,7 +89,7 @@ export function unseal<T extends { exp: number }>(
   if (!token) return null;
   const [payload, signature, extra] = token.split(".");
   if (!payload || !signature || extra !== undefined) return null;
-  if (!safeEqual(signature, mac(secret, purpose, payload))) return null;
+  if (!digestEquals(signature, mac(secret, purpose, payload))) return null;
   try {
     const value = JSON.parse(dec.decode(fromB64url(payload))) as T;
     return typeof value.exp === "number" && value.exp > now ? value : null;
@@ -107,7 +100,7 @@ export function unseal<T extends { exp: number }>(
 
 // --- cookies -----------------------------------------------------------------
 
-export function readCookie(request: Request, name: string): string | undefined {
+function readCookie(request: Request, name: string): string | undefined {
   for (const part of (request.headers.get("Cookie") ?? "").split(";")) {
     const eq = part.indexOf("=");
     if (eq > 0 && part.slice(0, eq).trim() === name) return part.slice(eq + 1).trim();
@@ -134,12 +127,21 @@ export function readSession(request: Request, cfg: AuthConfig): Session | null {
   return unseal<Session>(cfg.sessionSecret, "session", readCookie(request, SESSION_COOKIE));
 }
 
+/**
+ * How `AUTH_ADMINS` names a session: Google by Workspace address, GitHub by
+ * numeric id (already the session id), so a renamed login inherits nothing.
+ */
+export function adminHandle(session: Session): string {
+  return session.provider === "google" ? `google:${session.email.toLowerCase()}` : session.id;
+}
+
 export function isAdminSession(session: Session, cfg: AuthConfig): boolean {
-  const handle =
-    session.provider === "google"
-      ? `google:${session.email.toLowerCase()}`
-      : `github:${session.id.slice("github:".length)}`;
-  return cfg.admins.has(handle);
+  return cfg.admins.has(adminHandle(session));
+}
+
+/** The browser says this request comes from our own pages. */
+export function sameOrigin(request: Request, cfg: AuthConfig): boolean {
+  return request.headers.get("Origin") === cfg.origin;
 }
 
 /** Per-session CSRF token, sent back by the UI in `X-CSRF-Token`. */
@@ -154,9 +156,9 @@ export function csrfToken(session: Session, cfg: AuthConfig): string {
  */
 export function checkCsrf(request: Request, session: Session, cfg: AuthConfig): boolean {
   if (request.method === "GET" || request.method === "HEAD") return true;
-  if (request.headers.get("Origin") !== cfg.origin) return false;
+  if (!sameOrigin(request, cfg)) return false;
   const token = request.headers.get("X-CSRF-Token") ?? "";
-  return safeEqual(token, csrfToken(session, cfg));
+  return digestEquals(token, csrfToken(session, cfg));
 }
 
 export function enabledProviders(cfg: AuthConfig): Provider[] {
@@ -175,17 +177,17 @@ function callbackUrl(cfg: AuthConfig, provider: Provider): string {
   return `${cfg.origin}/auth/${provider}/callback`;
 }
 
-async function pkceChallenge(verifier: string): Promise<string> {
+function pkceChallenge(verifier: string): string {
   return b64url(sha256(enc.encode(verifier)));
 }
 
 /** `GET /auth/<provider>/login?return=/admin` → the provider's consent page. */
-export async function startLogin(
+export function startLogin(
   provider: Provider,
   client: OAuthClient,
   cfg: AuthConfig,
   returnParam: string | null,
-): Promise<Response> {
+): Response {
   const flow: OAuthState = {
     provider,
     state: randomToken(),
@@ -194,7 +196,7 @@ export async function startLogin(
     returnTo: returnParam && RETURN_PATHS.has(returnParam) ? returnParam : "/keys",
     exp: Date.now() + OAUTH_TTL_MS,
   };
-  const challenge = await pkceChallenge(flow.verifier);
+  const challenge = pkceChallenge(flow.verifier);
   const params =
     provider === "google"
       ? new URLSearchParams({
@@ -241,12 +243,12 @@ export async function finishLogin(
   client: OAuthClient,
   cfg: AuthConfig,
   request: Request,
+  url: URL,
 ): Promise<LoginOutcome> {
-  const url = new URL(request.url);
   const flow = unseal<OAuthState>(cfg.sessionSecret, "oauth", readCookie(request, OAUTH_COOKIE));
   const returnTo = flow?.returnTo ?? "/keys";
   const state = url.searchParams.get("state") ?? "";
-  if (!flow || flow.provider !== provider || !safeEqual(state, flow.state)) {
+  if (!flow || flow.provider !== provider || !digestEquals(state, flow.state)) {
     return { ok: false, error: "state", returnTo };
   }
   if (url.searchParams.get("error")) return { ok: false, error: "denied", returnTo };
@@ -358,7 +360,7 @@ export async function verifyGoogleIdToken(
     typeof claims.iat !== "number" ||
     claims.iat - skew > seconds ||
     typeof claims.nonce !== "string" ||
-    !safeEqual(claims.nonce, nonce)
+    !digestEquals(claims.nonce, nonce)
   ) {
     return null;
   }

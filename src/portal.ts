@@ -5,18 +5,19 @@
  * belonging to an `AUTH_ADMINS` identity (the `/admin` page). Every cookie-
  * authenticated write also needs the session's CSRF token and our own Origin.
  */
+import { type CodeKind, type CodePatch, generateVoucherCode, isEventCode } from "./accounts";
 import {
-  type CodeKind,
-  type CodePatch,
-  codeKey,
-  generateVoucherCode,
-  isEventCode,
-} from "./accounts";
-import { KEY_TIERS, type KeyTier, bearerToken, digestEquals, hashApiKey } from "./apikeys";
+  KEY_TIERS,
+  type KeyTier,
+  bearerToken,
+  digestEquals,
+  hashApiKey,
+  parseAmountSats,
+} from "./apikeys";
 import {
   type Provider,
   type Session,
-
+  adminHandle,
   checkCsrf,
   clearSessionCookie,
   csrfToken,
@@ -25,11 +26,13 @@ import {
   isAdminSession,
   loginResponse,
   readSession,
+  sameOrigin,
   startLogin,
 } from "./auth";
-import { COIN, type Env, type FaucetConfig, resolveConfig } from "./config";
+import { type Env, type FaucetConfig, resolveConfig, toDash } from "./config";
 import { treasury } from "./durable";
 import { errorJson, json, readJsonObject } from "./http";
+import type { IssueOwnKeyResult } from "./treasury";
 
 const NO_STORE = { "Cache-Control": "no-store" };
 const MAX_VOUCHERS_PER_BATCH = 200;
@@ -42,26 +45,19 @@ function noStore(body: unknown, status = 200): Response {
   return json(body, status, NO_STORE);
 }
 
-function toDash(satoshis: number): number {
-  return satoshis / COIN;
+const LABEL_RULE = "label must be a non-empty string of at most 100 characters";
+const EXPIRY_RULE = "expiresAt must be a future time in epoch milliseconds, or null";
+const MAX_REDEMPTIONS_RULE = `maxRedemptions must be an integer from 1 to ${MAX_REDEMPTIONS}`;
+
+function amountRule(cfg: FaucetConfig): string {
+  return `amount must be a number of DASH from 0.001 to ${toDash(cfg.apiKeys.maxPerRequestSats)}`;
 }
 
-/**
- * `amount` in DASH as whole duffs, or undefined when it is not a usable
- * amount. Anything finer than a duff is a unit mistake, not a request; the
- * floor keeps a typo from building an unrelayable dust output.
- */
-export function parseAmountSats(value: unknown): number | undefined {
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
-  const sats = Math.round(value * COIN);
-  if (!Number.isSafeInteger(sats) || sats < MIN_PAYOUT_SATS) return undefined;
-  return Math.abs(value * COIN - sats) <= 1e-3 ? sats : undefined;
+function isIntInRange(value: unknown, min: number, max = Number.MAX_SAFE_INTEGER): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 }
 
-/** 0.001 DASH: comfortably above dust, below anything anyone asks for. */
-const MIN_PAYOUT_SATS = 100_000;
-
-function label(value: unknown): string | undefined {
+function parseLabel(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() !== "" && value.length <= 100
     ? value.trim()
     : undefined;
@@ -75,8 +71,8 @@ export async function handlePortal(request: Request, env: Env, url: URL): Promis
   const path = url.pathname;
   const isAuth = path.startsWith("/auth/");
   const isMe = path === "/api/me" || path.startsWith("/api/me/");
-  const isAdmin = path.startsWith("/api/admin/");
-  if (!isAuth && !isMe && !isAdmin && !PORTAL_PAGES.has(path)) return null;
+  const isAdminApi = path.startsWith("/api/admin/");
+  if (!isAuth && !isMe && !isAdminApi && !PORTAL_PAGES.has(path)) return null;
 
   const cfg = resolveConfig(env);
   const auth = cfg.auth;
@@ -89,18 +85,19 @@ export async function handlePortal(request: Request, env: Env, url: URL): Promis
   }
   if (PORTAL_PAGES.has(path)) return null;
 
-  if (isAuth) return handleAuth(request, cfg, env, path);
+  if (isAuth) return handleAuth(request, cfg, env, url);
   if (isMe) return handleMe(request, cfg, env, path);
   return handleAdmin(request, cfg, env, path);
 }
 
 // --- /auth -----------------------------------------------------------------------
 
-async function handleAuth(request: Request, cfg: FaucetConfig, env: Env, path: string): Promise<Response> {
+async function handleAuth(request: Request, cfg: FaucetConfig, env: Env, url: URL): Promise<Response> {
   const auth = cfg.auth;
+  const path = url.pathname;
   if (path === "/auth/logout" && request.method === "POST") {
     // Logging out needs no CSRF token, but a cross-site page still may not do it.
-    if (auth.origin && request.headers.get("Origin") !== auth.origin) {
+    if (auth.origin && !sameOrigin(request, auth)) {
       return errorJson(403, "Cross-origin request refused");
     }
     return new Response(null, {
@@ -115,11 +112,10 @@ async function handleAuth(request: Request, cfg: FaucetConfig, env: Env, path: s
   const client = auth[provider];
   if (!client) return errorJson(404, `${provider} sign-in is not configured`);
 
-  const url = new URL(request.url);
   if (match[2] === "login") {
     return startLogin(provider, client, auth, url.searchParams.get("return"));
   }
-  const outcome = await finishLogin(provider, client, auth, request);
+  const outcome = await finishLogin(provider, client, auth, request, url);
   if (outcome.ok) await treasury(env).recordLogin(outcome.identity);
   return loginResponse(outcome, auth);
 }
@@ -167,15 +163,15 @@ async function handleMe(request: Request, cfg: FaucetConfig, env: Env, path: str
   if (path === "/api/me/keys" && request.method === "POST") {
     const body = await readJsonObject(request);
     if (body instanceof Response) return body;
-    const name = body.label === undefined ? "API key" : label(body.label);
-    if (!name) return errorJson(400, "label must be a non-empty string of at most 100 characters");
-    return issued(await store.issueOwnKey(ownKeyRequest(session, cfg, name)), auth.maxKeysPerUser);
+    const name = body.label === undefined ? "API key" : parseLabel(body.label);
+    if (!name) return errorJson(400, LABEL_RULE);
+    return issued(await store.issueOwnKey({ ...ownKeyRequest(session, cfg), label: name }), auth.maxKeysPerUser);
   }
 
   const rotate = /^\/api\/me\/keys\/([0-9a-f]{12})\/rotate$/.exec(path);
   if (rotate && request.method === "POST") {
     return issued(
-      await store.issueOwnKey({ ...ownKeyRequest(session, cfg, ""), replacing: rotate[1] }),
+      await store.issueOwnKey({ ...ownKeyRequest(session, cfg), replacing: rotate[1] }),
       auth.maxKeysPerUser,
     );
   }
@@ -189,20 +185,17 @@ async function handleMe(request: Request, cfg: FaucetConfig, env: Env, path: str
   return errorJson(404, "Not found");
 }
 
-function ownKeyRequest(session: Session, cfg: FaucetConfig, name: string) {
+function ownKeyRequest(session: Session, cfg: FaucetConfig) {
+  // Only the identity crosses into the Durable Object, not the session's sid.
   const { sid: _sid, exp: _exp, ...who } = session;
   return {
     who,
-    label: name,
     maxActive: cfg.auth.maxKeysPerUser,
     ttlMs: cfg.auth.keyTtlMs,
   };
 }
 
-function issued(
-  result: Awaited<ReturnType<ReturnType<typeof treasury>["issueOwnKey"]>>,
-  max: number,
-): Response {
+function issued(result: IssueOwnKeyResult, max: number): Response {
   if (result.ok) return noStore({ token: result.token, key: result.key }, 201);
   return result.reason === "limit"
     ? errorJson(409, `You already have ${max} active keys; revoke one first`)
@@ -237,8 +230,7 @@ function authorizeAdmin(request: Request, cfg: FaucetConfig): AdminAuth {
   if (!checkCsrf(request, session, cfg.auth)) {
     return { ok: false, response: errorJson(403, "Missing or invalid CSRF token") };
   }
-  const handle = session.provider === "github" ? `github:${session.login ?? session.id}` : `google:${session.email}`;
-  return { ok: true, actor: handle };
+  return { ok: true, actor: adminHandle(session) };
 }
 
 async function handleAdmin(request: Request, cfg: FaucetConfig, env: Env, path: string): Promise<Response> {
@@ -268,17 +260,13 @@ async function handleAdminKeys(request: Request, env: Env, path: string): Promis
   if (path === "/api/admin/keys" && request.method === "POST") {
     const body = await readJsonObject(request);
     if (body instanceof Response) return body;
-    const name = label(body.label);
+    const name = parseLabel(body.label);
     const { tier, perDay } = body;
-    if (!name) return errorJson(400, "label must be a non-empty string of at most 100 characters");
+    if (!name) return errorJson(400, LABEL_RULE);
     if (typeof tier !== "string" || !KEY_TIERS.includes(tier as KeyTier)) {
       return errorJson(400, `tier must be one of: ${KEY_TIERS.join(", ")}`);
     }
-    if (
-      perDay !== undefined &&
-      perDay !== null &&
-      !(typeof perDay === "number" && Number.isInteger(perDay) && perDay >= 1)
-    ) {
+    if (perDay !== undefined && perDay !== null && !isIntInRange(perDay, 1)) {
       return errorJson(400, "perDay must be a positive integer or null (unlimited)");
     }
     const created = await store.createApiKey({
@@ -306,18 +294,13 @@ function parseExpiry(value: unknown, now: number): number | null | undefined {
 }
 
 function parseMaxRedemptions(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_REDEMPTIONS
-    ? value
-    : undefined;
+  return isIntInRange(value, 1, MAX_REDEMPTIONS) ? value : undefined;
 }
 
 function codeAmount(value: unknown, cfg: FaucetConfig): number | undefined {
   const sats = parseAmountSats(value);
   return sats !== undefined && sats <= cfg.apiKeys.maxPerRequestSats ? sats : undefined;
 }
-
-const AMOUNT_RULE = (cfg: FaucetConfig) =>
-  `amount must be a number of DASH from 0.001 to ${toDash(cfg.apiKeys.maxPerRequestSats)}`;
 
 /**
  * - `GET /api/admin/codes` — every code
@@ -345,12 +328,12 @@ async function handleAdminCodes(
     if (body instanceof Response) return body;
     const kind = body.kind as CodeKind;
     if (kind !== "event" && kind !== "voucher") return errorJson(400, "kind must be event or voucher");
-    const name = label(body.label);
-    if (!name) return errorJson(400, "label must be a non-empty string of at most 100 characters");
+    const name = parseLabel(body.label);
+    if (!name) return errorJson(400, LABEL_RULE);
     const amountSats = codeAmount(body.amount, cfg);
-    if (amountSats === undefined) return errorJson(400, AMOUNT_RULE(cfg));
+    if (amountSats === undefined) return errorJson(400, amountRule(cfg));
     const expiresAt = body.expiresAt === undefined ? null : parseExpiry(body.expiresAt, now);
-    if (expiresAt === undefined) return errorJson(400, "expiresAt must be a future time in epoch milliseconds, or null");
+    if (expiresAt === undefined) return errorJson(400, EXPIRY_RULE);
 
     let codes: string[];
     let maxRedemptions: number;
@@ -360,12 +343,12 @@ async function handleAdminCodes(
         return errorJson(400, "code must be 4–32 letters, digits or dashes, starting and ending with a letter or digit");
       }
       const max = parseMaxRedemptions(body.maxRedemptions);
-      if (max === undefined) return errorJson(400, `maxRedemptions must be an integer from 1 to ${MAX_REDEMPTIONS}`);
+      if (max === undefined) return errorJson(400, MAX_REDEMPTIONS_RULE);
       codes = [display];
       maxRedemptions = max;
     } else {
       const count = body.count === undefined ? 1 : body.count;
-      if (!(typeof count === "number" && Number.isInteger(count) && count >= 1 && count <= MAX_VOUCHERS_PER_BATCH)) {
+      if (!isIntInRange(count, 1, MAX_VOUCHERS_PER_BATCH)) {
         return errorJson(400, `count must be an integer from 1 to ${MAX_VOUCHERS_PER_BATCH}`);
       }
       codes = Array.from({ length: count }, generateVoucherCode);
@@ -396,22 +379,22 @@ async function handleAdminCodes(
     if (body instanceof Response) return body;
     const patch: CodePatch = {};
     if (body.label !== undefined) {
-      patch.label = label(body.label);
-      if (patch.label === undefined) return errorJson(400, "label must be a non-empty string of at most 100 characters");
+      patch.label = parseLabel(body.label);
+      if (patch.label === undefined) return errorJson(400, LABEL_RULE);
     }
     if (body.amount !== undefined) {
       patch.amountSats = codeAmount(body.amount, cfg);
-      if (patch.amountSats === undefined) return errorJson(400, AMOUNT_RULE(cfg));
+      if (patch.amountSats === undefined) return errorJson(400, amountRule(cfg));
     }
     if (body.maxRedemptions !== undefined) {
       patch.maxRedemptions = parseMaxRedemptions(body.maxRedemptions);
       if (patch.maxRedemptions === undefined) {
-        return errorJson(400, `maxRedemptions must be an integer from 1 to ${MAX_REDEMPTIONS}`);
+        return errorJson(400, MAX_REDEMPTIONS_RULE);
       }
     }
     if (body.expiresAt !== undefined) {
       const expiresAt = parseExpiry(body.expiresAt, now);
-      if (expiresAt === undefined) return errorJson(400, "expiresAt must be a future time in epoch milliseconds, or null");
+      if (expiresAt === undefined) return errorJson(400, EXPIRY_RULE);
       patch.expiresAt = expiresAt;
     }
     if (body.disabled !== undefined) {
@@ -423,12 +406,3 @@ async function handleAdminCodes(
   }
   return errorJson(404, "Not found");
 }
-
-/** The normalized key for a `code`/`promoCode` field, or an error message. */
-export function parseCodeField(value: unknown): { key: string } | { error: string } | undefined {
-  if (value === undefined || value === null || value === "") return undefined;
-  if (typeof value !== "string" || value.length > 64) return { error: "code must be a string" };
-  const key = codeKey(value);
-  return key.length >= 4 ? { key } : { error: "Invalid, expired or fully redeemed code" };
-}
-

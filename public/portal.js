@@ -56,6 +56,35 @@ const Portal = (() => {
     box.hidden = false;
   }
 
+  /** "revoked" | "expired" | "active" for an API key. */
+  function keyState(key) {
+    if (key.revokedAt) return "revoked";
+    if (key.expiresAt && key.expiresAt <= Date.now()) return "expired";
+    return "active";
+  }
+
+  function badge(text, good) {
+    return el("span", { class: good ? "badge ok" : "badge off" }, text);
+  }
+
+  /** Fill a tbody, or show one placeholder row when there is nothing. */
+  function fillRows(tbody, rows, colspan, emptyText) {
+    tbody.replaceChildren(
+      ...(rows.length ? rows : [el("tr", {}, el("td", { colspan, class: "empty" }, emptyText))]),
+    );
+  }
+
+  /** Run a UI action: clear the last error, show this one's if it fails. */
+  async function run(errorBox, action) {
+    errorBox.hidden = true;
+    try {
+      await action();
+    } catch (error) {
+      showError(errorBox, error);
+      errorBox.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+
   async function copy(text, button) {
     await navigator.clipboard.writeText(text);
     const label = button.textContent;
@@ -67,8 +96,17 @@ const Portal = (() => {
     state: "The sign-in link expired or was opened in another browser. Please try again.",
     denied: "Sign-in was cancelled.",
     provider: "The sign-in provider could not be reached. Please try again.",
-    domain: "Only verified @dash.org accounts, or members of the dashpay GitHub organization, can sign in.",
   };
+
+  /** Who may sign in, in words, for the providers this server offers. */
+  function eligibility() {
+    const parts = [];
+    if (me.providers.includes("google")) parts.push(`a verified @${me.emailDomain} Google account`);
+    if (me.providers.includes("github")) {
+      parts.push(`a GitHub account in the ${me.githubOrg} organization or with a verified @${me.emailDomain} address`);
+    }
+    return parts.join(", or ");
+  }
 
   /** Header identity line with a sign-out button. */
   function renderWho(container) {
@@ -91,15 +129,12 @@ const Portal = (() => {
   }
 
   function renderSignIn(container, returnTo) {
-    const params = new URLSearchParams(location.search);
-    const error = LOGIN_ERRORS[params.get("error")];
-    const names = { google: "Sign in with Google (dash.org)", github: "Sign in with GitHub" };
+    const code = new URLSearchParams(location.search).get("error");
+    const error = code === "domain" ? `Only ${eligibility()} can sign in.` : LOGIN_ERRORS[code];
+    const names = { google: `Sign in with Google (${me.emailDomain})`, github: "Sign in with GitHub" };
     container.replaceChildren(
       el("h2", {}, "Sign in"),
-      el("p", { class: "note" },
-        `Anyone with a verified @${me.emailDomain} Google account, or a GitHub account that is a member of `,
-        `the ${me.githubOrg} organization (or has a verified @${me.emailDomain} address), can sign in and `,
-        "create their own API keys."),
+      el("p", { class: "note" }, `Anyone with ${eligibility() || "an eligible account"} can sign in and create their own API keys.`),
       error ? el("div", { class: "error" }, error) : null,
       me.providers.length === 0
         ? el("p", { class: "empty" }, "Sign-in is not configured on this server yet.")
@@ -108,5 +143,5 @@ const Portal = (() => {
     );
   }
 
-  return { loadMe, api, el, date, dash, showError, copy, renderWho, renderSignIn, get me() { return me; } };
+  return { loadMe, api, el, date, dash, showError, keyState, badge, fillRows, run, copy, renderWho, renderSignIn };
 })();

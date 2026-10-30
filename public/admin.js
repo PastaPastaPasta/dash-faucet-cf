@@ -1,23 +1,12 @@
 "use strict";
 
 (() => {
-  const { el, date, dash, api } = Portal;
+  const { el, date, dash, api, keyState, badge, fillRows } = Portal;
   const $ = (id) => document.getElementById(id);
   const EXPLORER = "https://insight.testnet.networks.dash.org/insight/tx/";
 
-  function fail(error) {
-    Portal.showError($("adminError"), error);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  /** Run an admin action: clear the last error, show this one's if it fails. */
-  async function run(action) {
-    $("adminError").hidden = true;
-    try {
-      await action();
-    } catch (error) {
-      fail(error);
-    }
+  function run(action) {
+    return Portal.run($("adminError"), action);
   }
 
   /** datetime-local value → epoch ms, or null when blank. */
@@ -39,10 +28,10 @@
   // --- codes -------------------------------------------------------------------
 
   function codeStatus(code) {
-    if (code.disabled) return el("span", { class: "badge off" }, "disabled");
-    if (code.expiresAt && code.expiresAt <= Date.now()) return el("span", { class: "badge off" }, "expired");
-    if (code.redemptions >= code.maxRedemptions) return el("span", { class: "badge off" }, "used up");
-    return el("span", { class: "badge ok" }, "live");
+    if (code.disabled) return badge("disabled", false);
+    if (code.expiresAt && code.expiresAt <= Date.now()) return badge("expired", false);
+    if (code.redemptions >= code.maxRedemptions) return badge("used up", false);
+    return badge("live", true);
   }
 
   async function loadCodes() {
@@ -66,9 +55,7 @@
         )),
       ),
     );
-    $("codeRows").replaceChildren(
-      ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 8, class: "empty" }, "No codes yet."))]),
-    );
+    fillRows($("codeRows"), rows, 8, "No codes yet.");
   }
 
   function patch(code, changes) {
@@ -110,20 +97,12 @@
           el("td", { class: "mono" }, el("a", { href: EXPLORER + r.txid, target: "_blank", rel: "noopener noreferrer" }, `${r.txid.slice(0, 16)}…`)),
         ),
       );
-      $("detailRows").replaceChildren(
-        ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 4, class: "empty" }, "Not redeemed yet."))]),
-      );
+      fillRows($("detailRows"), rows, 4, "Not redeemed yet.");
       $("detailDialog").showModal();
     });
   }
 
   // --- keys --------------------------------------------------------------------
-
-  function keyStatus(key) {
-    if (key.revokedAt) return el("span", { class: "badge off" }, "revoked");
-    if (key.expiresAt && key.expiresAt <= Date.now()) return el("span", { class: "badge off" }, "expired");
-    return el("span", { class: "badge ok" }, "active");
-  }
 
   async function loadKeys() {
     const { keys } = await api("GET", "/api/admin/keys");
@@ -131,17 +110,17 @@
       .slice()
       .reverse()
       .map((key) => {
-        const live = !key.revokedAt && !(key.expiresAt && key.expiresAt <= Date.now());
+        const state = keyState(key);
         return el("tr", {},
           el("td", {}, key.label, el("div", { class: "mono" }, key.id)),
-          el("td", {}, key.ownerEmail || (key.owner ? key.owner : "— (minted)")),
+          el("td", {}, key.ownerEmail || key.owner || "— (minted)"),
           el("td", {}, el("span", { class: key.tier === "mn" ? "badge mn" : "badge" }, key.tier)),
           el("td", {}, date(key.createdAt)),
           el("td", {}, date(key.expiresAt)),
           el("td", {}, date(key.lastUsedAt)),
           el("td", {}, `${dash(key.paidSats)} (${key.payouts})`),
-          el("td", {}, keyStatus(key)),
-          el("td", {}, live
+          el("td", {}, badge(state, state === "active")),
+          el("td", {}, state === "active"
             ? el("button", {
                 class: "danger small",
                 onclick: () => {
@@ -155,9 +134,7 @@
             : null),
         );
       });
-    $("allKeyRows").replaceChildren(
-      ...(rows.length ? rows : [el("tr", {}, el("td", { colspan: 9, class: "empty" }, "No keys yet."))]),
-    );
+    fillRows($("allKeyRows"), rows, 9, "No keys yet.");
   }
 
   // --- wiring --------------------------------------------------------------------

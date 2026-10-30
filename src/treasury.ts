@@ -150,6 +150,14 @@ export interface ApiKeyInfo {
   paidSats: number;
 }
 
+interface MintKeyInput {
+  label: string;
+  tier: KeyTier;
+  perDay?: number | null;
+  owner?: Identity;
+  expiresAt?: number | null;
+}
+
 interface ApiKeyRow {
   [key: string]: string | number | null;
   hash: string;
@@ -184,6 +192,10 @@ function apiKeyInfo(row: ApiKeyRow): ApiKeyInfo {
     paidSats: row.paid_sats,
   };
 }
+
+export type IssueOwnKeyResult =
+  | { ok: true; token: string; key: ApiKeyInfo }
+  | { ok: false; reason: "limit" | "not_found" };
 
 export type PayoutResult =
   | {
@@ -714,7 +726,8 @@ export class Treasury extends DurableObject<Env> {
     } else if (input.codeKey !== undefined) {
       // Decided inside the payout lock, so two people racing for a code's
       // last redemption cannot both get it.
-      const check = checkCode(sql, input.codeKey, input.address, input.ip, now);
+      if (!cfg.apiKeys.enabled) return { ok: false, code: "code_invalid" };
+      const check = checkCode(sql, input.codeKey, input.address, now);
       if (!check.ok) return { ok: false, code: check.reason === "used" ? "code_used" : "code_invalid" };
       code = check.code;
       satoshis = code.amount_sats;
@@ -816,7 +829,10 @@ export class Treasury extends DurableObject<Env> {
       return { ok: false, code: "error", detail: "could not build transaction" };
     }
 
-    const keyResult = apiKey ? { keyId: apiKey.id } : code ? { codeLabel: code.label } : {};
+    const keyResult = {
+      ...(apiKey ? { keyId: apiKey.id } : {}),
+      ...(code ? { codeLabel: code.label } : {}),
+    };
     if (cfg.dryRun) {
       // Build and sign, but change no state and touch no network.
       return {
@@ -838,7 +854,7 @@ export class Treasury extends DurableObject<Env> {
       if (apiKey && outcome.uncertain) this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
       // Same for a code: a retry must not redeem it twice.
       if (code && outcome.uncertain) {
-        recordRedemption(sql, code, input.address, input.ip, built.txid, satoshis, now);
+        recordRedemption(sql, code, input.address, built.txid, satoshis, now);
       }
       return outcome.result;
     }
@@ -853,7 +869,7 @@ export class Treasury extends DurableObject<Env> {
     } else if (code) {
       // Code payouts, too, stay out of the public ledgers: the code's own cap
       // and per-address/per-network rule are its limits.
-      recordRedemption(sql, code, input.address, input.ip, built.txid, satoshis, now);
+      recordRedemption(sql, code, input.address, built.txid, satoshis, now);
     } else {
       sql.exec(
         `INSERT OR REPLACE INTO claims (recipient, day, txid, satoshis, created_at)
@@ -1029,17 +1045,12 @@ export class Treasury extends DurableObject<Env> {
    * Pure SQL with no await, so the single thread already makes it atomic; it
    * does not need the spending lock.
    */
-  async createApiKey(input: Parameters<Treasury["mintKey"]>[0]): Promise<{ token: string; key: ApiKeyInfo }> {
+  async createApiKey(input: MintKeyInput): Promise<{ token: string; key: ApiKeyInfo }> {
     return this.mintKey(input);
   }
 
-  private mintKey(input: {
-    label: string;
-    tier: KeyTier;
-    perDay?: number | null;
-    owner?: Identity;
-    expiresAt?: number | null;
-  }): { token: string; key: ApiKeyInfo } {
+  /** Synchronous, so `issueOwnKey` can check its cap and insert with no await between. */
+  private mintKey(input: MintKeyInput): { token: string; key: ApiKeyInfo } {
     const token = generateApiKey();
     const hash = hashApiKey(token);
     const perDay = input.perDay === undefined ? DEFAULT_PER_DAY[input.tier] : input.perDay;
@@ -1079,16 +1090,17 @@ export class Treasury extends DurableObject<Env> {
 
   /** Every key, or only `owner`'s. Never includes hashes. */
   async listApiKeys(owner?: string): Promise<ApiKeyInfo[]> {
-    const select = `SELECT k.*, u.email AS owner_email FROM api_keys k
-      LEFT JOIN users u ON u.id = k.owner`;
-    const rows =
-      owner === undefined
-        ? this.ctx.storage.sql.exec<ApiKeyRow>(`${select} ORDER BY k.created_at`)
-        : this.ctx.storage.sql.exec<ApiKeyRow>(
-            `${select} WHERE k.owner = ? ORDER BY k.created_at`,
-            owner,
-          );
-    return rows.toArray().map(apiKeyInfo);
+    const who = owner ?? null;
+    return this.ctx.storage.sql
+      .exec<ApiKeyRow>(
+        `SELECT k.*, u.email AS owner_email FROM api_keys k
+           LEFT JOIN users u ON u.id = k.owner
+          WHERE (? IS NULL OR k.owner = ?) ORDER BY k.created_at`,
+        who,
+        who,
+      )
+      .toArray()
+      .map(apiKeyInfo);
   }
 
   /**
@@ -1096,21 +1108,17 @@ export class Treasury extends DurableObject<Env> {
    * theirs does, so one person can never revoke another's key.
    */
   async revokeApiKey(id: string, owner?: string): Promise<boolean> {
-    const now = Date.now();
-    const cursor =
-      owner === undefined
-        ? this.ctx.storage.sql.exec(
-            `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL`,
-            now,
-            id,
-          )
-        : this.ctx.storage.sql.exec(
-            `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND owner = ? AND revoked_at IS NULL`,
-            now,
-            id,
-            owner,
-          );
-    return cursor.rowsWritten > 0;
+    const who = owner ?? null;
+    return (
+      this.ctx.storage.sql.exec(
+        `UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL
+           AND (? IS NULL OR owner = ?)`,
+        Date.now(),
+        id,
+        who,
+        who,
+      ).rowsWritten > 0
+    );
   }
 
   // --- self-serve accounts -----------------------------------------------------
@@ -1126,20 +1134,23 @@ export class Treasury extends DurableObject<Env> {
    */
   async issueOwnKey(input: {
     who: Identity;
-    label: string;
+    /** Ignored when rotating: the replacement keeps the old key's label. */
+    label?: string;
     maxActive: number;
     ttlMs: number;
     replacing?: string;
-  }): Promise<{ ok: true; token: string; key: ApiKeyInfo } | { ok: false; reason: "limit" | "not_found" }> {
+  }): Promise<IssueOwnKeyResult> {
     const sql = this.ctx.storage.sql;
     const now = Date.now();
-    let label = input.label;
+    let label = input.label ?? "API key";
     if (input.replacing !== undefined) {
       const old = sql
         .exec<{ label: string }>(
-          `SELECT label FROM api_keys WHERE id = ? AND owner = ? AND revoked_at IS NULL`,
+          `SELECT label FROM api_keys WHERE id = ? AND owner = ? AND revoked_at IS NULL
+             AND (expires_at IS NULL OR expires_at > ?)`,
           input.replacing,
           input.who.id,
+          now,
         )
         .toArray()[0];
       if (!old) return { ok: false, reason: "not_found" };
