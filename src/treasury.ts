@@ -1875,15 +1875,17 @@ export class Treasury extends DurableObject<Env> {
   }
 
   /**
-   * Merge the loose coins once more than `LOOSE_COINS_MAX` have confirmed,
-   * smallest first: what nothing else will spend goes before anything else.
-   * Null when the wallet is tidy enough.
+   * Merge the loose coins — below collateral size, and neither a kept pool
+   * coin nor a kept collateral coin — once more than `LOOSE_COINS_MAX` have
+   * confirmed, smallest first: what nothing else will spend goes first. Null
+   * when the wallet is tidy enough.
    */
   private planTidy(view: UtxoSnapshot): MergePlan | null {
-    const loose = this.spareCoins(view, Infinity)
+    // A coin of collateral size is no fragment: leave it whole and spendable.
+    const loose = this.spareCoins(view, COLLATERAL_COIN_SATS)
       .spare.filter((u) => u.height !== null)
       .sort((a, b) => a.satoshis - b.satoshis);
-    if (loose.length <= LOOSE_COINS_MAX) return null;
+    if (loose.length <= LOOSE_COINS_MAX || this.config.maxPayoutInputs < 2) return null;
     return { action: "merge", inputs: loose.slice(0, this.config.maxPayoutInputs), reaches: true };
   }
 
@@ -1969,8 +1971,11 @@ export class Treasury extends DurableObject<Env> {
       (u) => u.satoshis < kept && u.satoshis * 0.99 >= 2 * cfg.poolUtxoSats,
     );
     if (!splittable && this.merging) {
-      const merged = await this.consolidate(key, view, pool.length, now);
-      if (merged.action !== "none") return merged;
+      // Enough for two pool coins after the split's fee headroom. Only whether
+      // a merge can happen depends on it: one sweeps up to `maxPayoutInputs`
+      // coins (all below this size, so never a collateral coin) regardless.
+      const plan = this.planMerge(view, Math.ceil((2 * cfg.poolUtxoSats) / 0.99));
+      if (plan.action === "merge") return this.merge(key, plan.inputs, plan.reaches, now);
     }
     const biggest = splittable ?? descending[0];
     if (!biggest) {
@@ -2060,9 +2065,17 @@ export class Treasury extends DurableObject<Env> {
     if (plan.action !== "merge") {
       return { action: plan.action, detail: `${poolNote}; ${plan.detail}` };
     }
-    const { inputs, reaches } = plan;
+    return this.merge(key, plan.inputs, plan.reaches, now);
+  }
 
-    if (cfg.dryRun) {
+  /** Build, broadcast and record one merge of `inputs` into a single coin. */
+  private async merge(
+    key: FaucetKey,
+    inputs: Utxo[],
+    reaches: boolean,
+    now: number,
+  ): Promise<MaintenanceResult> {
+    if (this.config.dryRun) {
       return { action: "none", detail: `dry run: would consolidate ${inputs.length} coins` };
     }
 

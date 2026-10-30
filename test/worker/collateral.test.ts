@@ -333,6 +333,17 @@ describe("tidying", () => {
     expect((await t.snapshot()).collateralUtxos).toBe(1);
   });
 
+  it("leaves a coin of collateral size whole while tidying", async () => {
+    const reserve = { txid: "d".repeat(64), vout: 0, satoshis: 1500 * COIN, height: 10 };
+    chain.coins = [collateral, reserve, ...coins(4, POOL), ...coins(6, COIN, 100)];
+    const t = treasury();
+    expect((await followUp(t)).action).toBe("consolidate");
+    const merged = inputsOf(chain.lastBroadcast);
+    expect(merged).toHaveLength(5);
+    expect(merged).not.toContain(reserve.txid);
+    expect(merged).not.toContain(collateral.txid);
+  });
+
   it("leaves five loose coins alone", async () => {
     chain.coins = [collateral, ...coins(4, POOL), ...coins(5, COIN, 100)];
     const t = treasury();
