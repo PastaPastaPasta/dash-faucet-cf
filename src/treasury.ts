@@ -232,7 +232,7 @@ export type PayoutResult =
   | { ok: false; code: "code_invalid" }
   | { ok: false; code: "code_used" }
   | { ok: false; code: "bad_request"; detail: string }
-  /** `retryAfter` only where coins are being merged for it (`merging`). */
+  /** `retryAfter` only when a merge or the next block will fix it. */
   | { ok: false; code: "fragmented"; detail: string; retryAfter?: number }
   | { ok: false; code: "insufficient_funds"; detail: string }
   | { ok: false; code: "self_pay"; detail: string }
@@ -293,6 +293,10 @@ export interface InvitationMaintenanceResult {
   action: "disabled" | "none" | "updated" | "minted" | "blocked";
   detail: string;
 }
+
+type MergePlan =
+  | { action: "none" | "waiting"; detail: string }
+  | { action: "merge"; inputs: Utxo[]; reaches: boolean };
 
 type BroadcastSettlement =
   | { ok: true; accepted: string[] }
@@ -845,7 +849,12 @@ export class Treasury extends DurableObject<Env> {
       }
       if (err instanceof TooFragmentedError || err instanceof UnconfirmedFundsError) {
         const fragmented = { ok: false, code: "fragmented", detail: err.message } as const;
-        if (!this.merging) return fragmented;
+        if (!this.merging) {
+          // The next block fixes unconfirmed coins with no merge at all.
+          return err instanceof UnconfirmedFundsError
+            ? { ...fragmented, retryAfter: CONFIRMATION_POLL_MS / 1000 }
+            : fragmented;
+        }
         // More coins than one transaction carries: only a coin that pays the
         // amount by itself helps, so ask maintenance for one.
         if (err instanceof TooFragmentedError) {
@@ -1803,6 +1812,73 @@ export class Treasury extends DurableObject<Env> {
   }
 
   /**
+   * Coins a merge toward `goal` may spend, largest first: every coin below it
+   * but the smallest `poolTarget` pool coins, which are kept for payouts.
+   * Kept collateral coins go in only when nothing else reaches the goal.
+   */
+  private mergeMaterial(view: UtxoSnapshot, goal: number): Utxo[] {
+    const cfg = this.config;
+    const below = view.utxos
+      .filter((u) => u.satoshis < goal)
+      .sort((a, b) => b.satoshis - a.satoshis);
+    const isPoolCoin = (u: Utxo) =>
+      u.satoshis >= cfg.poolUtxoSats && u.satoshis < 2 * cfg.poolUtxoSats;
+    const keep = new Set(
+      below
+        .filter(isPoolCoin)
+        .slice(-cfg.poolTarget)
+        .map((u) => outpointKey(u.txid, u.outputIndex)),
+    );
+    const material = below.filter((u) => !keep.has(outpointKey(u.txid, u.outputIndex)));
+    // The kept collateral coins are the smallest that qualify; a larger one
+    // is an earlier pass's progress toward this goal, and keeps growing.
+    const collateral = material.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS);
+    const kept = new Set(
+      collateral
+        .slice(Math.max(0, collateral.length - cfg.collateralCoins))
+        .map((u) => outpointKey(u.txid, u.outputIndex)),
+    );
+    const spare = material.filter((u) => !kept.has(outpointKey(u.txid, u.outputIndex)));
+    const spareSum = spare.reduce((acc, u) => acc + u.satoshis, 0);
+    return spareSum >= goal ? spare : material;
+  }
+
+  /**
+   * What a merge toward `goal` can do now: merge (perhaps only partway), wait
+   * for coins still confirming, or nothing at all.
+   */
+  private planMerge(view: UtxoSnapshot, goal: number): MergePlan {
+    const material = this.mergeMaterial(view, goal);
+    // Every material coin is below the goal, so one alone never reaches it.
+    const available = material.reduce((acc, u) => acc + u.satoshis, 0);
+    if (available < goal) {
+      return {
+        action: "none",
+        detail: `${available} duffs outside the pool cannot reach a ${goal}-duff coin`,
+      };
+    }
+    const confirmed = material.filter((u) => u.height !== null);
+    const pending = material.length - confirmed.length;
+    const { inputs, reaches } = selectMergeInputs(confirmed, goal, this.config.maxPayoutInputs);
+    // Short with every confirmed coin already in: merging part of it now
+    // would only add a block. (Fewer than two inputs is never a merge.)
+    const stuck = !reaches && (inputs.length < 2 || inputs.length === confirmed.length);
+    if (stuck && pending === 0) {
+      return {
+        action: "none",
+        detail: `${available} duffs outside the pool cannot cover a ${goal}-duff coin and its fee`,
+      };
+    }
+    if (stuck) {
+      return {
+        action: "waiting",
+        detail: `waiting for ${pending} coin(s) to confirm before merging a ${goal}-duff coin`,
+      };
+    }
+    return { action: "merge", inputs, reaches };
+  }
+
+  /**
    * The largest coin a recent payout needed and no coin yet covers; 0 when
    * there is none. A demand some coin now meets is settled and dropped.
    */
@@ -1913,52 +1989,27 @@ export class Treasury extends DurableObject<Env> {
     const cfg = this.config;
     const poolNote = `${poolCount} pool coins available (min ${cfg.poolMin})`;
     const ready = view.utxos.filter((u) => u.satoshis >= COLLATERAL_COIN_SATS).length;
-    const goal = Math.max(
-      ready < cfg.collateralCoins ? COLLATERAL_COIN_SATS : 0,
-      this.mergeDemand(view),
-    );
-    if (goal === 0) return { action: "none", detail: poolNote };
+    const demand = this.mergeDemand(view);
+    // Largest first: a coin that meets the demand is a collateral coin too.
+    const goals = [demand, ready < cfg.collateralCoins ? COLLATERAL_COIN_SATS : 0]
+      .filter((g) => g > 0)
+      .sort((a, b) => b - a);
+    if (goals.length === 0) return { action: "none", detail: poolNote };
 
-    const below = view.utxos
-      .filter((u) => u.satoshis < goal)
-      .sort((a, b) => b.satoshis - a.satoshis);
-    // Keep the smallest `poolTarget` pool coins for payouts.
-    const isPoolCoin = (u: Utxo) =>
-      u.satoshis >= cfg.poolUtxoSats && u.satoshis < 2 * cfg.poolUtxoSats;
-    const keep = new Set(
-      below
-        .filter(isPoolCoin)
-        .slice(-cfg.poolTarget)
-        .map((u) => outpointKey(u.txid, u.outputIndex)),
-    );
-    const material = below.filter((u) => !keep.has(outpointKey(u.txid, u.outputIndex)));
-    // Every material coin is below the goal, so one alone never reaches it.
-    const available = material.reduce((acc, u) => acc + u.satoshis, 0);
-    if (available < goal) {
-      return {
-        action: "none",
-        detail: `${poolNote}; ${available} duffs outside the pool cannot reach a ${goal}-duff coin`,
-      };
+    let plan: MergePlan = { action: "none", detail: "" };
+    for (const goal of goals) {
+      plan = this.planMerge(view, goal);
+      if (plan.action !== "none") break;
+      if (goal === demand) {
+        // Out of reach now: drop it rather than let it hold up a collateral
+        // coin. A retry that still cannot be paid asks again.
+        this.ctx.storage.sql.exec(`DELETE FROM merge_demand WHERE satoshis >= ?`, demand);
+      }
     }
-
-    const confirmed = material.filter((u) => u.height !== null);
-    const pending = material.length - confirmed.length;
-    const { inputs, reaches } = selectMergeInputs(confirmed, goal, cfg.maxPayoutInputs);
-    // Short with every confirmed coin already in: merging part of it now
-    // would only add a block. (Fewer than two inputs is never a merge.)
-    const stuck = !reaches && (inputs.length < 2 || inputs.length === confirmed.length);
-    if (stuck && pending === 0) {
-      return {
-        action: "none",
-        detail: `${poolNote}; ${available} duffs outside the pool cannot cover a ${goal}-duff coin and its fee`,
-      };
+    if (plan.action !== "merge") {
+      return { action: plan.action, detail: `${poolNote}; ${plan.detail}` };
     }
-    if (stuck) {
-      return {
-        action: "waiting",
-        detail: `${poolNote}; waiting for ${pending} coin(s) to confirm before merging a ${goal}-duff coin`,
-      };
-    }
+    const { inputs, reaches } = plan;
 
     if (cfg.dryRun) {
       return { action: "none", detail: `dry run: would consolidate ${inputs.length} coins` };

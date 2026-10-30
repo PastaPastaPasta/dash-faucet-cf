@@ -174,7 +174,7 @@ const PAYOUT_FAILURES: Record<
   fragmented: {
     status: 503,
     message:
-      "The faucet is merging coins to cover this amount; try again after the next block",
+      "No coin large enough for this amount yet; coins must be merged or confirmed first, so try again later",
   },
   error: { status: 500, message: "Internal server error" },
 };
