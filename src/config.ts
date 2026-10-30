@@ -84,9 +84,12 @@ export interface Env {
   AUTH_EMAIL_DOMAIN?: string;
   /** GitHub organization whose active members may sign in. */
   AUTH_GITHUB_ORG?: string;
-  /** Comma-separated `google:<email>` / `github:<numeric id>` identities with admin rights. */
+  /**
+   * Comma-separated admins: `google:<email>`, `google:@<domain>` (every
+   * signed-in Google account in that Workspace) or `github:<numeric id>`.
+   */
   AUTH_ADMINS?: string;
-  /** Lifetime of a self-serve API key, in days. */
+  /** Lifetime of a self-serve API key, in days; 0 (the default) means keys never expire. */
   SELF_SERVE_KEY_TTL_DAYS?: string;
   /** Active self-serve keys one person may hold. */
   MAX_KEYS_PER_USER?: string;
@@ -119,6 +122,7 @@ export interface AuthConfig {
   admins: Set<string>;
   google: OAuthClient | null;
   github: OAuthClient | null;
+  /** 0: self-serve keys never expire. */
   keyTtlMs: number;
   maxKeysPerUser: number;
 }
@@ -361,8 +365,10 @@ function authConfig(env: Env, network: NetworkName): AuthConfig {
       .filter(Boolean),
   );
   for (const admin of admins) {
-    if (!/^(google:[^@\s]+@[^@\s]+|github:\d+)$/.test(admin)) {
-      throw new Error(`AUTH_ADMINS entries must be google:<email> or github:<numeric id>, got ${admin}`);
+    if (!/^(google:[^@\s]*@[^@\s]+|github:\d+)$/.test(admin)) {
+      throw new Error(
+        `AUTH_ADMINS entries must be google:<email>, google:@<domain> or github:<numeric id>, got ${admin}`,
+      );
     }
   }
   return {
@@ -373,7 +379,7 @@ function authConfig(env: Env, network: NetworkName): AuthConfig {
     admins,
     google: usable ? oauthClient(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET) : null,
     github: usable ? oauthClient(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET) : null,
-    keyTtlMs: positiveInt("SELF_SERVE_KEY_TTL_DAYS", env.SELF_SERVE_KEY_TTL_DAYS, 180) * 86_400_000,
+    keyTtlMs: int("SELF_SERVE_KEY_TTL_DAYS", env.SELF_SERVE_KEY_TTL_DAYS, 0) * 86_400_000,
     maxKeysPerUser: positiveInt("MAX_KEYS_PER_USER", env.MAX_KEYS_PER_USER, 5),
   };
 }

@@ -1,6 +1,7 @@
 import { SELF, env, runInDurableObject } from "cloudflare:test";
 import DashKeys from "dashkeys";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { migrateAccounts } from "../../src/accounts";
 import { b64url } from "../../src/auth";
 import { TREASURY_ID } from "../../src/treasury";
 import { FakeChain } from "./fakechain";
@@ -247,7 +248,8 @@ describe("self-serve keys", () => {
     expect(created.status).toBe(201);
     expect(created.body.token).toMatch(/^dfk_/);
     expect(created.body.key).toMatchObject({ tier: "trusted", owner: "google:g-1", label: "laptop" });
-    expect(created.body.key.expiresAt).toBeGreaterThan(Date.now() + 179 * 86_400_000);
+    // SELF_SERVE_KEY_TTL_DAYS defaults to 0: self-serve keys never expire.
+    expect(created.body.key.expiresAt).toBeNull();
 
     const listed = await call(cookie!, "GET", "/api/me/keys");
     expect(listed.body.keys).toHaveLength(1);
@@ -287,6 +289,35 @@ describe("self-serve keys", () => {
     expect(pay.status).toBe(401);
     // Rotating would otherwise mint a live key without counting against the cap.
     expect((await call(cookie!, "POST", `/api/me/keys/${created.key.id}/rotate`)).status).toBe(404);
+  });
+
+  it("lift an old expiry once the policy says keys never expire", async () => {
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const left = await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const insert = (hash: string, owner: string | null, revoked: number | null) =>
+        sql.exec(
+          `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at, revoked_at)
+           VALUES (?, ?, 'old', 'trusted', NULL, 0, ?, ?, ?)`,
+          hash, hash.slice(0, 12), owner, Date.now() + 1000, revoked,
+        );
+      insert("a".repeat(64), "google:1", null);
+      insert("b".repeat(64), "google:1", 5);
+      insert("c".repeat(64), null, null);
+      // Already expired: must not come back to life.
+      sql.exec(
+        `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at)
+         VALUES (?, ?, 'old', 'trusted', NULL, 0, 'google:1', ?)`,
+        "d".repeat(64), "d".repeat(12), Date.now() - 1000,
+      );
+      migrateAccounts(sql, { selfServeKeysExpire: false });
+      return sql
+        .exec<{ id: string; expires_at: number | null }>(`SELECT id, expires_at FROM api_keys ORDER BY id`)
+        .toArray();
+    });
+    // The live self-serve key no longer expires; a revoked one, an
+    // admin-minted one and an already-expired one are left as they were.
+    expect(left.map((k) => k.expires_at === null)).toEqual([true, false, false, false]);
   });
 
   it("caps active keys per person", async () => {
@@ -378,6 +409,11 @@ describe("admin", () => {
     const mn = await call(admin, "POST", "/api/admin/keys", { label: "operator", tier: "mn" });
     expect(mn.status).toBe(201);
     expect(mn.body.key.tier).toBe("mn");
+
+    // Every mint and revocation names who did it.
+    const after = (await call(admin, "GET", "/api/admin/keys")).body.keys;
+    expect(after.find((k: any) => k.id === own.id)).toMatchObject({ createdBy: "google:g-1", revokedBy: "google:admin@dash.org" });
+    expect(after.find((k: any) => k.id === mn.body.key.id)).toMatchObject({ createdBy: "google:admin@dash.org", revokedBy: null });
   });
 
   it("creates, edits and disables codes; codes pay through the captcha path", async () => {
@@ -417,7 +453,12 @@ describe("admin", () => {
 
     // Disabled: refused, with the same answer as an unknown code.
     const disabled = await call(admin, "PATCH", `/api/admin/codes/${code.id}`, { disabled: true, amount: 30 });
-    expect(disabled.body.code).toMatchObject({ disabled: true, amountSats: 30 * 100_000_000 });
+    expect(disabled.body.code).toMatchObject({
+      disabled: true,
+      amountSats: 30 * 100_000_000,
+      createdBy: "google:admin@dash.org",
+      updatedBy: "google:admin@dash.org",
+    });
     const off = await redeem("DASHCON-24", second, "203.0.113.80");
     expect(off.status).toBe(400);
     expect(((await off.json()) as any).error).toBe("Invalid, expired or fully redeemed code");

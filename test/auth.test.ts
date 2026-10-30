@@ -1,7 +1,8 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { codeKey } from "../src/accounts";
 import { digestEquals as safeEqual } from "../src/apikeys";
-import { b64url, seal, unseal, verifyGoogleIdToken } from "../src/auth";
+import { type Session, b64url, isAdminSession, seal, unseal, verifyGoogleIdToken } from "../src/auth";
+import type { AuthConfig } from "../src/config";
 
 const SECRET = "unit-test-session-secret-0123456789";
 
@@ -106,5 +107,23 @@ describe("Google ID token verification", () => {
     expect(await verifyGoogleIdToken(none, CLIENT, NONCE, NOW)).toBeNull();
     const unknown = await token(good(), { alg: "RS256", kid: "nobody" });
     expect(await verifyGoogleIdToken(unknown, CLIENT, NONCE, NOW)).toBeNull();
+  });
+});
+
+describe("admin identities", () => {
+  const cfg = (admins: string[]) => ({ admins: new Set(admins) }) as AuthConfig;
+  const google = (email: string): Session =>
+    ({ id: "google:1", provider: "google", email, name: email, sid: "s", exp: 0 });
+  const github = (id: number): Session =>
+    ({ id: `github:${id}`, provider: "github", email: "x@dash.org", name: "x", login: "x", sid: "s", exp: 0 });
+
+  it("matches a Google address, a whole Workspace domain, or a GitHub id", () => {
+    expect(isAdminSession(google("pasta@dash.org"), cfg(["google:pasta@dash.org"]))).toBe(true);
+    expect(isAdminSession(google("dev@dash.org"), cfg(["google:pasta@dash.org"]))).toBe(false);
+    expect(isAdminSession(google("Dev@Dash.org"), cfg(["google:@dash.org"]))).toBe(true);
+    expect(isAdminSession(google("dev@notdash.org"), cfg(["google:@dash.org"]))).toBe(false);
+    expect(isAdminSession(github(6443210), cfg(["github:6443210"]))).toBe(true);
+    // A GitHub session never qualifies through a Google domain rule, whatever its email.
+    expect(isAdminSession(github(7), cfg(["google:@dash.org"]))).toBe(false);
   });
 });

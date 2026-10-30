@@ -27,6 +27,14 @@ const Portal = (() => {
     return data;
   }
 
+  /** Text and nodes to append, minus null/undefined/false (which would render as "null"). */
+  function nodes(children) {
+    return children
+      .flat(Infinity)
+      .filter((c) => c !== null && c !== undefined && c !== false)
+      .map((c) => (c instanceof Node ? c : document.createTextNode(String(c))));
+  }
+
   /** el("td", { class: "mono" }, "text", childNode, ...) */
   function el(tag, attrs, ...children) {
     const node = document.createElement(tag);
@@ -35,25 +43,32 @@ const Portal = (() => {
       if (key.startsWith("on")) node.addEventListener(key.slice(2), value);
       else node.setAttribute(key, value === true ? "" : String(value));
     }
-    for (const child of children.flat()) {
-      if (child === null || child === undefined || child === false) continue;
-      node.append(child instanceof Node ? child : document.createTextNode(String(child)));
-    }
+    node.append(...nodes(children));
     return node;
   }
 
+  /** Replace a container's children, skipping empty entries. */
+  function fill(container, ...children) {
+    container.replaceChildren(...nodes(children));
+  }
+
   function date(ms) {
-    if (!ms) return "—";
-    return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+    if (!ms) return "never";
+    return new Date(ms).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  }
+
+  function ago(ms) {
+    if (!ms) return "never";
+    const minutes = Math.round((Date.now() - ms) / 60_000);
+    if (minutes < 1) return "just now";
+    if (minutes < 60) return `${minutes} min ago`;
+    const hours = Math.round(minutes / 60);
+    if (hours < 48) return `${hours} h ago`;
+    return date(ms);
   }
 
   function dash(sats) {
     return `${(sats / 1e8).toLocaleString(undefined, { maximumFractionDigits: 8 })} tDASH`;
-  }
-
-  function showError(box, error) {
-    box.textContent = error instanceof Error ? error.message : String(error);
-    box.hidden = false;
   }
 
   /** "revoked" | "expired" | "active" for an API key. */
@@ -63,15 +78,13 @@ const Portal = (() => {
     return "active";
   }
 
-  function badge(text, good) {
-    return el("span", { class: good ? "badge ok" : "badge off" }, text);
+  function pill(text, tone) {
+    return el("span", { class: `pill pill-${tone}` }, text);
   }
 
-  /** Fill a tbody, or show one placeholder row when there is nothing. */
-  function fillRows(tbody, rows, colspan, emptyText) {
-    tbody.replaceChildren(
-      ...(rows.length ? rows : [el("tr", {}, el("td", { colspan, class: "empty" }, emptyText))]),
-    );
+  function showError(box, error) {
+    box.textContent = error instanceof Error ? error.message : String(error);
+    box.hidden = false;
   }
 
   /** Run a UI action: clear the last error, show this one's if it fails. */
@@ -89,14 +102,12 @@ const Portal = (() => {
     await navigator.clipboard.writeText(text);
     const label = button.textContent;
     button.textContent = "Copied";
-    setTimeout(() => { button.textContent = label; }, 1500);
+    button.classList.add("is-done");
+    setTimeout(() => {
+      button.textContent = label;
+      button.classList.remove("is-done");
+    }, 1600);
   }
-
-  const LOGIN_ERRORS = {
-    state: "The sign-in link expired or was opened in another browser. Please try again.",
-    denied: "Sign-in was cancelled.",
-    provider: "The sign-in provider could not be reached. Please try again.",
-  };
 
   /** Who may sign in, in words, for the providers this server offers. */
   function eligibility() {
@@ -108,40 +119,53 @@ const Portal = (() => {
     return parts.join(", or ");
   }
 
-  /** Header identity line with a sign-out button. */
+  const LOGIN_ERRORS = {
+    state: "That sign-in link expired or was opened in a different browser. Start again below.",
+    denied: "Sign-in was cancelled. Start again when you're ready.",
+    provider: "Google could not be reached. Try again in a moment.",
+  };
+
+  /** Top-bar identity: who you are, where else you can go, and sign out. */
   function renderWho(container) {
-    container.replaceChildren();
-    if (!me || !me.authenticated) return;
-    const who = me.user.provider === "github" ? `@${me.user.login} (GitHub)` : me.user.email;
-    // Through el(), which drops the null entries: append() would print them.
-    container.append(...el("div", {},
-      el("span", {}, "Signed in as ", el("strong", {}, who)),
-      me.admin && location.pathname !== "/admin" ? el("a", { href: "/admin" }, "Admin") : null,
-      location.pathname !== "/keys" ? el("a", { href: "/keys" }, "My keys") : null,
+    if (!me || !me.authenticated) return fill(container);
+    const who = me.user.provider === "github" ? `@${me.user.login}` : me.user.email;
+    const here = location.pathname;
+    fill(
+      container,
+      el("span", { class: "who-name", title: who }, who),
+      me.admin && here !== "/admin" ? el("a", { href: "/admin" }, "Admin") : null,
+      here !== "/keys" ? el("a", { href: "/keys" }, "My keys") : null,
       el("button", {
-        class: "secondary small",
+        class: "ghost small",
         onclick: async () => {
           await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
           location.href = "/keys";
         },
       }, "Sign out"),
-    ).childNodes);
-  }
-
-  function renderSignIn(container, returnTo) {
-    const code = new URLSearchParams(location.search).get("error");
-    const error = code === "domain" ? `Only ${eligibility()} can sign in.` : LOGIN_ERRORS[code];
-    const names = { google: `Sign in with Google (${me.emailDomain})`, github: "Sign in with GitHub" };
-    container.replaceChildren(
-      el("h2", {}, "Sign in"),
-      el("p", { class: "note" }, `Anyone with ${eligibility() || "an eligible account"} can sign in and create their own API keys.`),
-      error ? el("div", { class: "error" }, error) : null,
-      me.providers.length === 0
-        ? el("p", { class: "empty" }, "Sign-in is not configured on this server yet.")
-        : el("div", { class: "providers" },
-            me.providers.map((p) => el("a", { class: "btn", href: `/auth/${p}/login?return=${returnTo}` }, names[p] || p))),
     );
   }
 
-  return { loadMe, api, el, date, dash, showError, keyState, badge, fillRows, run, copy, renderWho, renderSignIn };
+  const PROVIDER_NAMES = { google: "Continue with Google", github: "Continue with GitHub" };
+
+  function renderSignIn(container, returnTo, heading, lede) {
+    const code = new URLSearchParams(location.search).get("error");
+    const error = code === "domain"
+      ? `That account can't sign in here. Use ${eligibility()}.`
+      : LOGIN_ERRORS[code];
+    fill(
+      container,
+      el("h1", {}, heading),
+      el("p", { class: "lede" }, lede),
+      error ? el("div", { class: "error", role: "alert" }, error) : null,
+      me.providers.length === 0
+        ? el("p", { class: "muted" }, "Sign-in isn't set up on this server yet.")
+        : el("div", { class: "providers" },
+            me.providers.map((p) =>
+              el("a", { class: "button primary large", href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
+      el("p", { class: "muted fine" }, `Open to anyone with ${eligibility() || "an eligible account"}.`),
+    );
+    container.hidden = false;
+  }
+
+  return { loadMe, api, el, fill, date, ago, dash, keyState, pill, showError, run, copy, renderWho, renderSignIn };
 })();

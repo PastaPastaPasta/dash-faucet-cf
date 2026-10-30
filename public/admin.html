@@ -8,120 +8,161 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/portal.css">
 </head>
-<body>
-  <div class="container">
-    <header>
-      <h1><a href="/">Dash Faucet</a> · Admin</h1>
+<body class="page-admin">
+  <div class="shell">
+    <nav class="topbar">
+      <a class="brand" href="/">Dash Faucet</a>
+      <span class="crumb">Admin</span>
       <div class="who" id="who"></div>
-    </header>
+    </nav>
 
-    <section class="card" id="signIn" hidden></section>
-    <section class="card" id="notAdmin" hidden>
-      <h2>Not an admin</h2>
-      <p class="note">This account can manage its own keys on <a href="/keys">/keys</a>, but not codes or other people's keys.</p>
+    <section class="signin" id="signIn" hidden></section>
+    <section class="signin" id="notAdmin" hidden>
+      <h1>This account isn't an admin</h1>
+      <p class="lede">You can still manage your own API keys.</p>
+      <a class="button primary" href="/keys">Go to my keys</a>
     </section>
 
-    <section id="panel" hidden>
-      <div class="tabs" role="tablist">
-        <button role="tab" id="tabCodes" aria-selected="true">Codes</button>
-        <button role="tab" id="tabKeys" aria-selected="false">Keys</button>
+    <main id="panel" hidden>
+      <div class="segmented" role="tablist" aria-label="Admin sections">
+        <button role="tab" id="tabCodes" aria-selected="true" aria-controls="codesPane">Codes</button>
+        <button role="tab" id="tabKeys" aria-selected="false" aria-controls="keysPane">Keys</button>
       </div>
-      <div class="error" id="adminError" hidden></div>
+      <div class="error" id="adminError" role="alert" hidden></div>
 
-      <div id="codesPane">
-        <div class="card">
-          <h2>New event code</h2>
-          <p class="note">A typeable code many people can redeem, once per address. Redeeming still needs the captcha, but a captcha is cheap: for anything valuable pick a code nobody could guess, or use vouchers.</p>
-          <form class="row" id="eventForm">
-            <label class="field">Code <input id="eventCode" placeholder="DASHCON-24" maxlength="32" required></label>
-            <label class="field">Label <input id="eventLabel" placeholder="DashCon 2026" maxlength="100" required></label>
-            <label class="field">tDASH each <input id="eventAmount" type="number" min="0.001" step="0.001" value="10" required></label>
-            <label class="field">Max redemptions <input id="eventMax" type="number" min="1" step="1" value="100" required></label>
-            <label class="field">Expires (optional) <input id="eventExpiry" type="datetime-local"></label>
-            <button type="submit">Create</button>
-          </form>
-        </div>
-        <div class="card">
-          <h2>New vouchers</h2>
-          <p class="note">Generated single-use codes, e.g. to hand out on paper.</p>
-          <form class="row" id="voucherForm">
-            <label class="field">How many <input id="voucherCount" type="number" min="1" max="200" step="1" value="10" required></label>
-            <label class="field">Label <input id="voucherLabel" placeholder="Meetup handouts" maxlength="100" required></label>
-            <label class="field">tDASH each <input id="voucherAmount" type="number" min="0.001" step="0.001" value="25" required></label>
-            <label class="field">Expires (optional) <input id="voucherExpiry" type="datetime-local"></label>
-            <button type="submit">Generate</button>
-          </form>
-          <div class="secret" id="newVouchers" hidden>
-            <strong>New vouchers</strong>
-            <pre id="newVoucherList"></pre>
-            <button id="copyVouchers" class="small">Copy all</button>
+      <div id="codesPane" role="tabpanel">
+        <section class="panel">
+          <h2>New code</h2>
+          <div class="segmented" aria-label="Code type">
+            <button type="button" id="kindEvent" aria-pressed="true">Event code</button>
+            <button type="button" id="kindVoucher" aria-pressed="false">Vouchers</button>
           </div>
-        </div>
-        <div class="card">
-          <h2>Codes</h2>
+          <p class="lede" id="kindHint"></p>
+          <form id="codeForm">
+            <div class="grid">
+              <label class="field" data-kind="event">Code
+                <input id="codeValue" class="mono" placeholder="DASHCON-26" maxlength="32" autocomplete="off" spellcheck="false">
+              </label>
+              <label class="field" data-kind="voucher" hidden>How many
+                <input id="codeCount" type="number" min="1" max="200" step="1" value="10">
+              </label>
+              <label class="field">Label
+                <input id="codeLabel" placeholder="DashCon 2026" maxlength="100" required>
+              </label>
+              <label class="field">Amount each
+                <span class="suffix" data-suffix="tDASH"><input id="codeAmount" type="number" min="0.001" step="any" value="10" required></span>
+              </label>
+              <label class="field" data-kind="event">Uses in total
+                <input id="codeMax" type="number" min="1" step="1" value="100">
+              </label>
+              <label class="field">Expires
+                <input id="codeExpiry" type="date">
+                <span class="hint">Leave empty for never.</span>
+              </label>
+            </div>
+            <div class="form-actions">
+              <button type="submit" class="primary" id="codeSubmit">Create code</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="slip" id="newVouchers" hidden aria-live="polite">
+          <p class="slip-title" id="newVoucherTitle"></p>
+          <pre id="newVoucherList"></pre>
+          <div class="form-actions">
+            <button id="copyVouchers" class="primary">Copy all</button>
+            <button id="hideVouchers" class="ghost">Done</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Codes</h2><span class="muted fine" id="codeCount2"></span></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Code</th><th>Label</th><th>Kind</th><th>Each</th><th>Used</th><th>Expires</th><th>Status</th><th></th></tr></thead>
+              <thead><tr><th>Code</th><th>Amount</th><th class="usage">Used</th><th>Expires</th><th>Status</th><th></th></tr></thead>
               <tbody id="codeRows"></tbody>
             </table>
           </div>
-        </div>
+        </section>
       </div>
 
-      <div id="keysPane" hidden>
-        <div class="card">
+      <div id="keysPane" role="tabpanel" hidden>
+        <section class="panel">
           <h2>Mint a key</h2>
-          <p class="note"><span class="mono">mn</span> keys pay exactly one 1000 tDASH masternode collateral per call.
-            <span class="mono">trusted</span> keys minted here have no owner and never expire (for services and CI).</p>
-          <form class="row" id="mintForm">
-            <label class="field">Label <input id="mintLabel" placeholder="Operator name" maxlength="100" required></label>
-            <label class="field">Tier
-              <select id="mintTier"><option value="mn">mn (1000 tDASH collateral)</option><option value="trusted">trusted</option></select>
-            </label>
-            <label class="field">Payouts per day (blank = tier default) <input id="mintPerDay" type="number" min="1" step="1"></label>
-            <button type="submit">Mint</button>
+          <p class="lede">For people without a dash.org account, and for services. Masternode keys pay exactly one 1000 tDASH collateral per request.</p>
+          <form id="mintForm">
+            <div class="grid">
+              <label class="field">Who it's for
+                <input id="mintLabel" placeholder="Operator name or service" maxlength="100" required>
+              </label>
+              <label class="field">Type
+                <select id="mintTier">
+                  <option value="mn">Masternode collateral (1000 tDASH)</option>
+                  <option value="trusted">Unlimited (any amount)</option>
+                </select>
+              </label>
+              <label class="field">Requests per day
+                <input id="mintPerDay" type="number" min="1" step="1" placeholder="Default">
+                <span class="hint">Masternode keys default to 1; unlimited keys to no cap.</span>
+              </label>
+            </div>
+            <div class="form-actions"><button type="submit" class="primary">Mint key</button></div>
           </form>
-          <div class="secret" id="mintedKey" hidden>
-            <strong>The new key, shown only once. Send it to its owner privately.</strong>
-            <code id="mintedValue"></code>
-            <button id="copyMinted" class="small">Copy key</button>
+        </section>
+
+        <section class="slip" id="mintedKey" hidden aria-live="polite">
+          <p class="slip-title">The new key, shown only once. Send it to its owner privately.</p>
+          <div class="slip-key" id="mintedValue"></div>
+          <div class="form-actions">
+            <button id="copyMinted" class="primary">Copy key</button>
+            <button id="hideMinted" class="ghost">Done</button>
           </div>
-        </div>
-        <div class="card">
-          <h2>All keys</h2>
+        </section>
+
+        <section class="section">
+          <div class="section-head">
+            <h2>All keys</h2>
+            <label class="toolbar"><input type="checkbox" id="showRevoked"> Show revoked and expired</label>
+          </div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Label</th><th>Owner</th><th>Tier</th><th>Created</th><th>Expires</th><th>Last used</th><th>Paid</th><th>Status</th><th></th></tr></thead>
+              <thead><tr><th>Key</th><th>Owner</th><th>Type</th><th>Last used</th><th>Paid out</th><th>Status</th><th></th></tr></thead>
               <tbody id="allKeyRows"></tbody>
             </table>
           </div>
-        </div>
+        </section>
       </div>
-    </section>
+    </main>
   </div>
 
-  <dialog id="editDialog">
-    <h3>Edit <span class="mono" id="editCode"></span></h3>
-    <form class="row" id="editForm" method="dialog">
-      <label class="field">Label <input id="editLabel" maxlength="100" required></label>
-      <label class="field">tDASH each <input id="editAmount" type="number" min="0.001" step="0.001" required></label>
-      <label class="field">Max redemptions <input id="editMax" type="number" min="1" step="1" required></label>
-      <label class="field">Expires (blank = never) <input id="editExpiry" type="datetime-local"></label>
-      <button type="submit" value="save">Save</button>
-      <button type="button" class="secondary" id="editCancel">Cancel</button>
+  <dialog id="editDialog" aria-labelledby="editTitle">
+    <h2 id="editTitle">Edit code</h2>
+    <form id="editForm">
+      <div class="grid">
+        <label class="field">Label <input id="editLabel" maxlength="100" required></label>
+        <label class="field">Amount each
+          <span class="suffix" data-suffix="tDASH"><input id="editAmount" type="number" min="0.001" step="any" required></span>
+        </label>
+        <label class="field">Uses in total <input id="editMax" type="number" min="1" step="1" required></label>
+        <label class="field">Expires <input id="editExpiry" type="date"><span class="hint">Empty for never.</span></label>
+      </div>
+      <div class="form-actions">
+        <button type="submit" class="primary">Save changes</button>
+        <button type="button" class="ghost" id="editCancel">Cancel</button>
+      </div>
     </form>
   </dialog>
 
-  <dialog id="detailDialog">
-    <h3>Redemptions of <span class="mono" id="detailCode"></span></h3>
-    <p class="note" id="detailLink"></p>
+  <dialog id="detailDialog" aria-labelledby="detailTitle">
+    <h2 id="detailTitle"></h2>
+    <p class="lede" id="detailLink"></p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>When</th><th>Address</th><th>Amount</th><th>Transaction</th></tr></thead>
         <tbody id="detailRows"></tbody>
       </table>
     </div>
-    <div class="row"><button type="button" class="secondary" id="detailClose">Close</button></div>
+    <div class="form-actions"><button type="button" class="ghost" id="detailClose">Close</button></div>
   </dialog>
 
   <script src="/portal.js"></script>

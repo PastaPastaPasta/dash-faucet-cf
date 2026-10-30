@@ -123,8 +123,10 @@
         "AUTH_ORIGIN": "https://faucet.dashhq.org",
         "AUTH_EMAIL_DOMAIN": "dash.org",
         "AUTH_GITHUB_ORG": "dashpay",
-        "AUTH_ADMINS": "google:pasta@dash.org,github:6443210",
-        "SELF_SERVE_KEY_TTL_DAYS": "180",
+        // Every dash.org Google account is an admin (pasta, 10-30).
+        "AUTH_ADMINS": "google:@dash.org,github:6443210",
+        // 0: self-serve keys never expire; people revoke them when done.
+        "SELF_SERVE_KEY_TTL_DAYS": "0",
         "MAX_KEYS_PER_USER": "5",
         "DRY_RUN": "0"
       }

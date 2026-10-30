@@ -304,15 +304,17 @@ Every cookie-authenticated write needs the session's CSRF token in
 a strict CSP (`script-src 'self'`, no inline script), and they render server
 data as text only.
 
-**Self-serve keys** (`/api/me/keys`) are `trusted`, tied to the signed-in
-identity, and expire after `SELF_SERVE_KEY_TTL_DAYS` (180). Rotating gives a
+**Self-serve keys** (`/api/me/keys`) are `trusted` and tied to the signed-in
+identity. They never expire unless `SELF_SERVE_KEY_TTL_DAYS` is set, and
+while it is `0`, any expiry left over from an earlier setting is cleared. Rotating gives a
 fresh value and expiry and revokes the old key in the same step. A person can
 hold `MAX_KEYS_PER_USER` (5) active keys, and can only list, rotate or revoke
 their own.
 
-**Admins** are the `AUTH_ADMINS` identities: `google:<email>` or
-`github:<numeric id>`, pinned by id so a renamed account cannot inherit
-access. At `/admin` they manage codes, list and revoke anyone's key, and mint
+**Admins** are the `AUTH_ADMINS` identities: `google:<email>`,
+`google:@<domain>` (every signed-in Google account in that Workspace;
+production uses `google:@dash.org`) or `github:<numeric id>`, pinned by id
+so a renamed account cannot inherit access. At `/admin` they manage codes, list and revoke anyone's key, and mint
 `mn` or service keys. The admin bearer token still works for every
 `/api/admin/*` route.
 
@@ -534,8 +536,8 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `COLLATERAL_COINS` | Coins of 1001+ DASH kept for `mn` keys by merging small coins as soon as one is missing (default 0: no merging at all, and no `Retry-After` on a fragmented payout) |
 | `AUTH_ORIGIN` | Origin that serves login, `/keys` and `/admin`; blank disables login |
 | `AUTH_EMAIL_DOMAIN` / `AUTH_GITHUB_ORG` | Who may sign in (default `dash.org` / `dashpay`) |
-| `AUTH_ADMINS` | Comma-separated `google:<email>` / `github:<numeric id>` admins |
-| `SELF_SERVE_KEY_TTL_DAYS` / `MAX_KEYS_PER_USER` | Self-serve key lifetime (180) and per-person cap (5) |
+| `AUTH_ADMINS` | Comma-separated admins: `google:<email>`, `google:@<domain>`, `github:<numeric id>` |
+| `SELF_SERVE_KEY_TTL_DAYS` / `MAX_KEYS_PER_USER` | Self-serve key lifetime in days (0, never expire) and per-person cap (5) |
 | `SESSION_SECRET` | **secret**, ≥32 characters. Signs session and OAuth-state cookies; rotating it signs everyone out |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **secrets**. Google OAuth web client; redirect URI `AUTH_ORIGIN/auth/google/callback` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | **secrets**. GitHub OAuth app; callback `AUTH_ORIGIN/auth/github/callback` |

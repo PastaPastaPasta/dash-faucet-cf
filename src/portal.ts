@@ -264,7 +264,7 @@ async function handleAdmin(request: Request, cfg: FaucetConfig, env: Env, path: 
   if (!admin.ok) return admin.response;
 
   if (path === "/api/admin/keys" || path.startsWith("/api/admin/keys/")) {
-    return handleAdminKeys(request, env, path);
+    return handleAdminKeys(request, env, path, admin.actor);
   }
   if (path === "/api/admin/codes" || path.startsWith("/api/admin/codes/")) {
     return handleAdminCodes(request, cfg, env, path, admin.actor);
@@ -273,7 +273,7 @@ async function handleAdmin(request: Request, cfg: FaucetConfig, env: Env, path: 
 }
 
 /** Mint (POST), list (GET) and revoke (DELETE …/<id>) any API key. */
-async function handleAdminKeys(request: Request, env: Env, path: string): Promise<Response> {
+async function handleAdminKeys(request: Request, env: Env, path: string, actor: string): Promise<Response> {
   const store = treasury(env);
   if (path === "/api/admin/keys" && request.method === "GET") {
     return noStore({ keys: await store.listApiKeys() });
@@ -295,13 +295,14 @@ async function handleAdminKeys(request: Request, env: Env, path: string): Promis
       label: name,
       tier: tier as KeyTier,
       perDay: perDay as number | null | undefined,
+      createdBy: actor,
     });
     return noStore(created, 201);
   }
 
   const revoke = /^\/api\/admin\/keys\/([0-9a-f]{12})$/.exec(path);
   if (revoke && request.method === "DELETE") {
-    return (await store.revokeApiKey(revoke[1]))
+    return (await store.revokeApiKey(revoke[1], undefined, actor))
       ? noStore({ revoked: revoke[1] })
       : errorJson(404, "No active key with that id");
   }
@@ -423,7 +424,7 @@ async function handleAdminCodes(
       if (typeof body.disabled !== "boolean") return errorJson(400, "disabled must be true or false");
       patch.disabled = body.disabled;
     }
-    const updated = await store.updateCode(one[1], patch);
+    const updated = await store.updateCode(one[1], patch, actor);
     return updated ? noStore({ code: updated }) : errorJson(404, "No such code");
   }
   return errorJson(404, "Not found");
