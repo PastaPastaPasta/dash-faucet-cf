@@ -121,6 +121,12 @@ const CONFIRMATION_POLL_MS = 60_000;
  * cover within `maxPayoutInputs` coins. Long enough for the caller to retry.
  */
 const MERGE_DEMAND_TTL_MS = HOUR_MS;
+/**
+ * Confirmed loose coins — neither a kept pool coin nor a kept collateral coin —
+ * tolerated before maintenance merges them. Keeps the wallet to the pool, the
+ * collateral coin and a handful more, so no payout needs many inputs.
+ */
+const LOOSE_COINS_MAX = 5;
 
 export interface PayoutRequest {
   address: string;
@@ -1803,9 +1809,9 @@ export class Treasury extends DurableObject<Env> {
   }
 
   /**
-   * Whether this deployment merges coins between crons. Only collateral coins
-   * and large key payouts need it — the pool is fine on the cron — so it is
-   * off wherever `COLLATERAL_COINS` is 0, which is everywhere but testnet.
+   * Whether this deployment merges coins on its own: for collateral coins,
+   * large key payouts, and to keep the wallet tidy. Off wherever
+   * `COLLATERAL_COINS` is 0, which is everywhere but testnet.
    */
   private get merging(): boolean {
     return this.config.collateralCoins > 0 && !this.config.dryRun;
@@ -1833,6 +1839,16 @@ export class Treasury extends DurableObject<Env> {
    * Kept collateral coins go in only when nothing else reaches the goal.
    */
   private mergeMaterial(view: UtxoSnapshot, goal: number): Utxo[] {
+    const { spare, material } = this.spareCoins(view, goal);
+    const spareSum = spare.reduce((acc, u) => acc + u.satoshis, 0);
+    return spareSum >= goal ? spare : material;
+  }
+
+  /**
+   * Coins below `goal`, largest first, without the kept pool coins
+   * (`material`), and without the kept collateral coins too (`spare`).
+   */
+  private spareCoins(view: UtxoSnapshot, goal: number): { spare: Utxo[]; material: Utxo[] } {
     const cfg = this.config;
     const below = view.utxos
       .filter((u) => u.satoshis < goal)
@@ -1855,8 +1871,22 @@ export class Treasury extends DurableObject<Env> {
         .map((u) => outpointKey(u.txid, u.outputIndex)),
     );
     const spare = material.filter((u) => !kept.has(outpointKey(u.txid, u.outputIndex)));
-    const spareSum = spare.reduce((acc, u) => acc + u.satoshis, 0);
-    return spareSum >= goal ? spare : material;
+    return { spare, material };
+  }
+
+  /**
+   * Merge the loose coins — below collateral size, and neither a kept pool
+   * coin nor a kept collateral coin — once more than `LOOSE_COINS_MAX` have
+   * confirmed, smallest first: what nothing else will spend goes first. Null
+   * when the wallet is tidy enough.
+   */
+  private planTidy(view: UtxoSnapshot): MergePlan | null {
+    // A coin of collateral size is no fragment: leave it whole and spendable.
+    const loose = this.spareCoins(view, COLLATERAL_COIN_SATS)
+      .spare.filter((u) => u.height !== null)
+      .sort((a, b) => a.satoshis - b.satoshis);
+    if (loose.length <= LOOSE_COINS_MAX || this.config.maxPayoutInputs < 2) return null;
+    return { action: "merge", inputs: loose.slice(0, this.config.maxPayoutInputs), reaches: true };
   }
 
   /**
@@ -1931,13 +1961,23 @@ export class Treasury extends DurableObject<Env> {
       return this.consolidate(key, view, pool.length, now);
     }
 
-    // Split from the largest coin that is not a kept collateral coin; fall back
-    // to one only when nothing else can refill the pool, since the public
-    // faucet running dry is worse than an mn payout waiting.
+    // Split from the largest coin that is not a kept collateral coin. When none
+    // can fund a refill, merging small coins makes one (the follow-up pass
+    // splits it); only when that cannot help either fall back to a collateral
+    // coin, since the public faucet running dry is worse than an mn payout
+    // waiting.
     const descending = [...view.utxos].sort((a, b) => b.satoshis - a.satoshis);
-    const biggest =
-      descending.find((u) => u.satoshis < kept && u.satoshis * 0.99 >= 2 * cfg.poolUtxoSats) ??
-      descending[0];
+    const splittable = descending.find(
+      (u) => u.satoshis < kept && u.satoshis * 0.99 >= 2 * cfg.poolUtxoSats,
+    );
+    if (!splittable && this.merging) {
+      // Enough for two pool coins after the split's fee headroom. Only whether
+      // a merge can happen depends on it: one sweeps up to `maxPayoutInputs`
+      // coins (all below this size, so never a collateral coin) regardless.
+      const plan = this.planMerge(view, Math.ceil((2 * cfg.poolUtxoSats) / 0.99));
+      if (plan.action === "merge") return this.merge(key, plan.inputs, plan.reaches, now);
+    }
+    const biggest = splittable ?? descending[0];
     if (!biggest) {
       return { action: "blocked", detail: "no spendable coins" };
     }
@@ -2010,9 +2050,7 @@ export class Treasury extends DurableObject<Env> {
     const goals = [demand, ready < cfg.collateralCoins ? COLLATERAL_COIN_SATS : 0]
       .filter((g) => g > 0)
       .sort((a, b) => b - a);
-    if (goals.length === 0) return { action: "none", detail: poolNote };
-
-    let plan: MergePlan = { action: "none", detail: "" };
+    let plan: MergePlan = { action: "none", detail: "nothing to merge toward" };
     for (const goal of goals) {
       plan = this.planMerge(view, goal);
       if (plan.action !== "none") break;
@@ -2022,12 +2060,22 @@ export class Treasury extends DurableObject<Env> {
         this.ctx.storage.sql.exec(`DELETE FROM merge_demand WHERE satoshis >= ?`, demand);
       }
     }
+    // Nothing to build: keep the wallet to a handful of coins instead.
+    if (plan.action === "none" && this.merging) plan = this.planTidy(view) ?? plan;
     if (plan.action !== "merge") {
       return { action: plan.action, detail: `${poolNote}; ${plan.detail}` };
     }
-    const { inputs, reaches } = plan;
+    return this.merge(key, plan.inputs, plan.reaches, now);
+  }
 
-    if (cfg.dryRun) {
+  /** Build, broadcast and record one merge of `inputs` into a single coin. */
+  private async merge(
+    key: FaucetKey,
+    inputs: Utxo[],
+    reaches: boolean,
+    now: number,
+  ): Promise<MaintenanceResult> {
+    if (this.config.dryRun) {
       return { action: "none", detail: `dry run: would consolidate ${inputs.length} coins` };
     }
 
