@@ -372,8 +372,15 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     if (code) return errorJson(400, "A code cannot be combined with an API key");
     return handleKeyFaucet(env, cfg, ip, token, body);
   }
+  // Clients written before API keys (the bridge, older wallets) send the
+  // standard amount explicitly. Asking for no more than the standard payout
+  // changes nothing, so it is ignored; only a larger amount needs a key.
   if (body.amount !== undefined) {
-    return errorJson(400, "amount requires an API key");
+    const requested = parseAmountSats(body.amount);
+    if (requested === undefined) return errorJson(400, "Invalid amount");
+    if (requested > cfg.payoutSats) {
+      return errorJson(400, `amounts above ${toDash(cfg.payoutSats)} require an API key`);
+    }
   }
 
   const limited = await edgeLimited(env, ip);
