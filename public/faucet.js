@@ -793,6 +793,7 @@
             if (fromBridge && receivingAddress) {
                 $("addressIntro").hidden = true;
                 $("bridgeReturn").hidden = true;
+                $("bridgeReturnActions").hidden = false;
                 $("fundingInstruction").textContent = "Your Bridge address is ready. Request practice funds, then return to Bridge.";
                 $("bridgeReceipt").setAttribute("value", receivingAddress);
                 $("bridgeReceipt").textContent = receivingAddress;

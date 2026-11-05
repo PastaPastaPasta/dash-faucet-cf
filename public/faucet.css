@@ -67,7 +67,7 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #featureGrid { grid-template-columns: minmax(0, 1fr); }
 #coreFaucetCard .config-view h2 { font-size: 17px; }
 #coreFaucetCard .description { margin-bottom: 16px; }
-#bridgeReturn { margin-top: 20px; }
+#bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
 .code-row summary { color: var(--dh-brand-ink); font-size: 13px; }
 .code-row label { margin-top: 12px; }

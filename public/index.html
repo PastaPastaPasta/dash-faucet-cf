@@ -86,10 +86,12 @@
         <section class="dh-notice dh-notice--success" id="bridgeReturn" hidden><p class="dh-notice__title">tDASH sent</p>
             <p>Your Bridge tab will detect the deposit. Match this public address when returning:</p>
             <dashhq-hash full id="bridgeReceipt"></dashhq-hash>
-            <button type="button" class="btn-secondary dh-btn" id="returnBridgeBtn">Return to your Bridge tab →</button>
+        </section>
+        <div class="dh-stack" id="bridgeReturnActions" hidden>
+            <div class="dh-actions"><button type="button" class="btn-secondary dh-btn" id="returnBridgeBtn">Return to your Bridge tab →</button></div>
             <p id="returnBridgeHint" class="dh-field__help" hidden>Switch to your open Bridge tab. This page cannot focus a tab on another site.</p>
             <p class="dh-field__help"><a id="resumeBridgeLink">Lost the Bridge tab? Restore your pending address →</a> Use your saved phrase or backup file. It stays on your device.</p>
-        </section>
+        </div>
         <p id="addressIntro"><a class="dh-btn dh-btn--link" data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Create one in Bridge</a></p>
         <p id="networkChoice" class="dh-field__help"><a href="/invitations">Mainnet identity invitations · real DASH →</a></p>
 
