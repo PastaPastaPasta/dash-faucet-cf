@@ -94,3 +94,13 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #addressValidation[data-invalid] { color: var(--dh-bad); }
 input[aria-invalid="true"] { border-color: var(--dh-bad); }
 @media(max-width:480px) { .start-itinerary { grid-template-columns: repeat(2,1fr); } }
+
+#featureGrid { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
+#coreFaucetCard .config-view h2 { font-size: 17px; }
+#coreFaucetCard .description { margin-bottom: 16px; }
+#bridgeReturn { margin-top: 20px; }
+#bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
+.code-row summary { color: var(--dh-brand-ink); font-size: 13px; }
+.code-row label { margin-top: 12px; }
+.code-row input { font-size: 16px; }
+@media(max-width:720px) { header { padding: 24px 0 16px; } .address-intro { margin: 20px 0; } }

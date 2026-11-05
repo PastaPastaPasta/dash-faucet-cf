@@ -6,22 +6,14 @@
 
         const NETWORK_COPY = {
             testnet: {
-                title: "Dash Testnet Faucet",
-                subtitle: "Get testnet DASH for development and testing",
                 coin: "tDASH",
-                action: "Get testnet DASH",
-                heading: "Get testnet DASH",
-                sent: "tDASH Sent!",
+                sent: "tDASH sent!",
                 placeholder: "Enter your testnet Dash address (y...)",
                 bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'testnet'}),
             },
             mainnet: {
-                title: "Dash Faucet",
-                subtitle: "Get a small amount of DASH to get started",
                 coin: "DASH",
-                action: "Get DASH",
-                heading: "Get DASH",
-                sent: "DASH Sent!",
+                sent: "DASH sent!",
                 placeholder: "Enter your Dash address (X...)",
                 bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'mainnet'}),
             },
@@ -53,6 +45,7 @@
         /** True while the widget's worker pool is solving a challenge. */
         let capSolving = false;
         let coreRequestPending = false;
+        let statusReady = false;
         let invitationExpiryTimer = null;
 
         const invitationPage = /\/invitations(?:\.html)?\/?$/.test(location.pathname);
@@ -70,7 +63,7 @@
             input.setAttribute("aria-invalid", String(Boolean(error)));
             $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") : "Enter your receiving address.";
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
-            $("coreFaucetBtn").disabled = Boolean(error) || coreRequestPending || capSolving;
+            $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
             return !error;
         }
 
@@ -395,7 +388,7 @@
                     ? ` Only ${n} of ${data.requested} requested were available.`
                     : "";
                 $("invitationResultTitle").textContent =
-                    n === 1 ? "Invitation Ready" : `${n} Invitations Ready`;
+                    n === 1 ? "Invitation ready" : `${n} invitations ready`;
                 $("invitationResultHint").textContent = n === 1
                     ? `Open this in Dash Wallet, then choose your username.${shortfall}`
                     : `Each QR code is a separate invitation. Give one to each person; each is claimed once.${shortfall}`;
@@ -416,7 +409,7 @@
                 clearTurnstile("invitation");
                 btn.classList.remove("loading");
                 btn.disabled = false;
-                btnText.textContent = "Get Invitation";
+                btnText.textContent = "Get invitation";
             }
         }
 
@@ -427,6 +420,7 @@
          * response can offer the hard tier after either initial proof.
          */
         async function requestCoreFaucet(proof, proofTier) {
+            if (!statusReady) return;
             const card = $("coreFaucetCard");
             const btn = $("coreFaucetBtn");
             const addressInput = $("addressInput");
@@ -534,6 +528,8 @@
                 card.classList.add("show-results", "success");
                 addressInput.value = "";
                 $("codeInput").value = "";
+                $("identityNote").hidden = false;
+                $("sentHeading").scrollIntoView({ block: "center" });
             } catch (error) {
                 showError(error.message);
                 // An escalated attempt that failed leaves the box open but
@@ -572,7 +568,7 @@
         function networkPresentation(network) {
             return network === "mainnet"
                 ? {
-                    badge: "Mainnet · Real DASH",
+                    badge: "Mainnet · real DASH",
                     currency: "DASH",
                     warning: "real mainnet DASH only",
                 }
@@ -617,17 +613,21 @@
 
         function showCoreFaucetConfig() {
             $("coreFaucetCard").classList.add("show-config");
+            $("addressIntro").open = false;
             void validateAddressInput();
-            $("addressInput").focus();
+            $("addressInput").focus({ preventScroll: true });
         }
 
         function resetCoreFaucetCard() {
             const card = $("coreFaucetCard");
-            card.classList.remove("show-config", "show-results", "success");
+            card.classList.remove("show-results", "success");
+            card.classList.add("show-config");
+            $("identityNote").hidden = true;
             $("addressInput").value = "";
             $("coreErrorBox").classList.remove("visible");
             hideHardCaptcha();
             disposeCapWidget();
+            showCoreFaucetConfig();
         }
 
         function applyNetworkCopy(network) {
@@ -636,19 +636,17 @@
             if (invitationPage) return;
             faucetNetwork = network;
             document.title = "Faucet · dashhq";
-            $("pageTitle").textContent = network === "mainnet" ? "Faucet" : "Start on Dash Platform";
+            $("pageTitle").textContent = network === "mainnet" ? "Get DASH" : "Get testnet DASH";
             $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
-                : "Testnet DASH for development. Start with a Bridge address, then fund your identity.";
+                : "Practice funds for development. Enter your receiving address below.";
             $("identityStepLabel").textContent = `Steps 3–4 · ${network === "testnet" ? "Testnet" : "Mainnet · real DASH"}`;
-            $("identityStepDescription").textContent = "After funding, return to your open Bridge tab to create your identity, save your keys and register a username.";
+            $("identityStepDescription").textContent = "After funding, return to your open Bridge tab to create your identity and register a username.";
             $("addressHint").textContent = network === "testnet" ? "Testnet addresses start with y or 8." : "Mainnet addresses start with X or 7.";
             $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${copy.coin}`;
-            $("initialHeading").textContent = "Have an address already?";
-            $("configHeading").textContent = copy.heading;
+            $("configHeading").textContent = "Request funds";
             $("sentHeading").textContent = copy.sent;
             $("addressInput").placeholder = copy.placeholder;
             coinName = copy.coin;
-            $("startBtn").querySelector(".btn-text").textContent = copy.action;
             $("bridgeLink").href = copy.bridge;
             $("bridgeLink").hidden = fromBridge;
             $("bridgeLink").textContent = network === "mainnet" ? "Create a Mainnet identity in the Bridge →" : "Start in the Bridge →";
@@ -665,27 +663,35 @@
 
         async function loadStatus() {
             try {
-                const response = await fetch("/api/status");
+                if (!invitationPage) {
+                    statusReady = false;
+                    void validateAddressInput();
+                    $("retryStatusBtn").hidden = true;
+                }
+                $("statusBar").textContent = "Checking faucet availability…";
+                const response = await fetch("/api/status", { signal: AbortSignal.timeout(12000) });
                 const data = await response.json();
 
                 if (data.status !== "ok" && data.status !== "low_balance") {
-                    $("statusBar").textContent =
-                        "Faucet status: " + (data.error || "unavailable");
-                    return;
+                    throw new Error("Faucet unavailable");
                 }
 
                 if (!invitationPage) {
+                    if (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0) throw new Error("Invalid faucet configuration");
                     applyNetworkCopy(data.network);
+                    statusReady = true;
+                    $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${data.coreFaucetAmount} ${coinName}`;
+                    void validateAddressInput();
 
                     const balance = parseFloat(data.balance);
                     // Quote the default tier; fallback PoW uses the soft allowance.
                     const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
                     const parts = [
-                        "Faucets online",
+                        "Faucet online",
                         `Core rate limit: ${limit}/hour`,
                         `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
-                    if (data.status === "low_balance") parts[0] = "⚠️ Testnet faucet low balance";
+                    if (data.status === "low_balance") parts[0] = "Testnet faucet low balance";
                     $("statusBar").textContent = parts.join(" · ");
 
                     if (data.depositAddress) {
@@ -759,12 +765,15 @@
                     $("statusBar").textContent = "Mainnet invitations are unavailable right now. You can practice on Testnet instead.";
                 }
             } catch (err) {
-                $("statusBar").textContent = "Could not load faucet status";
+                statusReady = false;
+                if (!invitationPage) void validateAddressInput();
+                $("statusBar").textContent = "Could not check faucet availability. Your address is unchanged. Try again.";
+                if (!invitationPage) $("retryStatusBtn").hidden = false;
             }
         }
 
         if (!invitationPage) {
-            $("startBtn").addEventListener("click", showCoreFaucetConfig);
+            $("retryStatusBtn").addEventListener("click", loadStatus);
             const receivingAddress = new URLSearchParams(location.search).get("address");
             if (receivingAddress) {
                 $("addressInput").value = receivingAddress;
@@ -774,18 +783,27 @@
             const sharedCode = new URLSearchParams(location.search).get("code");
             if (sharedCode) {
                 $("codeInput").value = sharedCode.slice(0, 64);
+                $("codeInput").closest("details").open = true;
                 showCoreFaucetConfig();
             }
             if (fromBridge && receivingAddress) {
                 $("addressIntro").hidden = true;
                 $("bridgeReturn").hidden = false;
+                $("fundingInstruction").textContent = "Your Bridge address is ready. Request practice funds, then return to Bridge.";
+                $("bridgeReceipt").setAttribute("value", receivingAddress);
+                $("bridgeReceipt").textContent = receivingAddress;
+                $("resumeBridgeLink").href = dashhq.href('bridge', `/?mode=resume&deposit=${encodeURIComponent(receivingAddress)}`, { network: 'testnet' });
             }
             $("returnBridgeBtn").addEventListener("click", () => {
                 $("returnBridgeHint").hidden = false;
                 window.close();
             });
-            $("addressInput").addEventListener("input", () => { void validateAddressInput(); });
-            $("backLink").addEventListener("click", resetCoreFaucetCard);
+            $("addressInput").addEventListener("input", () => {
+                void validateAddressInput();
+                if (fromBridge && receivingAddress) $("fundingInstruction").textContent = $("addressInput").value.trim() === receivingAddress
+                    ? "Your Bridge address is ready. Request practice funds, then return to Bridge."
+                    : "This differs from your Bridge address. Funds sent here will not fund that identity.";
+            });
             $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
             // Wrapped, not passed directly: the click event would arrive as `proof`.
             $("coreFaucetBtn").addEventListener("click", () => requestCoreFaucet());

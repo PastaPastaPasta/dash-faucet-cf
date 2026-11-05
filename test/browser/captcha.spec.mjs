@@ -68,9 +68,8 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
     }
   }, { turnstile });
   await page.goto(origin + (invitation ? "/invitations" : "/"));
-  await expect(page.locator("#statusBar")).toContainText(invitation ? "Mainnet invitations" : "Faucets online");
+  await expect(page.locator("#statusBar")).toContainText(invitation ? "Mainnet invitations" : "Faucet online");
   if (!invitation) {
-    await page.locator("#startBtn").click();
     await page.locator("#addressInput").fill(network === "mainnet" ? "Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv" : "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs");
     await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
   }
@@ -88,7 +87,6 @@ for (const turnstile of ["missing", "no-key", "throw", "error-callback", "timeou
     expect(await page.evaluate(() => window.powSolves)).toEqual([`${origin}/cap/v1/`]);
     await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
     await page.locator("#sendMoreBtn").click();
-    await page.locator("#startBtn").click();
     await page.locator("#addressInput").fill("yfJZVF5WhFsVXCvqiR4JqAM3TmEf3LpPfw");
     await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
   });

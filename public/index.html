@@ -8,6 +8,7 @@
     <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/dashhq/dashhq-tokens.css">
     <link rel="stylesheet" href="/dashhq/dashhq-shell.css">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css">
     <link rel="icon" type="image/svg+xml" href="/dashhq/mark/favicon.svg">
     <link rel="stylesheet" href="/faucet.css">
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
@@ -16,60 +17,36 @@
     <dashhq-bar product="faucet" network="testnet" sticky></dashhq-bar>
     <div class="container">
         <header>
-            <h1 id="pageTitle">Start on Dash Platform</h1>
-            <p class="subtitle" id="pageSubtitle">Testnet DASH for development. Start with a Bridge address, then fund your identity.</p>
+            <h1 id="pageTitle">Get testnet DASH</h1>
+            <p class="subtitle" id="pageSubtitle">Practice funds for development. Enter your receiving address below.</p>
         </header>
 
         <ol class="start-itinerary" aria-label="Start on Testnet">
             <li>1 Address</li><li aria-current="step">2 Testnet DASH</li><li>3 Identity</li><li>4 Username</li>
         </ol>
-        <p id="networkChoice" class="hint"><a href="/invitations">Looking for a Mainnet identity invitation? Real DASH →</a></p>
-        <section class="address-intro" id="addressIntro">
-            <h2>1 · Need a receiving address?</h2>
-            <p>Create your address in the Bridge first. Keep that tab open and follow its Faucet link to fill in the address here.</p>
-            <a class="btn-secondary" data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">Create a Testnet address in the Bridge →</a>
-        </section>
-        <section class="address-intro" id="bridgeReturn" hidden>
-            <h2>2 · Fund your Bridge address</h2>
-            <p>Your public deposit address is filled in below. After receiving testnet DASH, return to the Bridge tab you left open. It detects the deposit and continues to 3 · Identity, then 4 · Username.</p>
-            <button type="button" class="btn-secondary" id="returnBridgeBtn">Return to your Bridge tab →</button>
-            <p id="returnBridgeHint" class="hint" hidden>Switch to your open Bridge tab to continue. Keep it open: your keys stay there.</p>
-        </section>
         <main class="feature-grid" id="featureGrid">
         <!-- Core Faucet Section -->
-        <div class="feature-card" id="coreFaucetCard">
-            <!-- Initial View -->
-            <div class="initial-view">
-                <div class="network-kicker" id="coreNetworkKicker"><span class="network-dot"></span><span id="coreNetworkLabel">Step 2 · Testnet</span></div>
-                <h2 id="initialHeading">Have an address already?</h2>
-                <p class="description">
-                    Receive <span id="coreFaucetAmountDisplay">…</span> <span class="coin-name">DASH</span> to your address.
-                </p>
-                <div class="card-bottom">
-                    <button class="btn" id="startBtn">
-                        <span class="btn-text">Get DASH</span>
-                    </button>
-                </div>
-            </div>
-
+        <div class="feature-card show-config" id="coreFaucetCard">
             <!-- Config View -->
             <div class="config-view">
-                <button type="button" class="back-link" id="backLink">← Back</button>
-                <h2 id="configHeading">Get DASH</h2>
-                <p class="description">Enter your address to receive coins.</p>
+                <h2 id="configHeading">Request funds</h2>
+                <p class="description" id="fundingInstruction">Use your Bridge deposit address or another Testnet address.</p>
                 <label class="field-label" for="addressInput">Your receiving address</label>
                 <p id="addressHint" class="hint">Testnet addresses start with y or 8.</p>
                 <div class="input-row">
-                    <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" placeholder="Enter your Dash address" autocomplete="off" spellcheck="false">
-                    <button class="btn" id="coreFaucetBtn">
+                    <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="Enter your Dash address" autocomplete="off" spellcheck="false">
+                    <button class="btn dh-btn dh-btn--act" id="coreFaucetBtn" disabled>
                         <span class="spinner"></span>
-                        <span class="btn-text">Get 1 tDASH</span>
+                        <span class="btn-text">Get tDASH</span>
                     </button>
                 </div>
                 <p id="addressValidation" class="hint" aria-live="polite"></p>
-                <div class="code-row">
-                    <input type="text" id="codeInput" placeholder="Have a code? (optional)" autocomplete="off" spellcheck="false" maxlength="64">
-                </div>
+                <details class="code-row">
+                    <summary>Use a voucher or event code</summary>
+                    <label class="field-label" for="codeInput">Code (optional)</label>
+                    <input type="text" id="codeInput" placeholder="Enter your code" autocomplete="off" spellcheck="false" maxlength="64">
+                    <p class="hint">Only needed if an event organiser gave you a code. Leave it blank for a standard request.</p>
+                </details>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
                     <strong id="capTitle">Hourly limit reached</strong>
@@ -89,21 +66,35 @@
                     <div class="stat-label">Transaction ID</div>
                     <div class="stat-value" id="coreTxid"></div>
                 </div>
-                <button class="copy-btn" data-copy="coreTxid">Copy Transaction ID</button>
+                <button class="copy-btn" data-copy="coreTxid">Copy transaction ID</button>
                 <div class="action-buttons">
-                    <button class="btn-secondary" id="sendMoreBtn">Send More</button>
+                    <button class="btn-secondary" id="sendMoreBtn">Fund another address</button>
                 </div>
             </div>
         </div>
 
-        <section class="feature-card next-step" id="identityNote">
+        <section class="feature-card next-step" id="identityNote" hidden>
             <p class="step-label" id="identityStepLabel">Steps 3–4 · Testnet</p>
             <h2>Create an identity</h2>
-            <p class="description" id="identityStepDescription">After funding, return to your open Bridge tab to create your identity, save your keys and register a username.</p>
+            <p class="description" id="identityStepDescription">After funding, return to your open Bridge tab to create your identity and register a username.</p>
             <a class="btn-secondary" id="bridgeLink" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">Start in the Bridge →</a>
             <p class="hint">Keep the Bridge tab open throughout funding. Only your public address travels to the Faucet.</p>
         </section>
         </main>
+
+        <section class="address-intro" id="bridgeReturn" hidden>
+            <p>Your Bridge tab will detect the deposit. Match this public address when returning:</p>
+            <dashhq-hash full id="bridgeReceipt"></dashhq-hash>
+            <button type="button" class="btn-secondary dh-btn" id="returnBridgeBtn">Return to your Bridge tab →</button>
+            <p id="returnBridgeHint" class="hint" hidden>Switch to your open Bridge tab. This page cannot focus a tab on another site.</p>
+            <p class="hint"><a id="resumeBridgeLink">Lost the Bridge tab? Restore your pending address →</a> You’ll need the backup saved there. It stays on your device.</p>
+        </section>
+        <details class="address-intro" id="addressIntro">
+            <summary>Need a receiving address?</summary>
+            <p>Create and back up an address in Bridge, then follow its Faucet link back here.</p>
+            <a class="btn-secondary dh-btn" data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">Create an address in Bridge →</a>
+        </details>
+        <p id="networkChoice" class="hint"><a href="/invitations">Mainnet identity invitations · real DASH →</a></p>
 
         <details class="card treasury-panel" id="treasuryPanel" hidden>
             <summary>Fund the faucet</summary>
@@ -137,6 +128,9 @@
             </div>
         </details>
 
+        <span id="coreFaucetAmountDisplay" hidden>…</span>
+        <span id="coreNetworkLabel" hidden></span><span id="coreNetworkKicker" hidden></span>
+        <button type="button" id="retryStatusBtn" class="dh-btn" hidden>Retry faucet status</button>
         <p class="footer-status" id="statusBar" role="status">Loading faucet status…</p>
 
     </div>
