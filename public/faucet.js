@@ -46,6 +46,7 @@
         let capSolving = false;
         let coreRequestPending = false;
         let statusReady = false;
+        let statusFailed = false;
         let invitationExpiryTimer = null;
 
         const invitationPage = /\/invitations(?:\.html)?\/?$/.test(location.pathname);
@@ -61,7 +62,7 @@
             catch { error = "Address checking is unavailable. Reload this page to try again."; }
             if (input.value.trim() !== value) return false;
             input.setAttribute("aria-invalid", String(Boolean(error)));
-            $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") : "Enter your receiving address.";
+            $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") + (!statusReady ? (statusFailed ? ". Faucet unavailable; retry below." : ". Checking faucet availability…") : "") : "Enter your receiving address.";
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
             $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
             return !error;
@@ -665,6 +666,7 @@
             try {
                 if (!invitationPage) {
                     statusReady = false;
+                    statusFailed = false;
                     void validateAddressInput();
                     $("retryStatusBtn").hidden = true;
                 }
@@ -766,6 +768,7 @@
                 }
             } catch (err) {
                 statusReady = false;
+                statusFailed = true;
                 if (!invitationPage) void validateAddressInput();
                 $("statusBar").textContent = "Could not check faucet availability. Your address is unchanged. Try again.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
