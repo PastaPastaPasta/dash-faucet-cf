@@ -48,7 +48,7 @@ const PORTAL_PAGES = new Set(["/keys", "/admin", "/keys.html", "/admin.html"]);
  */
 const PAGE_HEADERS: Record<string, string> = {
   "Content-Security-Policy":
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
+    "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data:; " +
     "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
   "X-Frame-Options": "DENY",
   "Referrer-Policy": "no-referrer",

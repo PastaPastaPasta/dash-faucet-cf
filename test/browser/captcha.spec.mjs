@@ -25,7 +25,7 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
       return route.fulfill(responses.shift() || { json: { txid: "a".repeat(64), amount: 1 } });
     }
     return route.fulfill({
-      contentType: path.endsWith(".mjs") ? "text/javascript" : "text/html",
+      contentType: /\.m?js$/.test(path) ? "text/javascript" : path.endsWith(".css") ? "text/css" : path.endsWith(".woff2") ? "font/woff2" : "text/html",
       body: await readFile(new URL(`../../public${path === "/" ? "/index.html" : path}`, import.meta.url)),
     });
   });
@@ -47,7 +47,7 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
     });
     const appendChild = Node.prototype.appendChild;
     Node.prototype.appendChild = function (node) {
-      if (node.tagName === "SCRIPT" && node.src.includes("@cap.js/widget")) {
+      if (node.tagName === "SCRIPT" && new URL(node.src).pathname === "/vendor/cap.min.js") {
         queueMicrotask(() => node.onload());
         return node;
       }
