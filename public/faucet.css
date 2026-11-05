@@ -1,6 +1,6 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 [hidden] { display: none !important; }
-body { display: flex; flex-direction: column; font: 15px/1.5 var(--dh-font); min-height: 100vh; background: var(--dh-page); color: var(--dh-ink); }
+body { font: 15px/1.5 var(--dh-font); min-height: 100vh; background: var(--dh-page); color: var(--dh-ink); }
 a { color: var(--dh-brand-ink); text-underline-offset: 3px; }
 h2 { font-size: 21px; font-weight: 660; font-stretch: 110%; line-height: 1.25; margin-bottom: 12px; }
 h3 { font-size: 17px; font-weight: 620; }
@@ -78,4 +78,4 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 .next-step { margin-block: 20px; }
 @media(max-width:720px) { .treasury-grid { grid-template-columns: 1fr; } .treasury-heading { flex-wrap: wrap; } .action-buttons > * { flex: 1 1 100%; } }
 
-body > main { flex: 1; width: 100%; }
+body > main { width: 100%; }

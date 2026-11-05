@@ -9,6 +9,12 @@ Local only on `lab/unified`; no push, deployment, PR or production write.
 | Opus 22 · short-page footers | Fixed on the Faucet and account/admin pages using a full-height flex layout. |
 | Opus 25 · links | Existing family underline and offset retained. |
 
+Both sites vendor shell 1.6.0 unchanged, pinned by `SHA256SUMS`. Faucet uses the
+shared `dh-fill` layout on its funding, invitations and account/admin pages.
+Address is marked complete only after validation; blank or invalid input remains
+`todo`. The shared bar owns the fixed network order. Faucet asks for no Platform
+private keys; its account portal retains its existing authentication flow.
+
 Before: `reviews/round4-sol-shots/faucet-phone.png` in the lab root, captured on
 reviewed head `e0c1a74375441865d00eb4da7a647a55e5e247f5`.
 After: `../bridge/.lab-r5/evidence/faucet-status-unknown-phone-light.png` and

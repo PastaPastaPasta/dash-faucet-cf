@@ -170,6 +170,7 @@ test("mainnet invitations require Turnstile on their own Mainnet page", async ({
 test('checks malformed, wrong-network and checksum errors before a payout', async ({ page }) => {
   const requests = await openFaucet(page);
   await expect(page.locator('#invitationCard')).toBeHidden();
+  await expect(page.locator('.dh-steps li').first()).toHaveAttribute('data-state', 'done');
   for (const [address, message] of [
     ['yNotARealAddress', '34 characters'],
     ['Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv', 'Testnet'],
@@ -178,6 +179,7 @@ test('checks malformed, wrong-network and checksum errors before a payout', asyn
     await page.locator('#addressInput').fill(address);
     await expect(page.locator('#addressValidation')).toContainText(message);
     await expect(page.locator('#addressInput')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('.dh-steps li').first()).toHaveAttribute('data-state', 'todo');
     await expect(page.locator('#coreFaucetBtn')).toBeDisabled();
   }
   expect(requests).toEqual([]);

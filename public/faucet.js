@@ -66,6 +66,7 @@
             if (input.value.trim() !== value) return false;
             input.setAttribute("aria-invalid", String(Boolean(error && value)));
             $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") + (!statusReady ? (statusFailed ? ". Availability unknown; retry below." : ". Checking faucet availability…") : "") : "Enter your receiving address.";
+            document.querySelector(".dh-steps li")?.setAttribute("data-state", value && !error ? "done" : "todo");
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
             $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
             return !error;

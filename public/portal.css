@@ -5,8 +5,6 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { background: var(--navy-2); }
 body {
-  display: flex;
-  flex-direction: column;
   font-family: var(--dh-font);
   font-size: 15px;
   line-height: 1.55;
@@ -129,4 +127,4 @@ dialog h2 { margin-bottom: 14px; }
 .dh-card, .slip { margin-bottom: 26px; }
 .dh-tabs, .dh-seg { margin-bottom: 18px; }
 
-body > main { flex: 1; width: 100%; }
+body > main { width: 100%; }
