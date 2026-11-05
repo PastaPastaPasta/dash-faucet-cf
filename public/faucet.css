@@ -77,3 +77,5 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #addressIntro { margin-block: 12px 24px; }
 .next-step { margin-block: 20px; }
 @media(max-width:720px) { .treasury-grid { grid-template-columns: 1fr; } .treasury-heading { flex-wrap: wrap; } .action-buttons > * { flex: 1 1 100%; } }
+
+@media (max-width: 720px) { .dh-steps > li > a { padding-block: 0; } }
