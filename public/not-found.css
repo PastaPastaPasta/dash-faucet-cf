@@ -1,0 +1,1 @@
+body{margin:0;background:var(--dh-page);color:var(--dh-ink);font:16px/1.6 var(--dh-sans)}body>a{position:absolute;left:-9999px}body>a:focus{position:static}main{max-width:var(--dh-max);margin:auto;padding:64px var(--dh-gutter);min-height:50vh}h1{font-weight:650}a{color:var(--dh-brand-ink)}
