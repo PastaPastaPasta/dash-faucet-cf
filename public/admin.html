@@ -9,77 +9,78 @@
     <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/dashhq/dashhq-tokens.css">
     <link rel="stylesheet" href="/dashhq/dashhq-shell.css">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css">
   <link rel="icon" type="image/svg+xml" href="/dashhq/mark/favicon.svg">
   <link rel="stylesheet" href="/portal.css">
 </head>
 <body class="page-admin">
   <dashhq-bar product="faucet" network="testnet" sticky><nav slot="nav" aria-label="Faucet"><a href="/">Get DASH</a><a href="/keys">API keys</a></nav><div slot="actions" class="who" id="who"></div></dashhq-bar>
-  <div class="shell">
+  <main class="shell dh-container dh-page">
 
 
     <section class="signin" id="signIn" hidden></section>
     <section class="signin" id="notAdmin" hidden>
-      <h1>This account isn't an admin</h1>
-      <p class="lede">You can still manage your own API keys.</p>
-      <a class="button primary" href="/keys">Go to my keys</a>
+      <h1 class="dh-page-header__title">This account isn't an admin</h1>
+      <p class="dh-page-header__lede">You can still manage your own API keys.</p>
+      <a class="dh-btn dh-btn--primary" href="/keys">Go to my keys</a>
     </section>
 
-    <main id="panel" hidden>
-      <div class="segmented" role="tablist" aria-label="Admin sections">
+    <div id="panel" hidden><header class="dh-page-header"><h1 class="dh-page-header__title">Admin</h1></header>
+      <div class="dh-tabs" role="tablist" aria-label="Admin sections">
         <button role="tab" id="tabCodes" aria-selected="true" aria-controls="codesPane">Codes</button>
         <button role="tab" id="tabKeys" aria-selected="false" aria-controls="keysPane">Keys</button>
       </div>
-      <div class="error" id="adminError" role="alert" hidden></div>
+      <div class="error dh-error" id="adminError" role="alert" hidden></div>
 
       <div id="codesPane" role="tabpanel">
-        <section class="panel">
+        <section class="panel dh-card">
           <h2>New code</h2>
-          <div class="segmented" aria-label="Code type">
+          <div class="dh-seg" aria-label="Code type">
             <button type="button" id="kindEvent" aria-pressed="true">Event code</button>
             <button type="button" id="kindVoucher" aria-pressed="false">Vouchers</button>
           </div>
-          <p class="lede" id="kindHint"></p>
+          <p class="dh-page-header__lede" id="kindHint"></p>
           <form id="codeForm">
             <div class="grid">
-              <label class="field" data-kind="event">Code
-                <input id="codeValue" class="mono" placeholder="DASHCON-26" maxlength="32" autocomplete="off" spellcheck="false">
+              <label class="field dh-field" data-kind="event">Code
+                <input id="codeValue" class="dh-input dh-input--mono" placeholder="DASHCON-26" maxlength="32" autocomplete="off" spellcheck="false">
               </label>
-              <label class="field" data-kind="voucher" hidden>How many
-                <input id="codeCount" type="number" min="1" max="200" step="1" value="10">
+              <label class="field dh-field" data-kind="voucher" hidden>How many
+                <input id="codeCount" type="number" min="1" max="200" step="1" value="10" class="dh-input">
               </label>
-              <label class="field">Label
-                <input id="codeLabel" placeholder="DashCon 2026" maxlength="100" required>
+              <label class="field dh-field">Label
+                <input id="codeLabel" placeholder="DashCon 2026" maxlength="100" required class="dh-input">
               </label>
-              <label class="field">Amount each
-                <span class="suffix" data-suffix="tDASH"><input id="codeAmount" type="number" min="0.001" step="any" value="10" required></span>
+              <label class="field dh-field">Amount each
+                <span class="dh-input-group"><input id="codeAmount" type="number" min="0.001" step="any" value="10" required class="dh-input"><span class="dh-input-group__addon">tDASH</span></span>
               </label>
-              <label class="field" data-kind="event">Uses in total
-                <input id="codeMax" type="number" min="1" step="1" value="100">
+              <label class="field dh-field" data-kind="event">Uses in total
+                <input id="codeMax" type="number" min="1" step="1" value="100" class="dh-input">
               </label>
-              <label class="field">Expires
-                <input id="codeExpiry" type="date">
-                <span class="hint">Leave empty for never.</span>
+              <label class="field dh-field">Expires
+                <input id="codeExpiry" type="date" class="dh-input">
+                <span class="dh-field__help">Leave empty for never.</span>
               </label>
             </div>
             <div class="form-actions">
-              <button type="submit" class="primary" id="codeSubmit">Create code</button>
+              <button type="submit" class="dh-btn dh-btn--primary" id="codeSubmit">Create code</button>
             </div>
           </form>
         </section>
 
-        <section class="slip" id="newVouchers" hidden aria-live="polite">
-          <p class="slip-title" id="newVoucherTitle"></p>
+        <section class="slip dh-notice dh-notice--success" id="newVouchers" hidden aria-live="polite">
+          <p class="dh-notice__title" id="newVoucherTitle"></p>
           <pre id="newVoucherList"></pre>
           <div class="form-actions">
-            <button id="copyVouchers" class="primary">Copy all</button>
-            <button id="hideVouchers" class="ghost">Done</button>
+            <button id="copyVouchers" class="dh-btn dh-btn--primary">Copy all</button>
+            <button id="hideVouchers" class="dh-btn">Done</button>
           </div>
         </section>
 
         <section class="section">
           <div class="section-head"><h2>Codes</h2><span class="muted fine" id="codeCount2"></span></div>
-          <div class="table-wrap">
-            <table>
+          <div class="dh-table-wrap">
+            <table class="dh-table dh-table--cards">
               <thead><tr><th>Code</th><th>Amount</th><th class="usage">Used</th><th>Expires</th><th>Status</th><th></th></tr></thead>
               <tbody id="codeRows"></tbody>
             </table>
@@ -88,82 +89,82 @@
       </div>
 
       <div id="keysPane" role="tabpanel" hidden>
-        <section class="panel">
+        <section class="panel dh-card">
           <h2>Mint a key</h2>
-          <p class="lede">For people without a dash.org account, and for services. Masternode keys pay exactly one 1000 tDASH collateral per request.</p>
+          <p class="dh-page-header__lede">For people without a dash.org account, and for services. Masternode keys pay exactly one 1000 tDASH collateral per request.</p>
           <form id="mintForm">
             <div class="grid">
-              <label class="field">Who it's for
-                <input id="mintLabel" placeholder="Operator name or service" maxlength="100" required>
+              <label class="field dh-field">Who it's for
+                <input id="mintLabel" placeholder="Operator name or service" maxlength="100" required class="dh-input">
               </label>
-              <label class="field">Type
-                <select id="mintTier">
+              <label class="field dh-field">Type
+                <select class="dh-select" id="mintTier">
                   <option value="mn">Masternode collateral (1000 tDASH)</option>
                   <option value="trusted">Unlimited (any amount)</option>
                 </select>
               </label>
-              <label class="field">Requests per day
-                <input id="mintPerDay" type="number" min="1" step="1" placeholder="Default">
-                <span class="hint">Masternode keys default to 1; unlimited keys to no cap.</span>
+              <label class="field dh-field">Requests per day
+                <input id="mintPerDay" type="number" min="1" step="1" placeholder="Default" class="dh-input">
+                <span class="dh-field__help">Masternode keys default to 1; unlimited keys to no cap.</span>
               </label>
             </div>
-            <div class="form-actions"><button type="submit" class="primary">Mint key</button></div>
+            <div class="form-actions"><button type="submit" class="dh-btn dh-btn--primary">Mint key</button></div>
           </form>
         </section>
 
-        <section class="slip" id="mintedKey" hidden aria-live="polite">
-          <p class="slip-title">The new key, shown only once. Send it to its owner privately.</p>
+        <section class="slip dh-notice dh-notice--success" id="mintedKey" hidden aria-live="polite">
+          <p class="dh-notice__title">The new key, shown only once. Send it to its owner privately.</p>
           <div class="slip-key" id="mintedValue"></div>
           <div class="form-actions">
-            <button id="copyMinted" class="primary">Copy key</button>
-            <button id="hideMinted" class="ghost">Done</button>
+            <button id="copyMinted" class="dh-btn dh-btn--primary">Copy key</button>
+            <button id="hideMinted" class="dh-btn">Done</button>
           </div>
         </section>
 
         <section class="section">
           <div class="section-head">
             <h2>All keys</h2>
-            <label class="toolbar"><input type="checkbox" id="showRevoked"> Show revoked and expired</label>
+            <label class="toolbar"><input type="checkbox" id="showRevoked" class="dh-input"> Show revoked and expired</label>
           </div>
-          <div class="table-wrap">
-            <table>
+          <div class="dh-table-wrap">
+            <table class="dh-table dh-table--stack">
               <thead><tr><th>Key</th><th>Owner</th><th>Type</th><th>Last used</th><th>Paid out</th><th>Status</th><th></th></tr></thead>
               <tbody id="allKeyRows"></tbody>
             </table>
           </div>
         </section>
       </div>
-    </main>
-  </div>
+    </div>
+  </main>
 
   <dialog id="editDialog" aria-labelledby="editTitle">
     <h2 id="editTitle">Edit code</h2>
     <form id="editForm">
       <div class="grid">
-        <label class="field">Label <input id="editLabel" maxlength="100" required></label>
-        <label class="field">Amount each
-          <span class="suffix" data-suffix="tDASH"><input id="editAmount" type="number" min="0.001" step="any" required></span>
+        <label class="field dh-field">Label <input id="editLabel" maxlength="100" required class="dh-input"></label>
+        <label class="field dh-field">Amount each
+          <span class="dh-input-group"><input id="editAmount" type="number" min="0.001" step="any" required class="dh-input"><span class="dh-input-group__addon">tDASH</span></span>
         </label>
-        <label class="field">Uses in total <input id="editMax" type="number" min="1" step="1" required></label>
-        <label class="field">Expires <input id="editExpiry" type="date"><span class="hint">Empty for never.</span></label>
+        <label class="field dh-field">Uses in total <input id="editMax" type="number" min="1" step="1" required class="dh-input"></label>
+        <label class="field dh-field">Expires <input id="editExpiry" type="date" class="dh-input"><span class="dh-field__help">Empty for never.</span></label>
       </div>
       <div class="form-actions">
-        <button type="submit" class="primary">Save changes</button>
-        <button type="button" class="ghost" id="editCancel">Cancel</button>
+        <button type="submit" class="dh-btn dh-btn--primary">Save changes</button>
+        <button type="button" class="dh-btn" id="editCancel">Cancel</button>
       </div>
     </form>
   </dialog>
 
   <dialog id="detailDialog" aria-labelledby="detailTitle">
     <h2 id="detailTitle"></h2>
-    <p class="lede" id="detailLink"></p>
-    <div class="table-wrap">
-      <table>
+    <p class="dh-page-header__lede" id="detailLink"></p>
+    <div class="dh-table-wrap">
+      <table class="dh-table dh-table--stack">
         <thead><tr><th>When</th><th>Address</th><th>Amount</th><th>Transaction</th></tr></thead>
         <tbody id="detailRows"></tbody>
       </table>
     </div>
-    <div class="form-actions"><button type="button" class="ghost" id="detailClose">Close</button></div>
+    <div class="form-actions"><button type="button" class="dh-btn" id="detailClose">Close</button></div>
   </dialog>
 
   <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"></dashhq-footer>

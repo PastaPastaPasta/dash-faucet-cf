@@ -7,13 +7,13 @@
         const NETWORK_COPY = {
             testnet: {
                 coin: "tDASH",
-                sent: "tDASH sent!",
+                sent: "tDASH sent",
                 placeholder: "Enter your testnet Dash address (y...)",
                 bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'testnet'}),
             },
             mainnet: {
                 coin: "DASH",
-                sent: "DASH sent!",
+                sent: "DASH sent",
                 placeholder: "Enter your Dash address (X...)",
                 bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'mainnet'}),
             },
@@ -285,7 +285,7 @@
             list.style.gridTemplateColumns = entries.length === 1 ? "1fr" : "";
             entries.forEach((entry, index) => {
                 const item = document.createElement("article");
-                item.className = "invitation-item";
+                item.className = "invitation-item dh-card";
 
                 if (entries.length > 1) {
                     const title = document.createElement("h3");
@@ -307,11 +307,11 @@
                 const actions = document.createElement("div");
                 actions.className = "action-buttons";
                 const open = document.createElement("a");
-                open.className = "btn";
+                open.className = "dh-btn";
                 open.href = entry.invitation;
                 open.textContent = "Open in Dash Wallet";
                 const copy = document.createElement("button");
-                copy.className = "btn-secondary";
+                copy.className = "dh-btn";
                 copy.textContent = "Copy";
                 copy.addEventListener("click", () => copyText(entry.invitation, copy));
                 actions.append(open, copy);
@@ -357,13 +357,13 @@
             // The picker is emptied whenever it is hidden, so this reads 1 then.
             const count = Number($("invitationCount").value) || 1;
 
-            btn.classList.add("loading");
+            btn.setAttribute("aria-busy", "true");
             btn.disabled = true;
             errorBox.classList.remove("visible");
             try {
-                btnText.textContent = "Verifying...";
+                btnText.textContent = "Verifying…";
                 const turnstileToken = await solveTurnstile("invitation");
-                btnText.textContent = "Creating...";
+                btnText.textContent = "Creating…";
                 const response = await fetch("/api/invitation-faucet", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -408,7 +408,7 @@
                 errorBox.classList.add("visible");
             } finally {
                 clearTurnstile("invitation");
-                btn.classList.remove("loading");
+                btn.removeAttribute("aria-busy");
                 btn.disabled = false;
                 btnText.textContent = "Get invitation";
             }
@@ -439,7 +439,7 @@
             }
             if (coreRequestPending || (capSolving && !proof)) return;
 
-            btn.classList.add("loading");
+            btn.setAttribute("aria-busy", "true");
             btn.disabled = true;
             coreRequestPending = true;
             $("coreErrorBox").classList.remove("visible");
@@ -451,7 +451,7 @@
                 } else {
                     disposeCapWidget();
                     hideHardCaptcha();
-                    btnText.textContent = "Verifying...";
+                    btnText.textContent = "Verifying…";
                     body = { address };
                     try {
                         const turnstileToken = await solveTurnstile();
@@ -467,7 +467,7 @@
 
                 const code = $("codeInput").value.trim();
                 if (code) body.code = code;
-                btnText.textContent = "Sending...";
+                btnText.textContent = "Sending…";
                 const response = await fetch("/api/core-faucet", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -529,7 +529,8 @@
                 card.classList.add("show-results", "success");
                 addressInput.value = "";
                 $("codeInput").value = "";
-                $("identityNote").hidden = false;
+                $("identityNote").hidden = fromBridge;
+                $("bridgeReturn").hidden = !fromBridge;
                 $("sentHeading").scrollIntoView({ block: "center" });
             } catch (error) {
                 showError(error.message);
@@ -544,7 +545,7 @@
             } finally {
                 clearTurnstile("core");
                 coreRequestPending = false;
-                btn.classList.remove("loading");
+                btn.removeAttribute("aria-busy");
                 void validateAddressInput();
                 btnText.textContent = `Get ${$("coreFaucetAmountDisplay").textContent} ${coinName}`;
             }
@@ -584,7 +585,7 @@
             const presentation = networkPresentation(network);
             const kicker = $(`${prefix}NetworkKicker`);
             const badge = $(`${prefix}NetworkBadge`);
-            $(`${prefix}NetworkLabel`).textContent = (prefix === "core" ? "Step 2 · " : "") + presentation.badge;
+            $(`${prefix}NetworkLabel`).textContent = presentation.badge;
             kicker.classList.toggle("mainnet", network === "mainnet");
             badge.textContent = presentation.badge;
             badge.classList.toggle("mainnet", network === "mainnet");
@@ -601,7 +602,7 @@
             const original = btn.textContent;
             try {
                 await navigator.clipboard.writeText(text);
-                btn.textContent = "Copied!";
+                btn.textContent = "Copied";
                 btn.classList.add("copied");
                 setTimeout(() => {
                     btn.textContent = original;
@@ -640,7 +641,7 @@
             $("pageTitle").textContent = network === "mainnet" ? "Get DASH" : "Get testnet DASH";
             $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
                 : "Practice funds for development. Enter your receiving address below.";
-            $("identityStepLabel").textContent = `Steps 3–4 · ${network === "testnet" ? "Testnet" : "Mainnet · real DASH"}`;
+            $("identityStepLabel").textContent = "";
             $("identityStepDescription").textContent = "After funding, return to your open Bridge tab to create your identity and register a username.";
             $("addressHint").textContent = network === "testnet" ? "Testnet addresses start with y or 8." : "Mainnet addresses start with X or 7.";
             $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${copy.coin}`;
@@ -653,7 +654,7 @@
             $("bridgeLink").textContent = network === "mainnet" ? "Create a Mainnet identity in the Bridge →" : "Start in the Bridge →";
             if (network === "mainnet") {
                 $("addressIntro").hidden = true;
-                document.querySelector(".start-itinerary").hidden = true;
+                document.querySelector(".dh-steps").hidden = true;
             }
             document.querySelector("dashhq-bar").setAttribute("network", network);
             void validateAddressInput();
@@ -791,7 +792,7 @@
             }
             if (fromBridge && receivingAddress) {
                 $("addressIntro").hidden = true;
-                $("bridgeReturn").hidden = false;
+                $("bridgeReturn").hidden = true;
                 $("fundingInstruction").textContent = "Your Bridge address is ready. Request practice funds, then return to Bridge.";
                 $("bridgeReceipt").setAttribute("value", receivingAddress);
                 $("bridgeReceipt").textContent = receivingAddress;

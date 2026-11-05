@@ -8,22 +8,23 @@
     <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/dashhq/dashhq-tokens.css">
     <link rel="stylesheet" href="/dashhq/dashhq-shell.css">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css">
     <link rel="icon" type="image/svg+xml" href="/dashhq/mark/favicon.svg">
     <link rel="stylesheet" href="/faucet.css">
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body class="page-invitations">
     <dashhq-bar product="faucet" network="mainnet" sticky></dashhq-bar>
-    <div class="container">
-        <header>
-            <h1 id="pageTitle">Mainnet identity invitations</h1>
-            <p class="subtitle" id="pageSubtitle">Mainnet · real DASH. Get an invitation for an identity and username in Dash Wallet.</p>
+    <main class="dh-container dh-page"><div class="dh-narrow">
+        <header class="dh-page-header">
+            <h1 class="dh-page-header__title" id="pageTitle">Mainnet identity invitations</h1>
+            <p class="dh-page-header__lede" id="pageSubtitle">Mainnet · real DASH. Get an invitation for an identity and username in Dash Wallet.</p>
         </header>
 
-        <p id="networkChoice" class="hint"><a href="/">Practice on Testnet with the Bridge and Faucet →</a></p>
-        <main class="feature-grid" id="featureGrid">
+        <p id="networkChoice" class="dh-field__help"><a href="/">Practice on Testnet with the Bridge and Faucet →</a></p>
+        <div class="feature-grid" id="featureGrid">
         <!-- Platform invitation faucet (enabled by server configuration). -->
-        <div class="feature-card" id="invitationCard" hidden>
+        <div class="feature-card dh-card" id="invitationCard" hidden>
             <div class="initial-view">
                 <div class="network-kicker mainnet" id="invitationNetworkKicker"><span class="network-dot"></span><span id="invitationNetworkLabel">Mainnet · real DASH</span></div>
                 <h2>Mainnet identity invitation</h2>
@@ -32,17 +33,17 @@
                     DASH for one identity and non-contested name. You will choose
                     the name in Dash Wallet.
                 </p>
-                <button class="btn" id="invitationBtn">
-                    <span class="spinner"></span>
+                <button class="btn dh-btn dh-btn--primary" id="invitationBtn">
+
                     <span class="btn-text">Get invitation</span>
                 </button>
                 <label class="invitation-count" id="invitationCountRow" hidden>
                     How many?
-                    <select id="invitationCount" aria-label="Number of invitations"></select>
+                    <select class="dh-select" id="invitationCount" aria-label="Number of invitations"></select>
                 </label>
                 <p class="availability-line" id="invitationAvailability">Checking availability…</p>
                 <div class="turnstile-holder" id="invitationTurnstileHolder"></div>
-                <div role="alert" class="error" id="invitationErrorBox"></div>
+                <div role="alert" class="error dh-error" id="invitationErrorBox"></div>
             </div>
 
             <div class="results-view">
@@ -51,20 +52,20 @@
                 <p class="expiry" id="invitationExpiry"></p>
                 <div class="invitation-list" id="invitationList"></div>
                 <div class="action-buttons">
-                    <button class="btn-secondary" id="moreInvitationsBtn">Get more</button>
+                    <button class="btn-secondary dh-btn" id="moreInvitationsBtn">Get more</button>
                 </div>
             </div>
         </div>
-        </main>
+        </div>
 
-        <details class="card treasury-panel" id="treasuryPanel" hidden>
+        <details class="card dh-card treasury-panel" id="treasuryPanel" hidden>
             <summary>Fund the faucet</summary>
             <div class="treasury-heading">
                 <div>
                     <h2>Faucet reserves</h2>
                     <p>Fund only the network shown for this service.</p>
                 </div>
-                <span class="live-pill">Live</span>
+                <span class="live-pill dh-badge dh-badge--good">Live</span>
             </div>
             <div class="treasury-grid">
 
@@ -72,7 +73,7 @@
                     <div class="treasury-card-top">
                         <div class="treasury-card-title">
                             <h3>Identity invitations</h3>
-                            <span class="network-badge mainnet" id="invitationNetworkBadge">Mainnet · real DASH</span>
+                            <span class="network-badge dh-badge dh-badge--info mainnet" id="invitationNetworkBadge">Mainnet · real DASH</span>
                         </div>
                         <div class="treasury-balance"><strong id="invitationTreasuryBalance">—</strong> <span id="invitationTreasuryCurrency">DASH</span></div>
                         <p class="treasury-detail">Spendable balance; locked invitations are counted below.</p>
@@ -85,7 +86,7 @@
                     <div class="funding-address">
                         <div class="funding-address-header">
                             <span class="funding-address-label">Funding address</span>
-                            <button class="copy-btn" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
+                            <button class="copy-btn dh-btn dh-btn--sm" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
                         </div>
                         <dashhq-hash full no-copy id="invitationDepositAddress" value="—">—</dashhq-hash>
                         <p class="network-warning">Send <strong id="invitationNetworkWarning">real mainnet DASH only</strong> to this address.</p>
@@ -96,7 +97,7 @@
 
         <p class="footer-status" id="statusBar" role="status">Loading faucet status…</p>
 
-    </div>
+    </div></main>
 
     <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><p><a href="/keys">API keys for developers</a></p></dashhq-footer>
     <script type="module" src="/faucet.js"></script>
