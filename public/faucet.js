@@ -61,7 +61,7 @@
             try { error = await addressError(value, faucetNetwork); }
             catch { error = "Address checking is unavailable. Reload this page to try again."; }
             if (input.value.trim() !== value) return false;
-            input.setAttribute("aria-invalid", String(Boolean(error)));
+            input.setAttribute("aria-invalid", String(Boolean(error && value)));
             $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") + (!statusReady ? (statusFailed ? ". Faucet unavailable; retry below." : ". Checking faucet availability…") : "") : "Enter your receiving address.";
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
             $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
