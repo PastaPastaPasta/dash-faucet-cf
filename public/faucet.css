@@ -4,7 +4,7 @@ body { font: 15px/1.5 var(--dh-font); min-height: 100vh; background: var(--dh-pa
 a { color: var(--dh-brand-ink); text-underline-offset: 3px; }
 .container { max-width: 960px; margin: auto; padding: 0 var(--dh-gutter); }
 header { padding: 40px 0 28px; }
-h1 { font-size: clamp(28px,4vw,36px); font-weight: 660; font-stretch: 110%; letter-spacing: -.015em; line-height: 1.2; margin-bottom: 10px; }
+h1 { font-size: 30px; font-weight: 660; font-stretch: 110%; letter-spacing: -.015em; line-height: 1.2; margin-bottom: 10px; }
 h2 { font-size: 21px; font-weight: 660; font-stretch: 110%; line-height: 1.25; margin-bottom: 12px; }
 h3 { font-size: 17px; font-weight: 620; }
 .subtitle { color: var(--dh-ink-2); font-size: 17px; max-width: 62ch; }

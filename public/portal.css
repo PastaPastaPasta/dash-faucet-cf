@@ -37,7 +37,7 @@ a:hover { color: var(--dh-brand-ink); }
 .who-name { color: var(--muted); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Type */
-h1 { font-size: 28px; line-height: 1.2; font-weight: 650; letter-spacing: -0.015em; margin-bottom: 8px; }
+h1 { font-size: 30px; line-height: 1.2; font-weight: 660; letter-spacing: -0.015em; margin-bottom: 8px; }
 h2 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
 .lede { color: var(--muted); max-width: 62ch; margin-bottom: 22px; }
 .intro { margin-bottom: 26px; }
@@ -91,7 +91,7 @@ input:focus-visible, select:focus-visible { outline: none; border-color: var(--f
 
 /* Sign-in */
 .signin { max-width: 520px; margin: 9vh auto 0; }
-.signin h1 { font-size: 32px; }
+
 .providers { display: flex; gap: 12px; flex-wrap: wrap; margin: 6px 0 14px; }
 
 /* The key slip: the one loud element. */
@@ -175,7 +175,7 @@ dialog h2 { margin-bottom: 14px; }
   .key-row { grid-template-columns: 1fr; }
   .key-side { grid-column: 1; grid-row: auto; }
   .who { margin-left: 0; width: 100%; }
-  h1 { font-size: 24px; }
+
 }
 
 .shell { padding: 32px var(--dh-gutter) 48px; } h1,h2 { font-stretch: 110%; } a,.linklike { color: var(--dh-brand-ink); } a:hover,.linklike:hover { color: var(--dh-brand-ink); } .primary,.primary:hover { color: var(--dh-act-ink); } input,select { background: var(--dh-surface); border-color: var(--dh-line-2); } input::placeholder,label.field .hint { color: var(--dh-ink-2); } .danger { color: var(--dh-bad); } .who { margin: 0; width: auto; } .pill-ok { color: var(--dh-good); background: var(--dh-good-soft); } .pill-bad { color: var(--dh-bad); background: var(--dh-bad-soft); } .pill-warn { color: var(--dh-warn); background: var(--dh-warn-soft); } .pill-info { color: var(--dh-info); background: var(--dh-info-soft); } @media(pointer:coarse) { input,select { font-size:16px; height:42px; } button,.button { min-height:42px; } }
