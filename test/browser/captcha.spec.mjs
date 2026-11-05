@@ -5,7 +5,7 @@ const origin = "https://faucet.test";
 
 // Exercise the shipped page with deterministic CAPTCHA providers and payouts.
 // Worker tests separately solve and verify real CAP challenges and rate tiers.
-async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [] } = {}) {
+async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], invitation = false } = {}) {
   const requests = [];
   await page.route(`${origin}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -26,7 +26,7 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
     }
     return route.fulfill({
       contentType: /\.m?js$/.test(path) ? "text/javascript" : path.endsWith(".css") ? "text/css" : path.endsWith(".woff2") ? "font/woff2" : "text/html",
-      body: await readFile(new URL(`../../public${path === "/" ? "/index.html" : path}`, import.meta.url)),
+      body: await readFile(new URL(`../../public${path === "/" ? "/index.html" : path === "/invitations" ? "/invitations.html" : path}`, import.meta.url)),
     });
   });
   await page.route("https://challenges.cloudflare.com/**", (route) => route.abort());
@@ -67,10 +67,13 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
       };
     }
   }, { turnstile });
-  await page.goto(origin);
-  await expect(page.locator("#statusBar")).toContainText("Faucets online");
-  await page.locator("#startBtn").click();
-  await page.locator("#addressInput").fill("yTestRecipient");
+  await page.goto(origin + (invitation ? "/invitations" : "/"));
+  await expect(page.locator("#statusBar")).toContainText(invitation ? "Mainnet invitations" : "Faucets online");
+  if (!invitation) {
+    await page.locator("#startBtn").click();
+    await page.locator("#addressInput").fill(network === "mainnet" ? "Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv" : "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs");
+    await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
+  }
   return requests;
 }
 
@@ -81,8 +84,12 @@ for (const turnstile of ["missing", "no-key", "throw", "error-callback", "timeou
     await page.locator("#coreFaucetBtn").click();
     if (turnstile === "stall") await page.clock.fastForward(8100);
     await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
-    expect(requests).toEqual([{ address: "yTestRecipient", capToken: "pow-1" }]);
+    expect(requests).toEqual([{ address: "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs", capToken: "pow-1" }]);
     expect(await page.evaluate(() => window.powSolves)).toEqual([`${origin}/cap/v1/`]);
+    await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+    await page.locator("#sendMoreBtn").click();
+    await page.locator("#startBtn").click();
+    await page.locator("#addressInput").fill("yfJZVF5WhFsVXCvqiR4JqAM3TmEf3LpPfw");
     await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
   });
 }
@@ -102,8 +109,8 @@ test("server rejection retries with a fresh PoW credential", async ({ page }) =>
   await page.locator("#coreFaucetBtn").click();
   await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
   expect(requests).toEqual([
-    { address: "yTestRecipient", turnstileToken: "web-token" },
-    { address: "yTestRecipient", capToken: "pow-1" },
+    { address: "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs", turnstileToken: "web-token" },
+    { address: "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs", capToken: "pow-1" },
   ]);
 });
 
@@ -152,9 +159,25 @@ test("mainnet core does not use the automatic fallback", async ({ page }) => {
   expect(await page.evaluate(() => window.powSolves)).toEqual([]);
 });
 
-test("mainnet invitations still require Turnstile on the testnet page", async ({ page }) => {
-  await openFaucet(page);
+test("mainnet invitations require Turnstile on their own Mainnet page", async ({ page }) => {
+  await openFaucet(page, { invitation: true });
   await page.locator("#invitationBtn").click();
   await expect(page.locator("#invitationErrorBox")).toContainText("Captcha failed to load");
   expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+test('checks malformed, wrong-network and checksum errors before a payout', async ({ page }) => {
+  const requests = await openFaucet(page);
+  await expect(page.locator('#invitationCard')).toBeHidden();
+  for (const [address, message] of [
+    ['yNotARealAddress', '34 characters'],
+    ['Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv', 'Testnet'],
+    ['yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKt', 'checksum'],
+  ]) {
+    await page.locator('#addressInput').fill(address);
+    await expect(page.locator('#addressValidation')).toContainText(message);
+    await expect(page.locator('#addressInput')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#coreFaucetBtn')).toBeDisabled();
+  }
+  expect(requests).toEqual([]);
 });

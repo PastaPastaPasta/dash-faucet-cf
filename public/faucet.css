@@ -85,3 +85,12 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 .invitation-list.expired img { filter: grayscale(1) opacity(.25); }
 @media(max-width:720px) { .feature-grid,.treasury-grid { grid-template-columns: 1fr; } .feature-card,.card { padding: 20px; } header { padding: 28px 0 24px; } .input-row { flex-direction: column; align-items: stretch; } .input-row .btn,.feature-card .btn { width: 100%; } .action-buttons>* { flex: 1 1 100%; } .treasury-heading { flex-wrap: wrap; } }
 @media(prefers-reduced-motion:reduce) { * { animation-duration: 0ms !important; transition-duration: 0ms !important; } }
+
+.start-itinerary { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; list-style: none; margin-bottom: 16px; font-size: 13px; color: var(--dh-ink-2); }
+.start-itinerary li { border-top: 2px solid var(--dh-line); padding: 8px 0; }
+.start-itinerary [aria-current] { border-color: var(--dh-brand); color: var(--dh-brand-ink); font-weight: 620; }
+.address-intro { border-left: 3px solid var(--dh-brand); padding: 8px 16px; margin: 24px 0; }
+.address-intro p { margin-bottom: 12px; max-width: 64ch; color: var(--dh-ink-2); }
+#addressValidation[data-invalid] { color: var(--dh-bad); }
+input[aria-invalid="true"] { border-color: var(--dh-bad); }
+@media(max-width:480px) { .start-itinerary { grid-template-columns: repeat(2,1fr); } }

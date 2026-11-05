@@ -1,4 +1,5 @@
 
+        import { addressError } from "/address.js";
         import { renderSVG } from "/vendor/uqr.mjs";
 
         "use strict";
@@ -12,7 +13,7 @@
                 heading: "Get testnet DASH",
                 sent: "tDASH Sent!",
                 placeholder: "Enter your testnet Dash address (y...)",
-                bridge: dashhq.href('bridge', '/', {network: 'testnet'}),
+                bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'testnet'}),
             },
             mainnet: {
                 title: "Dash Faucet",
@@ -22,7 +23,7 @@
                 heading: "Get DASH",
                 sent: "DASH Sent!",
                 placeholder: "Enter your Dash address (X...)",
-                bridge: dashhq.href('bridge', '/', {network: 'mainnet'}),
+                bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'mainnet'}),
             },
         };
 
@@ -54,7 +55,24 @@
         let coreRequestPending = false;
         let invitationExpiryTimer = null;
 
+        const invitationPage = /\/invitations(?:\.html)?\/?$/.test(location.pathname);
+        const fromBridge = new URLSearchParams(location.search).get("from") === "bridge";
+
         const $ = (id) => document.getElementById(id);
+
+        async function validateAddressInput() {
+            const input = $("addressInput");
+            const value = input.value.trim();
+            let error;
+            try { error = await addressError(value, faucetNetwork); }
+            catch { error = "Address checking is unavailable. Reload this page to try again."; }
+            if (input.value.trim() !== value) return false;
+            input.setAttribute("aria-invalid", String(Boolean(error)));
+            $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") : "Enter your receiving address.";
+            $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
+            $("coreFaucetBtn").disabled = Boolean(error) || coreRequestPending || capSolving;
+            return !error;
+        }
 
         function showError(message) {
             const errorBox = $("coreErrorBox");
@@ -149,7 +167,7 @@
             });
             capWidget.addEventListener("error", (event) => {
                 capSolving = false;
-                $("coreFaucetBtn").disabled = false;
+                void validateAddressInput();
                 progress.textContent = "";
                 showError(
                     (event.detail && event.detail.message) ||
@@ -420,10 +438,11 @@
             if (coreRequestPending || (capSolving && !proof)) return;
 
             const address = addressInput.value.trim();
-            if (!address) {
-                showError("Please enter a Dash address");
+            if (!await validateAddressInput()) {
+                addressInput.focus();
                 return;
             }
+            if (coreRequestPending || (capSolving && !proof)) return;
 
             btn.classList.add("loading");
             btn.disabled = true;
@@ -529,7 +548,7 @@
                 clearTurnstile("core");
                 coreRequestPending = false;
                 btn.classList.remove("loading");
-                btn.disabled = capSolving;
+                void validateAddressInput();
                 btnText.textContent = `Get ${$("coreFaucetAmountDisplay").textContent} ${coinName}`;
             }
         }
@@ -568,7 +587,7 @@
             const presentation = networkPresentation(network);
             const kicker = $(`${prefix}NetworkKicker`);
             const badge = $(`${prefix}NetworkBadge`);
-            $(`${prefix}NetworkLabel`).textContent = (prefix === "core" ? "Step 1 · " : "") + presentation.badge;
+            $(`${prefix}NetworkLabel`).textContent = (prefix === "core" ? "Step 2 · " : "") + presentation.badge;
             kicker.classList.toggle("mainnet", network === "mainnet");
             badge.textContent = presentation.badge;
             badge.classList.toggle("mainnet", network === "mainnet");
@@ -598,6 +617,7 @@
 
         function showCoreFaucetConfig() {
             $("coreFaucetCard").classList.add("show-config");
+            void validateAddressInput();
             $("addressInput").focus();
         }
 
@@ -613,23 +633,31 @@
         function applyNetworkCopy(network) {
             const copy = NETWORK_COPY[network];
             if (!copy) return;
+            if (invitationPage) return;
             faucetNetwork = network;
-            document.title = "Start on Dash Platform · Faucet";
-            $("pageTitle").textContent = "Start on Dash Platform";
-            $("pageSubtitle").textContent = network === "testnet"
-                ? "Get testnet DASH, then turn it into an identity and a username."
-                : "Get DASH to fund an identity on Dash Platform.";
-            $("identityStepLabel").textContent = `Step 2 · ${network === "testnet" ? "Testnet" : "Mainnet · real DASH"}`;
-            $("identityStepDescription").textContent = `Use your ${copy.coin} in the Bridge. It creates your keys in your browser and guides you through funding your identity.`;
+            document.title = "Faucet · dashhq";
+            $("pageTitle").textContent = network === "mainnet" ? "Faucet" : "Start on Dash Platform";
+            $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
+                : "Testnet DASH for development. Start with a Bridge address, then fund your identity.";
+            $("identityStepLabel").textContent = `Steps 3–4 · ${network === "testnet" ? "Testnet" : "Mainnet · real DASH"}`;
+            $("identityStepDescription").textContent = "After funding, return to your open Bridge tab to create your identity, save your keys and register a username.";
             $("addressHint").textContent = network === "testnet" ? "Testnet addresses start with y or 8." : "Mainnet addresses start with X or 7.";
             $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${copy.coin}`;
-            $("initialHeading").textContent = copy.heading;
+            $("initialHeading").textContent = "Have an address already?";
             $("configHeading").textContent = copy.heading;
             $("sentHeading").textContent = copy.sent;
             $("addressInput").placeholder = copy.placeholder;
             coinName = copy.coin;
             $("startBtn").querySelector(".btn-text").textContent = copy.action;
             $("bridgeLink").href = copy.bridge;
+            $("bridgeLink").hidden = fromBridge;
+            $("bridgeLink").textContent = network === "mainnet" ? "Create a Mainnet identity in the Bridge →" : "Start in the Bridge →";
+            if (network === "mainnet") {
+                $("addressIntro").hidden = true;
+                document.querySelector(".start-itinerary").hidden = true;
+            }
+            document.querySelector("dashhq-bar").setAttribute("network", network);
+            void validateAddressInput();
             for (const el of document.querySelectorAll(".coin-name")) {
                 el.textContent = copy.coin;
             }
@@ -646,36 +674,38 @@
                     return;
                 }
 
-                applyNetworkCopy(data.network);
+                if (!invitationPage) {
+                    applyNetworkCopy(data.network);
 
-                const balance = parseFloat(data.balance);
-                // Quote the default tier; fallback PoW uses the soft allowance.
-                const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
-                const parts = [
-                    "Faucets online",
-                    `Core rate limit: ${limit}/hour`,
-                    `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
-                ];
-                if (data.status === "low_balance") parts[0] = "⚠️ Testnet faucet low balance";
-                $("statusBar").textContent = parts.join(" · ");
+                    const balance = parseFloat(data.balance);
+                    // Quote the default tier; fallback PoW uses the soft allowance.
+                    const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
+                    const parts = [
+                        "Faucets online",
+                        `Core rate limit: ${limit}/hour`,
+                        `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
+                    ];
+                    if (data.status === "low_balance") parts[0] = "⚠️ Testnet faucet low balance";
+                    $("statusBar").textContent = parts.join(" · ");
 
-                if (data.depositAddress) {
-                    $("depositAddress").textContent = data.depositAddress;
-                    $("depositAddress").setAttribute("value", data.depositAddress);
-                } else {
-                    $("coreFundingCopy").disabled = true;
+                    if (data.depositAddress) {
+                        $("depositAddress").textContent = data.depositAddress;
+                        $("depositAddress").setAttribute("value", data.depositAddress);
+                    } else {
+                        $("coreFundingCopy").disabled = true;
+                    }
+                    if (data.coreFaucetAmount) {
+                        $("coreFaucetAmountDisplay").textContent = data.coreFaucetAmount;
+                    }
+                    const corePresentation = applyNetworkPresentation("core", data.network);
+                    $("coreTreasuryBalance").textContent = formatBalance(balance);
+                    $("coreTreasuryDetail").textContent =
+                        `${data.coreFaucetAmount} ${corePresentation.currency} per request` +
+                        (Number.isFinite(Number(data.availableUtxos))
+                            ? ` · ${Number(data.availableUtxos).toLocaleString()} spendable outputs`
+                            : "");
+                    $("treasuryPanel").hidden = false;
                 }
-                if (data.coreFaucetAmount) {
-                    $("coreFaucetAmountDisplay").textContent = data.coreFaucetAmount;
-                }
-                const corePresentation = applyNetworkPresentation("core", data.network);
-                $("coreTreasuryBalance").textContent = formatBalance(balance);
-                $("coreTreasuryDetail").textContent =
-                    `${data.coreFaucetAmount} ${corePresentation.currency} per request` +
-                    (Number.isFinite(Number(data.availableUtxos))
-                        ? ` · ${Number(data.availableUtxos).toLocaleString()} spendable outputs`
-                        : "");
-                $("treasuryPanel").hidden = false;
                 if (data.turnstileSiteKey) {
                     turnstileSiteKey = data.turnstileSiteKey;
                 }
@@ -683,12 +713,13 @@
                     hardCapEndpoint = data.hardCapEndpoint;
                 }
                 capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
-                if (data.invitationsEnabled) {
+                $("networkChoice").hidden = !invitationPage && !data.invitationsEnabled;
+                if (data.invitationsEnabled && invitationPage) {
+                    $("statusBar").textContent = "Mainnet invitations · availability reported by the Faucet";
                     $("invitationCard").hidden = false;
                     $("featureGrid").classList.add("has-invitations");
                     $("invitationAmountDisplay").textContent = data.invitationAmount;
                     configureInvitationCount(data.invitationMaxPerRequest);
-                    $("identityNote").hidden = false;
 
                     const invitationNetwork = data.invitationNetwork || data.network;
                     const inventory = data.invitationInventory || {};
@@ -697,6 +728,8 @@
                     const issued = Number(inventory.issued) || 0;
                     applyNetworkPresentation("invitation", invitationNetwork);
                     $("invitationTreasuryCard").hidden = false;
+                    $("treasuryPanel").hidden = false;
+                    document.querySelector("dashhq-bar").setAttribute("network", invitationNetwork);
                     $("invitationTreasuryBalance").textContent =
                         formatBalance(data.invitationBalance);
                     $("invitationDepositAddress").textContent =
@@ -722,33 +755,46 @@
                     }
 
 
+                } else if (invitationPage) {
+                    $("statusBar").textContent = "Mainnet invitations are unavailable right now. You can practice on Testnet instead.";
                 }
             } catch (err) {
                 $("statusBar").textContent = "Could not load faucet status";
             }
         }
 
-        $("startBtn").addEventListener("click", showCoreFaucetConfig);
-        const receivingAddress = new URLSearchParams(location.search).get("address");
-        if (receivingAddress && /^[y8][1-9A-HJ-NP-Za-km-z]{33}$/.test(receivingAddress)) {
-            $("addressInput").value = receivingAddress;
-            showCoreFaucetConfig();
+        if (!invitationPage) {
+            $("startBtn").addEventListener("click", showCoreFaucetConfig);
+            const receivingAddress = new URLSearchParams(location.search).get("address");
+            if (receivingAddress) {
+                $("addressInput").value = receivingAddress;
+                showCoreFaucetConfig();
+            }
+            // Voucher and event links carry their code: open the form with it filled in.
+            const sharedCode = new URLSearchParams(location.search).get("code");
+            if (sharedCode) {
+                $("codeInput").value = sharedCode.slice(0, 64);
+                showCoreFaucetConfig();
+            }
+            if (fromBridge && receivingAddress) {
+                $("addressIntro").hidden = true;
+                $("bridgeReturn").hidden = false;
+            }
+            $("returnBridgeBtn").addEventListener("click", () => {
+                $("returnBridgeHint").hidden = false;
+                window.close();
+            });
+            $("addressInput").addEventListener("input", () => { void validateAddressInput(); });
+            $("backLink").addEventListener("click", resetCoreFaucetCard);
+            $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
+            // Wrapped, not passed directly: the click event would arrive as `proof`.
+            $("coreFaucetBtn").addEventListener("click", () => requestCoreFaucet());
+            $("addressInput").addEventListener("keydown", (e) => {
+                if (e.key === "Enter") requestCoreFaucet();
+            });
         }
-        // Voucher and event links carry their code: open the form with it filled in.
-        const sharedCode = new URLSearchParams(location.search).get("code");
-        if (sharedCode) {
-            $("codeInput").value = sharedCode.slice(0, 64);
-            showCoreFaucetConfig();
-        }
-        $("backLink").addEventListener("click", resetCoreFaucetCard);
-        $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
-        // Wrapped, not passed directly: the click event would arrive as `proof`.
-        $("coreFaucetBtn").addEventListener("click", () => requestCoreFaucet());
-        $("addressInput").addEventListener("keydown", (e) => {
-            if (e.key === "Enter") requestCoreFaucet();
-        });
-        $("invitationBtn").addEventListener("click", requestInvitation);
-        $("moreInvitationsBtn").addEventListener("click", resetInvitationCard);
+        $("invitationBtn")?.addEventListener("click", requestInvitation);
+        $("moreInvitationsBtn")?.addEventListener("click", resetInvitationCard);
         for (const btn of document.querySelectorAll("[data-copy]")) {
             btn.addEventListener("click", () => copyFrom(btn.dataset.copy, btn));
         }
