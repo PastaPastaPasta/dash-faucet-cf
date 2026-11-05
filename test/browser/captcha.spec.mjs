@@ -5,11 +5,13 @@ const origin = "https://faucet.test";
 
 // Exercise the shipped page with deterministic CAPTCHA providers and payouts.
 // Worker tests separately solve and verify real CAP challenges and rate tiers.
-async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], invitation = false } = {}) {
+async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "" } = {}) {
   const requests = [];
+  const startsUnavailable = statusResponses.length > 0;
   await page.route(`${origin}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === "/api/status") {
+      if (statusResponses.length) return route.fulfill(statusResponses.shift());
       return route.fulfill({ json: {
         status: "ok", network, balance: 100, blockHeight: 100,
         coreFaucetAmount: 1, rateLimitPerHour: 3,
@@ -67,7 +69,8 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
       };
     }
   }, { turnstile });
-  await page.goto(origin + (invitation ? "/invitations" : "/"));
+  await page.goto(origin + (invitation ? "/invitations" : "/") + query);
+  if (startsUnavailable) return requests;
   await expect(page.locator("#statusBar")).toContainText(invitation ? "Mainnet invitations" : "Faucet online");
   if (!invitation) {
     await page.locator("#addressInput").fill(network === "mainnet" ? "Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv" : "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs");
@@ -178,4 +181,30 @@ test('checks malformed, wrong-network and checksum errors before a payout', asyn
     await expect(page.locator('#coreFaucetBtn')).toBeDisabled();
   }
   expect(requests).toEqual([]);
+});
+
+
+test("unknown availability preserves the address and records retry and last-success context", async ({ page }) => {
+  const address = "yXFTcoYd8F7Ty9U6PZCbA8xZgX6xJnWku9";
+  const statusResponses = [{ status: 503, json: { error: "upstream unavailable" } }];
+  await openFaucet(page, { statusResponses, query: "?from=bridge&journey=start&address=" + address });
+  await expect(page.locator("#statusBar")).toContainText("Availability unknown");
+  await expect(page.locator("#statusBar")).toContainText("does not confirm the faucet is down");
+  await expect(page.locator("#statusBar")).toContainText("No successful check in this tab");
+  await expect(page.locator("#addressInput")).toHaveValue(address);
+  await page.locator("#retryStatusBtn").click();
+  await expect(page.locator("#statusBar")).toContainText("Checked");
+  await expect(page.locator("#networkChoice")).toBeHidden();
+  statusResponses.push({ status: 502, body: "status service failed" });
+  await page.locator("#retryStatusBtn").evaluate(button => button.click());
+  await expect(page.locator("#statusBar")).toContainText("Last successful check:");
+  await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+  await expect(page.locator("#addressInput")).toHaveValue(address);
+});
+
+test("keeps Mainnet invitations out of a Bridge funding handoff", async ({ page }) => {
+  await openFaucet(page, { query: "?from=bridge&journey=start&address=public-address" });
+  await expect(page.locator("#statusBar")).toContainText("Faucet online");
+  await expect(page.locator("#networkChoice")).toBeHidden();
+  await expect(page.locator("#bridgeReturnActions")).toBeVisible();
 });

@@ -47,10 +47,13 @@
         let coreRequestPending = false;
         let statusReady = false;
         let statusFailed = false;
+        let lastStatusSuccess;
         let invitationExpiryTimer = null;
 
         const invitationPage = /\/invitations(?:\.html)?\/?$/.test(location.pathname);
-        const fromBridge = new URLSearchParams(location.search).get("from") === "bridge";
+        const entryParams = new URLSearchParams(location.search);
+        const fromBridge = entryParams.get("from") === "bridge";
+        const startJourney = fromBridge || entryParams.get("journey") === "start";
 
         const $ = (id) => document.getElementById(id);
 
@@ -62,7 +65,7 @@
             catch { error = "Address checking is unavailable. Reload this page to try again."; }
             if (input.value.trim() !== value) return false;
             input.setAttribute("aria-invalid", String(Boolean(error && value)));
-            $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") + (!statusReady ? (statusFailed ? ". Faucet unavailable; retry below." : ". Checking faucet availability…") : "") : "Enter your receiving address.";
+            $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") + (!statusReady ? (statusFailed ? ". Availability unknown; retry below." : ". Checking faucet availability…") : "") : "Enter your receiving address.";
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
             $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
             return !error;
@@ -663,6 +666,10 @@
             }
         }
 
+        function statusTime(date) {
+            return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }).format(date) + " UTC";
+        }
+
         async function loadStatus() {
             try {
                 if (!invitationPage) {
@@ -673,6 +680,7 @@
                 }
                 $("statusBar").textContent = "Checking faucet availability…";
                 const response = await fetch("/api/status", { signal: AbortSignal.timeout(12000) });
+                if (!response.ok) throw new Error("Status check failed");
                 const data = await response.json();
 
                 if (data.status !== "ok" && data.status !== "low_balance") {
@@ -683,6 +691,7 @@
                     if (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0) throw new Error("Invalid faucet configuration");
                     applyNetworkCopy(data.network);
                     statusReady = true;
+                    lastStatusSuccess = new Date();
                     $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${data.coreFaucetAmount} ${coinName}`;
                     void validateAddressInput();
 
@@ -695,7 +704,7 @@
                         `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
                     if (data.status === "low_balance") parts[0] = "Testnet faucet low balance";
-                    $("statusBar").textContent = parts.join(" · ");
+                    $("statusBar").textContent = parts.join(" · ") + " · Checked " + statusTime(lastStatusSuccess);
 
                     if (data.depositAddress) {
                         $("depositAddress").textContent = data.depositAddress;
@@ -722,7 +731,7 @@
                     hardCapEndpoint = data.hardCapEndpoint;
                 }
                 capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
-                $("networkChoice").hidden = !invitationPage && !data.invitationsEnabled;
+                $("networkChoice").hidden = startJourney || (!invitationPage && !data.invitationsEnabled);
                 if (data.invitationsEnabled && invitationPage) {
                     $("statusBar").textContent = "Mainnet invitations · availability reported by the Faucet";
                     $("invitationCard").hidden = false;
@@ -771,7 +780,7 @@
                 statusReady = false;
                 statusFailed = true;
                 if (!invitationPage) void validateAddressInput();
-                $("statusBar").textContent = "Could not check faucet availability. Your address is unchanged. Try again.";
+                $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
             }
         }
@@ -790,6 +799,7 @@
                 $("codeInput").closest("details").open = true;
                 showCoreFaucetConfig();
             }
+            if (startJourney) $("networkChoice").hidden = true;
             if (fromBridge && receivingAddress) {
                 $("addressIntro").hidden = true;
                 $("bridgeReturn").hidden = true;
