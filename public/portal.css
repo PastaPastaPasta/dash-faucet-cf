@@ -117,7 +117,8 @@ dialog h2 { margin-bottom: 14px; }
   .create input { flex: none; }
   .key-row { grid-template-columns: 1fr; }
   .key-side { grid-column: 1; grid-row: auto; }
-  .who { margin-left: 0; width: 100%; }
+  .who { margin-left: 0; gap: 8px; }
+  .who-name { display: none; }
 
 }
 
