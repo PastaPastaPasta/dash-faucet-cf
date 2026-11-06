@@ -687,12 +687,13 @@
                 if (data.status !== "ok" && data.status !== "low_balance") {
                     throw new Error("Faucet unavailable");
                 }
+                lastStatusSuccess = new Date();
+                $("statusSource").textContent = "Sources: Faucet API · fetched " + statusTime(lastStatusSuccess) + ".";
 
                 if (!invitationPage) {
                     if (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0) throw new Error("Invalid faucet configuration");
                     applyNetworkCopy(data.network);
                     statusReady = true;
-                    lastStatusSuccess = new Date();
                     $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${data.coreFaucetAmount} ${coinName}`;
                     void validateAddressInput();
 
@@ -734,7 +735,7 @@
                 capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
                 $("networkChoice").hidden = startJourney || (!invitationPage && !data.invitationsEnabled);
                 if (data.invitationsEnabled && invitationPage) {
-                    $("statusBar").textContent = "Mainnet invitations · availability reported by the Faucet";
+                    $("statusBar").textContent = "Mainnet invitations · Checked " + statusTime(lastStatusSuccess);
                     $("invitationCard").hidden = false;
                     $("featureGrid").classList.add("has-invitations");
                     $("invitationAmountDisplay").textContent = data.invitationAmount;
@@ -780,6 +781,7 @@
             } catch (err) {
                 statusReady = false;
                 statusFailed = true;
+                $("statusSource").textContent = lastStatusSuccess ? "Sources: refresh failed. Last Faucet API read: " + statusTime(lastStatusSuccess) + "." : "Sources: Faucet status could not be read. No current reserve or availability is confirmed.";
                 if (!invitationPage) void validateAddressInput();
                 $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
