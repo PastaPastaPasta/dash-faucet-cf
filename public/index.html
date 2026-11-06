@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Faucet · dashhq</title>
-    <script src="/dashhq/dashhq-shell.js" integrity="sha384-3ZiH1i9ujGQKOT4BQ9rqpbSSoqZ1YhAiizna3dUuMzd1pw8Qnzp+TbLZrOymkGsg" crossorigin="anonymous"></script>
+    <script src="/dashhq/dashhq-shell.js" integrity="sha384-Rn92IqddMZK/ZX24Y3vZHTjriwDj9qej0aL3sCzBvOvvvrBJdsFC7OvlJ89oyHmz" crossorigin="anonymous"></script>
     <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
     <link rel="stylesheet" href="/dashhq/dashhq-tokens.css" integrity="sha384-eIeoqMrqcJXNiDIyR/ca6hWPZoKWZwAiJzkBWHXZZhvlWcng3CyXnIKbk/dPNLp1" crossorigin="anonymous">
     <link rel="stylesheet" href="/dashhq/dashhq-shell.css" integrity="sha384-ZKLYNJEzUkXuLHDlawo+VS8zRKydstcXfxy5b9+wZOEoWQL29ZZf4nlrConP1dy1" crossorigin="anonymous">
@@ -64,7 +64,6 @@
                     <div class="stat-label">Transaction ID</div>
                     <div class="stat-value" id="coreTxid"></div>
                 </div>
-                <button class="copy-btn dh-btn dh-btn--sm" data-copy="coreTxid">Copy transaction ID</button>
                 <div class="action-buttons">
                     <button class="btn-secondary dh-btn" id="sendMoreBtn">Fund another address</button>
                 </div>
@@ -116,7 +115,7 @@
 
     </div></main>
 
-    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a> <a id="networkChoice" href="/invitations">Mainnet identity invitations · real DASH</a></dashhq-footer>
+    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a> <span><a id="networkChoice" href="/invitations">Mainnet identity invitations · real DASH</a></span></dashhq-footer>
     <script type="module" src="/faucet.js"></script>
 </body>
 </html>

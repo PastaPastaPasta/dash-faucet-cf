@@ -619,9 +619,7 @@
 
         function showCoreFaucetConfig() {
             $("coreFaucetCard").classList.add("show-config");
-            $("addressIntro").open = false;
             void validateAddressInput();
-            $("addressInput").focus({ preventScroll: true });
         }
 
         function resetCoreFaucetCard() {
