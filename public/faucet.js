@@ -687,11 +687,11 @@
                 if (data.status !== "ok" && data.status !== "low_balance") {
                     throw new Error("Faucet unavailable");
                 }
+                if (!invitationPage && (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0)) throw new Error("Invalid faucet configuration");
                 lastStatusSuccess = new Date();
                 $("statusSource").textContent = "Sources: Faucet API · fetched " + statusTime(lastStatusSuccess) + ".";
 
                 if (!invitationPage) {
-                    if (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0) throw new Error("Invalid faucet configuration");
                     applyNetworkCopy(data.network);
                     statusReady = true;
                     $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${data.coreFaucetAmount} ${coinName}`;
