@@ -647,7 +647,7 @@
             $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
                 : "Practice funds for development, with no monetary value.";
             $("addressHint").textContent = network === "testnet" ? "A testnet address starts with y or 8." : "A mainnet address starts with X or 7.";
-            $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${copy.coin}`;
+            $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get 1 ${copy.coin}`;
             $("configHeading").textContent = "Request funds";
             $("sentHeading").textContent = copy.sent;
             $("addressInput").placeholder = copy.placeholder;
@@ -661,8 +661,14 @@
         }
 
         function statusTime(date) {
-            return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "UTC" }).format(date) + " UTC";
+            return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" }).format(date) + " UTC";
         }
+
+        setInterval(() => {
+            if (!lastStatusSuccess || statusFailed) return;
+            const minutes = Math.floor((Date.now() - lastStatusSuccess.getTime()) / 60000);
+            $("statusSource").textContent = minutes < 1 ? "Just now" : `${minutes} min ago`;
+        }, 30000);
 
         async function loadStatus() {
             try {
@@ -682,9 +688,9 @@
                 }
                 if (!invitationPage && (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0)) throw new Error("Invalid faucet configuration");
                 lastStatusSuccess = new Date();
-                $("statusSource").textContent = "Checked " + statusTime(lastStatusSuccess);
+                $("statusSource").textContent = "Just now";
                 $("statusSource").dateTime = lastStatusSuccess.toISOString();
-                $("statusSource").title = lastStatusSuccess.toISOString();
+                $("statusSource").title = statusTime(lastStatusSuccess);
 
                 if (!invitationPage) {
                     applyNetworkCopy(data.network);
@@ -728,7 +734,7 @@
                     hardCapEndpoint = data.hardCapEndpoint;
                 }
                 capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
-                $("networkChoice").hidden = (!invitationPage && !data.invitationsEnabled);
+                $("networkChoice").hidden = Boolean(returnUrl) || (!invitationPage && !data.invitationsEnabled);
                 if (data.invitationsEnabled && invitationPage) {
                     $("statusBar").textContent = "Mainnet invitations";
                     $("invitationCard").hidden = false;

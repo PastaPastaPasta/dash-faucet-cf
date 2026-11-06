@@ -5,6 +5,7 @@ export function bridgeReturnUrl(params, bridgeStart) {
         try {
             const url = new URL(raw);
             if (url.origin !== bridge.origin || url.username || url.password || url.pathname !== '/') return null;
+            url.search = '';
             url.searchParams.set('mode', 'resume');
             url.searchParams.set('journey', 'start');
             url.searchParams.set('network', 'testnet');

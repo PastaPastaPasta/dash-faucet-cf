@@ -88,3 +88,5 @@ body > main > .dh-narrow { margin-inline: auto; max-width: 680px; }
 .treasury-panel { border: 0; background: none; padding: 0; }
 .code-row { margin-top: 20px; }
 .code-row summary { font-size: 14px; }
+
+dashhq-footer #networkChoice[hidden] { display: none !important; }

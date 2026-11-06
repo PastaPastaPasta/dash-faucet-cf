@@ -170,16 +170,16 @@ test("mainnet invitations require Turnstile on their own Mainnet page", async ({
 test('checks malformed, wrong-network and checksum errors before a payout', async ({ page }) => {
   const requests = await openFaucet(page);
   await expect(page.locator('#invitationCard')).toBeHidden();
-  await expect(page.locator('.dh-steps li').first()).toHaveAttribute('data-state', 'done');
+  await expect(page.locator('.dh-steps')).toHaveCount(0);
   for (const [address, message] of [
     ['yNotARealAddress', '34 characters'],
     ['Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv', 'Testnet'],
     ['yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKt', 'checksum'],
   ]) {
     await page.locator('#addressInput').fill(address);
+    await page.locator('#addressInput').blur();
     await expect(page.locator('#addressValidation')).toContainText(message);
     await expect(page.locator('#addressInput')).toHaveAttribute('aria-invalid', 'true');
-    await expect(page.locator('.dh-steps li').first()).toHaveAttribute('data-state', 'todo');
     await expect(page.locator('#coreFaucetBtn')).toBeDisabled();
   }
   expect(requests).toEqual([]);
@@ -195,7 +195,8 @@ test("unknown availability preserves the address and records retry and last-succ
   await expect(page.locator("#statusBar")).toContainText("No successful check in this tab");
   await expect(page.locator("#addressInput")).toHaveValue(address);
   await page.locator("#retryStatusBtn").click();
-  await expect(page.locator("#statusBar")).toContainText("Checked");
+  await expect(page.locator("#statusBar")).toContainText("Faucet online");
+  await expect(page.locator("#statusSource")).toContainText("Just now");
   await expect(page.locator("#networkChoice")).toBeHidden();
   statusResponses.push({ status: 502, body: "status service failed" });
   await page.locator("#retryStatusBtn").evaluate(button => button.click());
@@ -208,7 +209,7 @@ test("keeps Mainnet invitations out of a Bridge funding handoff", async ({ page 
   await openFaucet(page, { query: "?from=bridge&journey=start&address=public-address" });
   await expect(page.locator("#statusBar")).toContainText("Faucet online");
   await expect(page.locator("#networkChoice")).toBeHidden();
-  await expect(page.locator("#bridgeReturnActions")).toBeVisible();
+  await expect(page.locator("#bridgeReturn")).toBeHidden();
 });
 
 
@@ -220,16 +221,29 @@ test("direct funding does not claim progress through identity creation", async (
 test("Bridge funding returns in one click to the matching resume address", async ({ page, context }) => {
   const address = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
   await openFaucet(page, { query: `?from=bridge&journey=start&address=${address}` });
-  await expect(page.locator('.dh-steps')).toBeVisible();
+  await expect(page.locator('.dh-steps')).toHaveCount(0);
+  await page.locator('#coreFaucetBtn').click();
+  await expect(page.locator('#bridgeReturn')).toBeVisible();
   const link = page.locator('#returnBridgeBtn');
   const destination = new URL(await link.getAttribute('href'));
   expect(destination.searchParams.get('mode')).toBe('resume');
   expect(destination.searchParams.get('deposit')).toBe(address);
   expect(destination.searchParams.get('network')).toBe('testnet');
-  await expect(page.locator('.dh-steps a')).toHaveAttribute('href', destination.href);
+  await expect(link).not.toHaveAttribute('target');
   await page.route(destination.href, route => route.fulfill({ body: '<h1>Bridge resume</h1>', contentType: 'text/html' }));
   const tabs = context.pages().length;
   await link.click();
   await expect(page).toHaveURL(destination.href);
   expect(context.pages().length).toBe(tabs);
+});
+
+
+test("keeps validation quiet until blur and rejects off-origin returns", async ({page}) => {
+  await openFaucet(page, {query: '?return=https%3A%2F%2Fevil.test%2F&address=yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs'});
+  await expect(page.locator('#addressValidation')).toBeEmpty();
+  await page.locator('#addressInput').fill('y-invalid');
+  await expect(page.locator('#addressValidation')).toBeEmpty();
+  await page.locator('#addressInput').blur();
+  await expect(page.locator('#addressValidation')).toContainText('Testnet Core address');
+  await expect(page.locator('#bridgeReturn')).toBeHidden();
 });
