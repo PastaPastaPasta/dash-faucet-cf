@@ -4,45 +4,42 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Faucet · dashhq</title>
-    <script src="/dashhq/dashhq-shell.js"></script>
+    <script src="/dashhq/dashhq-shell.js" integrity="sha384-F/uQl96dZ+Jf22VmJz+hMoodLRsDshqkfnGIDnBrWNhJRg2D4TXbF6kw5ZpZomSl" crossorigin="anonymous"></script>
     <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/dashhq/dashhq-tokens.css">
-    <link rel="stylesheet" href="/dashhq/dashhq-shell.css">
-    <link rel="stylesheet" href="/dashhq/dashhq-components.css">
-    <link rel="icon" type="image/svg+xml" href="/dashhq/mark/favicon.svg">
+    <link rel="stylesheet" href="/dashhq/dashhq-tokens.css" integrity="sha384-eIeoqMrqcJXNiDIyR/ca6hWPZoKWZwAiJzkBWHXZZhvlWcng3CyXnIKbk/dPNLp1" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-shell.css" integrity="sha384-ZKLYNJEzUkXuLHDlawo+VS8zRKydstcXfxy5b9+wZOEoWQL29ZZf4nlrConP1dy1" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css" integrity="sha384-oBu7EuYeVdqDcD2lYDeJF2qO9Cyr8DGK+R/NbXtE5wjjgAiZIdzT67WkEt+R+ltr" crossorigin="anonymous">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/faucet.css">
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body class="dh-fill">
-    <dashhq-bar product="faucet" network="testnet" sticky></dashhq-bar>
+    <dashhq-bar product="faucet" network="testnet" sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
     <main class="dh-container dh-page"><div class="dh-narrow">
         <header class="dh-page-header">
             <h1 class="dh-page-header__title" id="pageTitle">Get testnet DASH</h1>
-            <p class="dh-page-header__lede" id="pageSubtitle">Practice funds for development. Enter your receiving address below.</p>
+            <p class="dh-page-header__lede" id="pageSubtitle">Practice funds for development, with no monetary value.</p>
         </header>
 
-        <ol class="dh-steps" aria-label="Start on Testnet" hidden>
-            <li data-state="todo"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">Address</a></li><li aria-current="step">Testnet DASH</li><li>Identity</li><li>Username</li>
-        </ol>
         <div class="feature-grid" id="featureGrid">
         <!-- Core Faucet Section -->
         <div class="feature-card dh-card show-config" id="coreFaucetCard">
             <!-- Config View -->
             <div class="config-view">
 
-                <p class="description" id="fundingInstruction">Use your Bridge deposit address or another Testnet address.</p>
+
                 <h2 id="configHeading" hidden>Request funds</h2>
-                <label class="dh-field__label" for="addressInput">Your receiving address</label>
-                <p id="addressHint" class="dh-field__help">Testnet addresses start with y or 8.</p>
+                <label class="dh-field__label" for="addressInput">Receiving address</label>
+                <p id="addressHint" class="dh-field__help">A testnet address starts with y or 8.</p>
                 <div class="dh-inline-form">
-                    <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="Enter your Dash address" autocomplete="off" spellcheck="false">
+                    <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="y… address" autocomplete="off" spellcheck="false">
                     <button class="btn dh-btn dh-btn--primary" id="coreFaucetBtn" disabled>
 
-                        <span class="btn-text">Get tDASH</span>
+                        <span class="btn-text">Get 1 tDASH</span>
                     </button>
                 </div>
                 <p id="addressValidation" class="dh-field__help" aria-live="polite"></p>
-                <details class="code-row">
+                <details class="code-row dh-disclosure">
                     <summary>Use a voucher or event code</summary>
                     <label class="dh-field__label" for="codeInput">Code (optional)</label>
                     <input type="text" id="codeInput" placeholder="Enter your code" autocomplete="off" spellcheck="false" maxlength="64" class="dh-input">
@@ -74,27 +71,13 @@
             </div>
         </div>
 
-        <section class="next-step dh-notice dh-notice--success" id="identityNote" hidden>
-            <p id="identityStepLabel" hidden></p>
-            <h2>Create an identity</h2>
-            <p class="description" id="identityStepDescription">After funding, return to your open Bridge tab to create your identity and register a username.</p>
-            <a class="btn-secondary dh-btn" id="bridgeLink" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">Start in the Bridge →</a>
-            <p class="dh-field__help">Keep the Bridge tab open throughout funding. Only your public address travels to the Faucet.</p>
-        </section>
         </div>
-
-        <section class="dh-notice dh-notice--success" id="bridgeReturn" hidden><p class="dh-notice__title">tDASH sent</p>
-            <p>Your Bridge tab will detect the deposit. Match this public address when returning:</p>
-            <dashhq-hash full id="bridgeReceipt"></dashhq-hash>
+        <section class="dh-notice dh-notice--success" id="bridgeReturn" hidden>
+            <p>Funds sent. <a id="returnBridgeBtn" href="https://bridge.thepasta.org/?mode=resume&amp;journey=start&amp;network=testnet">Back to Start on Testnet →</a></p>
         </section>
-        <div class="dh-stack" id="bridgeReturnActions" hidden>
-            <div class="dh-actions"><a class="btn-secondary dh-btn" id="returnBridgeBtn" href="https://bridge.thepasta.org/?mode=resume&amp;network=testnet">Continue in Bridge →</a></div>
-            <p class="dh-field__help">Bridge opens the restore step for this address. Use your saved phrase or backup file; it stays on your device.</p>
-        </div>
-        <p id="addressIntro"><a class="dh-btn dh-btn--link" data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Create one in Bridge</a></p>
-        <p id="networkChoice" class="dh-field__help"><a href="/invitations">Mainnet identity invitations · real DASH →</a></p>
+        <p id="addressIntro"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Start on Testnet →</a></p>
 
-        <details class="card dh-card treasury-panel" id="treasuryPanel" hidden>
+        <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>
             <summary>Fund the faucet</summary>
             <div class="treasury-heading">
                 <div>
@@ -129,12 +112,11 @@
         <span id="coreFaucetAmountDisplay" hidden>…</span>
         <span id="coreNetworkLabel" hidden></span><span id="coreNetworkKicker" hidden></span>
         <button type="button" id="retryStatusBtn" class="dh-btn" hidden>Retry faucet status</button>
-        <p class="footer-status" id="statusBar" role="status">Loading faucet status…</p>
-        <p class="dh-sources"><span id="statusSource">Sources: no Faucet status read yet.</span> <a href="/api/status">Faucet status API</a> · Payout size, rate limits, reserve balance and spendable outputs.</p>
+        <p class="dh-sources faucet-source"><span id="statusBar" role="status">Loading faucet status…</span> · <a href="/api/status">Faucet status API</a> · <time id="statusSource" class="dh-time">No status read yet</time></p>
 
     </div></main>
 
-    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><p><a href="/keys">API keys for developers</a></p></dashhq-footer>
+    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a> <a id="networkChoice" href="/invitations">Mainnet identity invitations · real DASH</a></dashhq-footer>
     <script type="module" src="/faucet.js"></script>
 </body>
 </html>

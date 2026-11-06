@@ -1,5 +1,6 @@
 
         import { addressError } from "/address.js";
+        import { bridgeReturnUrl } from "/bridge-return.js";
         import { renderSVG } from "/vendor/uqr.mjs";
 
         "use strict";
@@ -8,13 +9,13 @@
             testnet: {
                 coin: "tDASH",
                 sent: "tDASH sent",
-                placeholder: "Enter your testnet Dash address (y...)",
+                placeholder: "y… address",
                 bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'testnet'}),
             },
             mainnet: {
                 coin: "DASH",
                 sent: "DASH sent",
-                placeholder: "Enter your Dash address (X...)",
+                placeholder: "X… address",
                 bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'mainnet'}),
             },
         };
@@ -52,8 +53,8 @@
 
         const invitationPage = /\/invitations(?:\.html)?\/?$/.test(location.pathname);
         const entryParams = new URLSearchParams(location.search);
-        const fromBridge = entryParams.get("from") === "bridge";
-        const startJourney = fromBridge || entryParams.get("journey") === "start";
+        const returnUrl = bridgeReturnUrl(entryParams, NETWORK_COPY.testnet.bridge);
+        let addressTouched = false;
 
         const $ = (id) => document.getElementById(id);
 
@@ -64,10 +65,9 @@
             try { error = await addressError(value, faucetNetwork); }
             catch { error = "Address checking is unavailable. Reload this page to try again."; }
             if (input.value.trim() !== value) return false;
-            input.setAttribute("aria-invalid", String(Boolean(error && value)));
-            $("addressValidation").textContent = value ? error || "Address checked · " + (faucetNetwork === "testnet" ? "Testnet" : "Mainnet") + (!statusReady ? (statusFailed ? ". Availability unknown; retry below." : ". Checking faucet availability…") : "") : "Enter your receiving address.";
-            document.querySelector(".dh-steps li")?.setAttribute("data-state", value && !error ? "done" : "todo");
-            $("addressValidation").toggleAttribute("data-invalid", Boolean(error && value));
+            input.setAttribute("aria-invalid", String(Boolean(error && addressTouched)));
+            $("addressValidation").textContent = addressTouched && error ? (value ? error : "Enter a receiving address.") : "";
+            $("addressValidation").toggleAttribute("data-invalid", Boolean(error && addressTouched));
             $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
             return !error;
         }
@@ -437,6 +437,7 @@
             if (coreRequestPending || (capSolving && !proof)) return;
 
             const address = addressInput.value.trim();
+            addressTouched = true;
             if (!await validateAddressInput()) {
                 addressInput.focus();
                 return;
@@ -533,8 +534,7 @@
                 card.classList.add("show-results", "success");
                 addressInput.value = "";
                 $("codeInput").value = "";
-                $("identityNote").hidden = fromBridge;
-                $("bridgeReturn").hidden = !fromBridge;
+                $("bridgeReturn").hidden = !returnUrl || address !== entryParams.get("address");
                 $("sentHeading").scrollIntoView({ block: "center" });
             } catch (error) {
                 showError(error.message);
@@ -628,7 +628,8 @@
             const card = $("coreFaucetCard");
             card.classList.remove("show-results", "success");
             card.classList.add("show-config");
-            $("identityNote").hidden = true;
+            $("bridgeReturn").hidden = true;
+            addressTouched = false;
             $("addressInput").value = "";
             $("coreErrorBox").classList.remove("visible");
             hideHardCaptcha();
@@ -644,22 +645,14 @@
             document.title = "Faucet · dashhq";
             $("pageTitle").textContent = network === "mainnet" ? "Get DASH" : "Get testnet DASH";
             $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
-                : "Practice funds for development. Enter your receiving address below.";
-            $("identityStepLabel").textContent = "";
-            $("identityStepDescription").textContent = "After funding, return to your open Bridge tab to create your identity and register a username.";
-            $("addressHint").textContent = network === "testnet" ? "Testnet addresses start with y or 8." : "Mainnet addresses start with X or 7.";
+                : "Practice funds for development, with no monetary value.";
+            $("addressHint").textContent = network === "testnet" ? "A testnet address starts with y or 8." : "A mainnet address starts with X or 7.";
             $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get ${copy.coin}`;
             $("configHeading").textContent = "Request funds";
             $("sentHeading").textContent = copy.sent;
             $("addressInput").placeholder = copy.placeholder;
             coinName = copy.coin;
-            $("bridgeLink").href = copy.bridge;
-            $("bridgeLink").hidden = fromBridge;
-            $("bridgeLink").textContent = network === "mainnet" ? "Create a Mainnet identity in the Bridge →" : "Start in the Bridge →";
-            if (network === "mainnet") {
-                $("addressIntro").hidden = true;
-                document.querySelector(".dh-steps").hidden = true;
-            }
+            if (network === "mainnet") $("addressIntro").hidden = true;
             document.querySelector("dashhq-bar").setAttribute("network", network);
             void validateAddressInput();
             for (const el of document.querySelectorAll(".coin-name")) {
@@ -689,7 +682,9 @@
                 }
                 if (!invitationPage && (!["testnet", "mainnet"].includes(data.network) || !Number.isFinite(Number(data.coreFaucetAmount)) || Number(data.coreFaucetAmount) <= 0)) throw new Error("Invalid faucet configuration");
                 lastStatusSuccess = new Date();
-                $("statusSource").textContent = "Sources: Faucet API · fetched " + statusTime(lastStatusSuccess) + ".";
+                $("statusSource").textContent = "Checked " + statusTime(lastStatusSuccess);
+                $("statusSource").dateTime = lastStatusSuccess.toISOString();
+                $("statusSource").title = lastStatusSuccess.toISOString();
 
                 if (!invitationPage) {
                     applyNetworkCopy(data.network);
@@ -706,7 +701,7 @@
                         `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
                     if (data.status === "low_balance") parts[0] = "Testnet faucet low balance";
-                    $("statusBar").textContent = parts.join(" · ") + " · Checked " + statusTime(lastStatusSuccess);
+                    $("statusBar").textContent = parts.join(" · ");
 
                     if (data.depositAddress) {
                         $("depositAddress").textContent = data.depositAddress;
@@ -733,9 +728,9 @@
                     hardCapEndpoint = data.hardCapEndpoint;
                 }
                 capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
-                $("networkChoice").hidden = startJourney || (!invitationPage && !data.invitationsEnabled);
+                $("networkChoice").hidden = (!invitationPage && !data.invitationsEnabled);
                 if (data.invitationsEnabled && invitationPage) {
-                    $("statusBar").textContent = "Mainnet invitations · Checked " + statusTime(lastStatusSuccess);
+                    $("statusBar").textContent = "Mainnet invitations";
                     $("invitationCard").hidden = false;
                     $("featureGrid").classList.add("has-invitations");
                     $("invitationAmountDisplay").textContent = data.invitationAmount;
@@ -781,7 +776,7 @@
             } catch (err) {
                 statusReady = false;
                 statusFailed = true;
-                $("statusSource").textContent = lastStatusSuccess ? "Sources: refresh failed. Last Faucet API read: " + statusTime(lastStatusSuccess) + "." : "Sources: Faucet status could not be read. No current reserve or availability is confirmed.";
+                $("statusSource").textContent = lastStatusSuccess ? "Refresh failed. Last read: " + statusTime(lastStatusSuccess) + "." : "No status read available";
                 if (!invitationPage) void validateAddressInput();
                 $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
@@ -802,29 +797,15 @@
                 $("codeInput").closest("details").open = true;
                 showCoreFaucetConfig();
             }
-            document.querySelector(".dh-steps").hidden = !startJourney;
-            if (startJourney) $("networkChoice").hidden = true;
-            if (startJourney && receivingAddress) {
-                const path = `/?mode=resume&journey=start&deposit=${encodeURIComponent(receivingAddress)}`;
-                const addressStep = document.querySelector(".dh-steps a");
-                addressStep.dataset.path = path;
-                addressStep.href = dashhq.href('bridge', path, { network: 'testnet' });
-                $("returnBridgeBtn").href = addressStep.href;
-            }
-            if (fromBridge && receivingAddress) {
+            if (returnUrl) {
+                $("returnBridgeBtn").href = returnUrl;
                 $("addressIntro").hidden = true;
-                $("bridgeReturn").hidden = true;
-                $("bridgeReturnActions").hidden = false;
-                $("fundingInstruction").textContent = "Your Bridge address is ready. Request practice funds, then return to Bridge.";
-                $("bridgeReceipt").setAttribute("value", receivingAddress);
-                $("bridgeReceipt").textContent = receivingAddress;
             }
-            $("addressInput").addEventListener("input", () => {
+            $("addressInput").addEventListener("blur", () => {
+                addressTouched = true;
                 void validateAddressInput();
-                if (fromBridge && receivingAddress) $("fundingInstruction").textContent = $("addressInput").value.trim() === receivingAddress
-                    ? "Your Bridge address is ready. Request practice funds, then return to Bridge."
-                    : "This differs from your Bridge address. Funds sent here will not fund that identity.";
             });
+            $("addressInput").addEventListener("input", () => { void validateAddressInput(); });
             $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
             // Wrapped, not passed directly: the click event would arrive as `proof`.
             $("coreFaucetBtn").addEventListener("click", () => requestCoreFaucet());

@@ -4,17 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mainnet invitations · Faucet · dashhq</title>
-    <script src="/dashhq/dashhq-shell.js"></script>
+    <script src="/dashhq/dashhq-shell.js" integrity="sha384-F/uQl96dZ+Jf22VmJz+hMoodLRsDshqkfnGIDnBrWNhJRg2D4TXbF6kw5ZpZomSl" crossorigin="anonymous"></script>
     <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
-    <link rel="stylesheet" href="/dashhq/dashhq-tokens.css">
-    <link rel="stylesheet" href="/dashhq/dashhq-shell.css">
-    <link rel="stylesheet" href="/dashhq/dashhq-components.css">
-    <link rel="icon" type="image/svg+xml" href="/dashhq/mark/favicon.svg">
+    <link rel="stylesheet" href="/dashhq/dashhq-tokens.css" integrity="sha384-eIeoqMrqcJXNiDIyR/ca6hWPZoKWZwAiJzkBWHXZZhvlWcng3CyXnIKbk/dPNLp1" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-shell.css" integrity="sha384-ZKLYNJEzUkXuLHDlawo+VS8zRKydstcXfxy5b9+wZOEoWQL29ZZf4nlrConP1dy1" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css" integrity="sha384-oBu7EuYeVdqDcD2lYDeJF2qO9Cyr8DGK+R/NbXtE5wjjgAiZIdzT67WkEt+R+ltr" crossorigin="anonymous">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="stylesheet" href="/faucet.css">
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body class="dh-fill page-invitations">
-    <dashhq-bar product="faucet" network="mainnet" sticky></dashhq-bar>
+    <dashhq-bar product="faucet" network="mainnet" sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
     <main class="dh-container dh-page"><div class="dh-narrow">
         <header class="dh-page-header">
             <h1 class="dh-page-header__title" id="pageTitle">Mainnet identity invitations</h1>
@@ -58,7 +58,7 @@
         </div>
         </div>
 
-        <details class="card dh-card treasury-panel" id="treasuryPanel" hidden>
+        <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>
             <summary>Fund the faucet</summary>
             <div class="treasury-heading">
                 <div>
@@ -100,7 +100,7 @@
 
     </div></main>
 
-    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><p><a href="/keys">API keys for developers</a></p></dashhq-footer>
+    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a></dashhq-footer>
     <script type="module" src="/faucet.js"></script>
 </body>
 </html>
