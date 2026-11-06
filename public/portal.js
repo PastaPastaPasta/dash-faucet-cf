@@ -159,8 +159,8 @@ const Portal = (() => {
       me.providers.length === 0
         ? el("p", { class: "muted" }, "Sign-in isn't set up on this server yet.")
         : el("div", { class: "providers" },
-            me.providers.map((p, index) =>
-              el("a", { class: `dh-btn dh-btn--lg${index === 0 ? " dh-btn--primary" : ""}`, href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
+            me.providers.map((p) =>
+              el("a", { class: "dh-btn dh-btn--secondary", href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
       el("p", { class: "muted fine" }, `Open to anyone with ${eligibility() || "an eligible account"}.`),
     );
     container.hidden = false;
