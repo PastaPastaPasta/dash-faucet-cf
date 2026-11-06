@@ -210,3 +210,26 @@ test("keeps Mainnet invitations out of a Bridge funding handoff", async ({ page 
   await expect(page.locator("#networkChoice")).toBeHidden();
   await expect(page.locator("#bridgeReturnActions")).toBeVisible();
 });
+
+
+test("direct funding does not claim progress through identity creation", async ({ page }) => {
+  await openFaucet(page);
+  await expect(page.locator('.dh-steps')).toBeHidden();
+});
+
+test("Bridge funding returns in one click to the matching resume address", async ({ page, context }) => {
+  const address = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
+  await openFaucet(page, { query: `?from=bridge&journey=start&address=${address}` });
+  await expect(page.locator('.dh-steps')).toBeVisible();
+  const link = page.locator('#returnBridgeBtn');
+  const destination = new URL(await link.getAttribute('href'));
+  expect(destination.searchParams.get('mode')).toBe('resume');
+  expect(destination.searchParams.get('deposit')).toBe(address);
+  expect(destination.searchParams.get('network')).toBe('testnet');
+  await expect(page.locator('.dh-steps a')).toHaveAttribute('href', destination.href);
+  await page.route(destination.href, route => route.fulfill({ body: '<h1>Bridge resume</h1>', contentType: 'text/html' }));
+  const tabs = context.pages().length;
+  await link.click();
+  await expect(page).toHaveURL(destination.href);
+  expect(context.pages().length).toBe(tabs);
+});

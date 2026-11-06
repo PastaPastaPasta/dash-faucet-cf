@@ -21,7 +21,7 @@
             <p class="dh-page-header__lede" id="pageSubtitle">Practice funds for development. Enter your receiving address below.</p>
         </header>
 
-        <ol class="dh-steps" aria-label="Start on Testnet">
+        <ol class="dh-steps" aria-label="Start on Testnet" hidden>
             <li data-state="todo"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">Address</a></li><li aria-current="step">Testnet DASH</li><li>Identity</li><li>Username</li>
         </ol>
         <div class="feature-grid" id="featureGrid">
@@ -88,9 +88,8 @@
             <dashhq-hash full id="bridgeReceipt"></dashhq-hash>
         </section>
         <div class="dh-stack" id="bridgeReturnActions" hidden>
-            <div class="dh-actions"><button type="button" class="btn-secondary dh-btn" id="returnBridgeBtn">Return to your Bridge tab →</button></div>
-            <p id="returnBridgeHint" class="dh-field__help" hidden>Switch to your open Bridge tab. This page cannot focus a tab on another site.</p>
-            <p class="dh-field__help"><a id="resumeBridgeLink">Lost the Bridge tab? Restore your pending address →</a> Use your saved phrase or backup file. It stays on your device.</p>
+            <div class="dh-actions"><a class="btn-secondary dh-btn" id="returnBridgeBtn" href="https://bridge.thepasta.org/?mode=resume&amp;network=testnet">Continue in Bridge →</a></div>
+            <p class="dh-field__help">Bridge opens the restore step for this address. Use your saved phrase or backup file; it stays on your device.</p>
         </div>
         <p id="addressIntro"><a class="dh-btn dh-btn--link" data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Create one in Bridge</a></p>
         <p id="networkChoice" class="dh-field__help"><a href="/invitations">Mainnet identity invitations · real DASH →</a></p>

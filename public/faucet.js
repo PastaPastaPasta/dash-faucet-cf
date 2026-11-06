@@ -800,7 +800,15 @@
                 $("codeInput").closest("details").open = true;
                 showCoreFaucetConfig();
             }
+            document.querySelector(".dh-steps").hidden = !startJourney;
             if (startJourney) $("networkChoice").hidden = true;
+            if (startJourney && receivingAddress) {
+                const path = `/?mode=resume&journey=start&deposit=${encodeURIComponent(receivingAddress)}`;
+                const addressStep = document.querySelector(".dh-steps a");
+                addressStep.dataset.path = path;
+                addressStep.href = dashhq.href('bridge', path, { network: 'testnet' });
+                $("returnBridgeBtn").href = addressStep.href;
+            }
             if (fromBridge && receivingAddress) {
                 $("addressIntro").hidden = true;
                 $("bridgeReturn").hidden = true;
@@ -808,12 +816,7 @@
                 $("fundingInstruction").textContent = "Your Bridge address is ready. Request practice funds, then return to Bridge.";
                 $("bridgeReceipt").setAttribute("value", receivingAddress);
                 $("bridgeReceipt").textContent = receivingAddress;
-                $("resumeBridgeLink").href = dashhq.href('bridge', `/?mode=resume&deposit=${encodeURIComponent(receivingAddress)}`, { network: 'testnet' });
             }
-            $("returnBridgeBtn").addEventListener("click", () => {
-                $("returnBridgeHint").hidden = false;
-                window.close();
-            });
             $("addressInput").addEventListener("input", () => {
                 void validateAddressInput();
                 if (fromBridge && receivingAddress) $("fundingInstruction").textContent = $("addressInput").value.trim() === receivingAddress
