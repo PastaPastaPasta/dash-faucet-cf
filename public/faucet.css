@@ -69,7 +69,6 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #coreFaucetCard .description { margin-bottom: 16px; }
 #bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
-
 .code-row label { margin-top: 12px; }
 .code-row input { font-size: 16px; }
 .error:not(.visible) { display: none; }
