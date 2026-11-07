@@ -562,6 +562,14 @@
             return `${Math.ceil(minutes / 60)}h`;
         }
 
+        function metaItems(parts) {
+            return parts.map(text => {
+                const item = document.createElement("span");
+                item.textContent = text;
+                return item;
+            });
+        }
+
         function formatBalance(value) {
             const amount = Number(value);
             if (!Number.isFinite(amount)) return "Unavailable";
@@ -651,7 +659,9 @@
             $("addressInput").placeholder = copy.placeholder;
             coinName = copy.coin;
             if (network === "mainnet") $("addressIntro").hidden = true;
-            document.querySelector("dashhq-bar").setAttribute("network", network);
+            const bar = document.querySelector("dashhq-bar");
+            bar.setAttribute("network", network);
+            bar.setAttribute("aria-description", `This faucet serves ${network === "testnet" ? "Testnet" : "Mainnet"} only. The network cannot be changed here.`);
             void validateAddressInput();
             for (const el of document.querySelectorAll(".coin-name")) {
                 el.textContent = copy.coin;
@@ -705,7 +715,7 @@
                         `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
                     if (data.status === "low_balance") parts[0] = "Testnet faucet low balance";
-                    $("statusBar").textContent = parts.join(" · ");
+                    $("statusBar").replaceChildren(...metaItems(parts));
 
                     if (data.depositAddress) {
                         $("depositAddress").textContent = data.depositAddress;
@@ -717,12 +727,13 @@
                         $("coreFaucetAmountDisplay").textContent = data.coreFaucetAmount;
                     }
                     const corePresentation = applyNetworkPresentation("core", data.network);
-                    $("coreTreasuryBalance").textContent = formatBalance(balance);
-                    $("coreTreasuryDetail").textContent =
-                        `${data.coreFaucetAmount} ${corePresentation.currency} per request` +
-                        (Number.isFinite(Number(data.availableUtxos))
-                            ? ` · ${Number(data.availableUtxos).toLocaleString()} spendable outputs`
-                            : "");
+                    $("coreTreasuryBalance").textContent = Number.isFinite(balance)
+                        ? `≈ ${balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "Unavailable";
+                    $("coreTreasuryExact").textContent = `Exact balance: ${formatBalance(balance)} ${corePresentation.currency}`;
+                    $("coreTreasuryDetail").replaceChildren(...metaItems([
+                        `${data.coreFaucetAmount} ${corePresentation.currency} per request`,
+                        ...(Number.isFinite(Number(data.availableUtxos)) ? [`${Number(data.availableUtxos).toLocaleString()} spendable outputs`] : []),
+                    ]));
                     $("treasuryPanel").hidden = false;
                 }
                 if (data.turnstileSiteKey) {

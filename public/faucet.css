@@ -2,8 +2,7 @@
 [hidden] { display: none !important; }
 body { font: 15px/1.5 var(--dh-font); min-height: 100vh; background: var(--dh-page); color: var(--dh-ink); }
 a { color: var(--dh-brand-ink); text-underline-offset: 3px; }
-h2 { font-size: 21px; font-weight: 660; font-stretch: 110%; line-height: 1.25; margin-bottom: 12px; }
-h3 { font-size: 17px; font-weight: 620; }
+h2.dh-h2 { margin-bottom: 12px; }
 .feature-grid { display: grid; gap: 20px; }
 #invitationCard { grid-column: 1/-1; margin-top: 12px; }
 #invitationCard .description { max-width: 64ch; }
@@ -65,7 +64,6 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #addressValidation[data-invalid] { color: var(--dh-bad); }
 
 #featureGrid { grid-template-columns: minmax(0, 1fr); }
-#coreFaucetCard .config-view h2 { font-size: 17px; }
 #coreFaucetCard .description { margin-bottom: 16px; }
 #bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
@@ -86,6 +84,16 @@ body > main > .dh-narrow { margin-inline: auto; max-width: 680px; }
 #addressInput::placeholder { font-family: var(--dh-font); }
 #addressValidation:empty { display: none; }
 #addressHint { margin-bottom: 12px; }
-.faucet-source { margin-top: 24px; max-width: none; }
+.faucet-source { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 32px; max-width: none; }
+.faucet-source > p { margin: 0; }
 .treasury-panel { border: 0; background: none; padding: 0; margin: 0; }
 .code-row { margin-top: 20px; }
+
+@media(min-width:721px) {
+  body:has(#coreFaucetCard) > main.dh-page { padding-block: 64px; }
+  body:has(#coreFaucetCard) > main > .dh-narrow { display: flex; flex-direction: column; min-height: min(560px, calc(100vh - 260px)); }
+  #addressIntro { margin-top: 12px; }
+  body:has(#coreFaucetCard) .treasury-panel { margin-top: 24px; }
+  .faucet-source { margin-top: auto; padding-top: 24px; }
+  .treasury-panel[open] ~ .faucet-source { margin-top: 32px; }
+}

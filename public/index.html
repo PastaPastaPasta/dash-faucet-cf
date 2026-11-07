@@ -14,10 +14,10 @@
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body class="dh-fill">
-    <dashhq-bar product="faucet" network="testnet" sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
+    <dashhq-bar product="faucet" network="testnet" aria-description="This faucet serves Testnet only. The network cannot be changed here." sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
     <main class="dh-container dh-page"><div class="dh-narrow">
         <header class="dh-page-header">
-            <h1 class="dh-page-header__title" id="pageTitle">Get testnet DASH</h1>
+            <h1 class="dh-page-header__title dh-h1" id="pageTitle">Get testnet DASH</h1>
             <p class="dh-page-header__lede" id="pageSubtitle">Practice funds for development, with no monetary value.</p>
         </header>
 
@@ -28,7 +28,7 @@
             <div class="config-view">
 
 
-                <h2 id="configHeading" hidden>Request funds</h2>
+                <h2 class="dh-h2" id="configHeading" hidden>Request funds</h2>
                 <label class="dh-field__label" for="addressInput">Receiving address</label>
                 <p id="addressHint" class="dh-field__help">A testnet address starts with y or 8.</p>
                 <div class="dh-inline-form">
@@ -40,7 +40,7 @@
                 </div>
                 <p id="addressValidation" class="dh-field__help" aria-live="polite"></p>
                 <details class="code-row dh-disclosure">
-                    <summary>Use a voucher or event code</summary>
+                    <summary><span>Use a voucher or event code</span></summary>
                     <label class="dh-field__label" for="codeInput">Code (optional)</label>
                     <input type="text" id="codeInput" placeholder="Enter your code" autocomplete="off" spellcheck="false" maxlength="64" class="dh-input">
                     <p class="dh-field__help">Only needed if an event organiser gave you a code. Leave it blank for a standard request.</p>
@@ -59,7 +59,7 @@
 
             <!-- Results View -->
             <div class="results-view">
-                <h2 id="sentHeading">tDASH sent</h2>
+                <h2 class="dh-h2" id="sentHeading">tDASH sent</h2>
                 <div class="stat-item">
                     <div class="stat-label">Transaction ID</div>
                     <div class="stat-value" id="coreTxid"></div>
@@ -77,10 +77,10 @@
         <p id="addressIntro"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Start on Testnet</a></p>
 
         <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>
-            <summary>Fund the faucet</summary>
+            <summary><span>Fund the faucet</span></summary>
             <div class="treasury-heading">
                 <div>
-                    <h2>Faucet reserves</h2>
+                    <h2 class="dh-h2">Faucet reserves</h2>
                     <p>Fund only the network shown for this service.</p>
                 </div>
                 <span class="live-pill dh-badge dh-badge--good">Live</span>
@@ -89,11 +89,12 @@
                 <article class="treasury-card">
                     <div class="treasury-card-top">
                         <div class="treasury-card-title">
-                            <h3>Testnet faucet</h3>
+                            <h3 class="dh-h3">Testnet faucet</h3>
                             <span class="network-badge dh-badge dh-badge--info" id="coreNetworkBadge">Testnet</span>
                         </div>
                         <div class="treasury-balance"><strong id="coreTreasuryBalance">—</strong> <span id="coreTreasuryCurrency">tDASH</span></div>
-                        <p class="treasury-detail" id="coreTreasuryDetail">Loading payout status…</p>
+                        <p class="treasury-detail" id="coreTreasuryExact"></p>
+                        <p class="treasury-detail dh-meta" id="coreTreasuryDetail">Loading payout status…</p>
                     </div>
                     <div class="funding-address">
                         <div class="funding-address-header">
@@ -111,11 +112,11 @@
         <span id="coreFaucetAmountDisplay" hidden>…</span>
         <span id="coreNetworkLabel" hidden></span><span id="coreNetworkKicker" hidden></span>
         <button type="button" id="retryStatusBtn" class="dh-btn" hidden>Retry faucet status</button>
-        <p class="dh-sources faucet-source"><span id="statusBar" role="status">Loading faucet status…</span> · <a href="/api/status">Faucet status API</a> · <time id="statusSource" class="dh-time">No status read yet</time></p>
+        <div class="dh-sources faucet-source"><p class="dh-meta" id="statusBar" role="status">Loading faucet status…</p><p class="dh-meta"><a href="/api/status">Faucet status API</a><time id="statusSource" class="dh-time">No status read yet</time></p></div>
 
     </div></main>
 
-    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a> <span><a id="networkChoice" href="/invitations">Mainnet identity invitations · real DASH</a></span></dashhq-footer>
+    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a> <span><a id="networkChoice" href="/invitations">Developer identity invitations (Mainnet)</a></span></dashhq-footer>
     <script type="module" src="/faucet.js"></script>
 </body>
 </html>
