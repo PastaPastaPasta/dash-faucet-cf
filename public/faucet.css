@@ -30,7 +30,7 @@ h3 { font-size: 17px; font-weight: 620; }
 summary { font-weight: 620; cursor: pointer; }
 .treasury-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin: 20px 0; }
 .treasury-heading p,.treasury-detail,.network-warning { color: var(--dh-ink-2); font-size: 13px; }
-.treasury-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 24px; }
+.treasury-grid { display: grid; gap: 24px; }
 .treasury-card { min-width: 0; }
 .treasury-card-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .treasury-balance { margin: 12px 0 6px; font-size: 26px; font-variant-numeric: tabular-nums; }
@@ -69,12 +69,15 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #coreFaucetCard .description { margin-bottom: 16px; }
 #bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
-.code-row summary { color: var(--dh-brand-ink); font-size: 13px; }
+
 .code-row label { margin-top: 12px; }
 .code-row input { font-size: 16px; }
 .error:not(.visible) { display: none; }
 #coreFaucetCard { padding: 0; background: none; border: 0; }
-#addressIntro { margin-block: 12px 24px; }
+#addressIntro { margin-block: 0; }
+#addressIntro a { display: flex; align-items: center; gap: 8px; padding-block: 10px; font: 560 15px/1.5 var(--dh-font); text-decoration: none; }
+#addressIntro a::before { content: "→"; flex: none; width: 16px; text-align: center; }
+#addressIntro a:hover { text-decoration: underline; }
 .next-step { margin-block: 20px; }
 @media(max-width:720px) { .treasury-grid { grid-template-columns: 1fr; } .treasury-heading { flex-wrap: wrap; } .action-buttons > * { flex: 1 1 100%; } }
 
@@ -84,7 +87,6 @@ body > main > .dh-narrow { margin-inline: auto; max-width: 680px; }
 #addressInput::placeholder { font-family: var(--dh-font); }
 #addressValidation:empty { display: none; }
 #addressHint { margin-bottom: 12px; }
-.faucet-source { margin-top: 24px; }
-.treasury-panel { border: 0; background: none; padding: 0; }
+.faucet-source { margin-top: 24px; max-width: none; }
+.treasury-panel { border: 0; background: none; padding: 0; margin: 0; }
 .code-row { margin-top: 20px; }
-.code-row summary { font-size: 14px; }
