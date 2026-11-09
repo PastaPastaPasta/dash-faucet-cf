@@ -127,7 +127,7 @@ body > main { width: 100%; }
 :root { --start-platform: #25B8A6; --start-platform-ink: #0A2A3D; --start-platform-soft: #DCF4F1; }
 :root[data-theme="dark"] { --start-platform-soft: #103A40; }
 @media(prefers-color-scheme:dark) { :root:not([data-theme="light"]) { --start-platform-soft: #103A40; } }
-.family-platform-band { background: color-mix(in srgb, var(--start-platform-soft) 55%, var(--dh-page)); border-bottom: 1px solid var(--dh-line); }
+.family-platform-band { background: color-mix(in srgb, var(--start-platform-soft) 100%, var(--dh-page)); border-bottom: 1px solid var(--dh-line); }
 .family-platform-band .dh-narrow { min-height: 95px; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding-block: 8px; }
 .family-steps { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin: 0; font-size: 14px; }
 .family-steps > li, .family-steps > li:last-child { display: block; text-align: left; white-space: normal; padding-top: 10px; border-top: 3px solid var(--dh-line-2); }
