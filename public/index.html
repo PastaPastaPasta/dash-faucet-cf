@@ -18,7 +18,7 @@
     <main class="dh-container dh-page"><div class="dh-narrow">
         <header class="dh-page-header">
             <h1 class="dh-page-header__title dh-h1" id="pageTitle">Get testnet DASH</h1>
-            <p class="dh-page-header__lede" id="pageSubtitle">Practice funds for development, with no monetary value.</p>
+            <p class="dh-page-header__lede" id="pageSubtitle">Practice funds with no monetary value.</p>
         </header>
 
         <div class="feature-grid" id="featureGrid">
@@ -79,9 +79,26 @@
         <section class="dh-card invitation-entry" id="invitationEntry" aria-labelledby="invitationEntryHeading">
             <p class="network-kicker mainnet">Mainnet · real DASH</p>
             <h2 class="dh-h2" id="invitationEntryHeading">Create a Dash Identity</h2>
-            <p class="description">Get an invitation for an identity and username in Dash Wallet.</p>
-            <a class="dh-btn" id="networkChoice" href="/invitations">Get invitation</a>
+            <p class="description">Get an invitation with <span id="invitationEntryAmount">…</span> <span id="invitationEntryCurrency">DASH</span> for one identity and a non-contested name. Open it in Dash Wallet, then choose your name.</p>
+            <a class="dh-btn dh-btn--block" id="networkChoice" href="/invitations">Get invitation</a>
             <p class="availability-line" id="invitationEntryAvailability" role="status">Checking invitation availability…</p>
+        </section>
+
+        <section class="reserve-summary" id="reserveSummary" aria-labelledby="reserveHeading" hidden>
+            <div class="reserve-summary-heading">
+                <h2 class="dh-h3" id="reserveHeading">Faucet reserves</h2>
+                <span class="dh-meta" id="reserveStatus">Live</span>
+            </div>
+            <dl class="reserve-figures">
+                <div>
+                    <dt id="coreReserveLabel">Testnet faucet</dt>
+                    <dd><strong id="coreReserveBalance">—</strong> <span id="coreReserveCurrency">tDASH</span></dd>
+                </div>
+                <div id="invitationReserve" hidden>
+                    <dt id="invitationReserveLabel">Mainnet invitations</dt>
+                    <dd><strong id="invitationReserveBalance">—</strong> <span id="invitationReserveCurrency">DASH</span></dd>
+                </div>
+            </dl>
         </section>
 
         <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>

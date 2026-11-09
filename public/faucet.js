@@ -667,7 +667,7 @@
             document.title = "Faucet · dashhq";
             $("pageTitle").textContent = network === "mainnet" ? "Get DASH" : "Get testnet DASH";
             $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
-                : "Practice funds for development, with no monetary value.";
+                : "Practice funds with no monetary value.";
             $("addressHint").textContent = network === "testnet" ? "A testnet address starts with y or 8." : "A mainnet address starts with X or 7.";
             $("coreFaucetBtn").querySelector(".btn-text").textContent = `Get 1 ${copy.coin}`;
             $("configHeading").textContent = "Request funds";
@@ -727,8 +727,6 @@
                     const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
                     const parts = [
                         "Faucet online",
-                        `${data.network === "mainnet" ? "Mainnet" : "Testnet"} reserve: ${formatBalance(data.balance)} ${coinName}`,
-                        ...(data.invitationsEnabled ? [`${data.invitationNetwork === "testnet" ? "Testnet" : "Mainnet"} invitation reserve: ${formatBalance(data.invitationBalance)} ${data.invitationNetwork === "testnet" ? "tDASH" : "DASH"}`] : []),
                         `Core rate limit: ${limit}/hour`,
                         `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
@@ -747,6 +745,24 @@
                     const corePresentation = applyNetworkPresentation("core", data.network);
                     $("coreTreasuryBalance").textContent = Number.isFinite(balance)
                         ? `≈ ${balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "Unavailable";
+                    $("coreReserveLabel").textContent = `${data.network === "mainnet" ? "Mainnet" : "Testnet"} faucet`;
+                    $("coreReserveBalance").textContent = $("coreTreasuryBalance").textContent;
+                    $("coreReserveCurrency").textContent = corePresentation.currency;
+                    $("invitationReserve").hidden = !data.invitationsEnabled;
+                    if (data.invitationsEnabled) {
+                        const invitationNetwork = data.invitationNetwork || data.network;
+                        const presentation = networkPresentation(invitationNetwork);
+                        $("invitationReserveLabel").textContent = `${invitationNetwork === "mainnet" ? "Mainnet" : "Testnet"} invitations`;
+                        $("invitationReserveBalance").textContent = data.invitationError ? "Unavailable" : formatBalance(data.invitationBalance);
+                        $("invitationReserveCurrency").textContent = presentation.currency;
+                        $("invitationEntryAmount").textContent = data.invitationAmount ?? "Unavailable";
+                        $("invitationEntryCurrency").textContent = presentation.currency;
+                        const kicker = $("invitationEntry").querySelector(".network-kicker");
+                        kicker.textContent = presentation.badge;
+                        kicker.classList.toggle("mainnet", invitationNetwork === "mainnet");
+                    }
+                    $("reserveStatus").textContent = "Live";
+                    $("reserveSummary").hidden = false;
                     $("coreTreasuryExact").textContent = `Exact balance: ${formatBalance(balance)} ${corePresentation.currency}`;
                     $("coreTreasuryDetail").replaceChildren(...metaItems([
                         `${data.coreFaucetAmount} ${corePresentation.currency} per request`,
@@ -804,6 +820,7 @@
                 $("statusSource").textContent = lastStatusSuccess ? "Refresh failed. Last read: " + statusTime(lastStatusSuccess) + "." : "No status read available";
                 if (!invitationPage) void validateAddressInput();
                 if (!invitationPage) $("invitationEntryAvailability").textContent = "Invitation availability unknown: the status check failed.";
+                if (!invitationPage) $("reserveStatus").textContent = "Last known balances · status unavailable";
                 $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
             }

@@ -77,7 +77,23 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #addressIntro a:hover { text-decoration: underline; }
 .next-step { margin-block: 20px; }
 .invitation-entry { margin-top: 24px; }
+.invitation-entry .network-kicker { margin-bottom: 8px; }
+.invitation-entry .description { margin-bottom: 16px; }
+.reserve-summary { margin-top: 24px; padding-block: 16px; border-block: 1px solid var(--dh-line); }
+.reserve-summary-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; margin-bottom: 12px; }
+.reserve-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.reserve-figures dt { font-size: 13px; color: var(--dh-ink-2); margin-bottom: 4px; }
+.reserve-figures dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+.reserve-figures strong { font-size: 22px; font-weight: 660; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.reserve-figures dd span { font-size: 13px; color: var(--dh-ink-2); }
 @media(max-width:720px) { .treasury-grid { grid-template-columns: 1fr; } .treasury-heading { flex-wrap: wrap; } .action-buttons > * { flex: 1 1 100%; } }
+@media(max-width:640px) {
+  body:has(#coreFaucetCard) .dh-page-header { gap: 8px; margin-bottom: 20px; }
+  body:has(#coreFaucetCard) .code-row { margin-top: 12px; }
+  .invitation-entry { margin-top: 12px; }
+  .invitation-entry h2 { margin-bottom: 8px; }
+  .invitation-entry .description { margin-bottom: 12px; }
+}
 
 body > main { width: 100%; }
 

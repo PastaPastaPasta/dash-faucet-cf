@@ -203,6 +203,7 @@ test("unknown availability preserves the address and records retry and last-succ
   statusResponses.push({ status: 502, body: "status service failed" });
   await page.locator("#retryStatusBtn").evaluate(button => button.click());
   await expect(page.locator("#statusBar")).toContainText("Last successful check:");
+  await expect(page.locator("#reserveStatus")).toHaveText("Last known balances · status unavailable");
   await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
   await expect(page.locator("#addressInput")).toHaveValue(address);
 });
@@ -258,10 +259,16 @@ test("shows an amber request action, invitation stock and both reserves before i
   await expect(page.locator('#coreFaucetBtn')).toHaveClass(/dh-btn--primary/);
   await expect(page.locator('#invitationEntry')).toBeVisible();
   await expect(page.locator('#invitationEntryAvailability')).toHaveText('1 invitation ready now');
-  await expect(page.locator('#networkChoice')).toHaveClass('dh-btn');
+  await expect(page.locator('#invitationEntry .description')).toHaveText('Get an invitation with 0.03 DASH for one identity and a non-contested name. Open it in Dash Wallet, then choose your name.');
+  await expect(page.locator('#networkChoice')).toHaveClass('dh-btn dh-btn--block');
   await expect(page.locator('#networkChoice')).toHaveAttribute('href', '/invitations');
-  await expect(page.locator('#statusBar')).toContainText('Testnet reserve: 100.0000 tDASH');
-  await expect(page.locator('#statusBar')).toContainText('Mainnet invitation reserve: 0.0078 DASH');
+  await expect(page.locator('#reserveSummary')).toBeVisible();
+  await expect(page.locator('#coreReserveLabel')).toHaveText('Testnet faucet');
+  await expect(page.locator('#coreReserveBalance')).toHaveText('≈ 100');
+  await expect(page.locator('#coreReserveCurrency')).toHaveText('tDASH');
+  await expect(page.locator('#invitationReserveLabel')).toHaveText('Mainnet invitations');
+  await expect(page.locator('#invitationReserveBalance')).toHaveText('0.0078');
+  await expect(page.locator('#invitationReserveCurrency')).toHaveText('DASH');
   await expect(page.locator('#treasuryPanel')).not.toHaveAttribute('open');
   await page.locator('#coreFaucetBtn').click();
   await expect(page.locator('#addressValidation')).toHaveText('Enter a receiving address.');
