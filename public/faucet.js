@@ -58,6 +58,7 @@
         let addressTouched = false;
 
         const $ = (id) => document.getElementById(id);
+        if (returnUrl && !invitationPage && $("journeyBand")) $("journeyBand").hidden = false;
 
         async function validateAddressInput() {
             const input = $("addressInput");

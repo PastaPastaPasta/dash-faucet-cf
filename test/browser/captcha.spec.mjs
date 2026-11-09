@@ -219,13 +219,14 @@ test("keeps Mainnet invitations out of a Bridge funding handoff", async ({ page 
 
 test("direct funding does not claim progress through identity creation", async ({ page }) => {
   await openFaucet(page);
-  await expect(page.locator('.family-platform-band .dh-steps')).toBeVisible();
+  await expect(page.locator('.family-platform-band')).toBeHidden();
   await expect(page.locator('.dh-steps [aria-current], .dh-steps [data-state]')).toHaveCount(0);
 });
 
 test("Bridge funding returns in one click to the matching resume address", async ({ page, context }) => {
   const address = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
   await openFaucet(page, { query: `?from=bridge&journey=start&address=${address}` });
+  await expect(page.locator('.family-platform-band .dh-steps')).toBeVisible();
   await expect(page.locator('.dh-steps [aria-current], .dh-steps [data-state]')).toHaveCount(0);
   await page.locator('#coreFaucetBtn').click();
   await expect(page.locator('#bridgeReturn')).toBeVisible();
