@@ -1,6 +1,7 @@
 
         import { addressError } from "/address.js";
         import { bridgeReturnUrl } from "/bridge-return.js";
+        import { reserveCoverage } from "/reserve-status.js";
         import { renderSVG } from "/vendor/uqr.mjs";
 
         "use strict";
@@ -704,8 +705,8 @@
                 }
                 $("statusBar").textContent = "Checking faucet availability…";
                 const response = await fetch("/api/status", { signal: AbortSignal.timeout(12000) });
-                if (!response.ok) throw new Error("Status check failed");
                 const data = await response.json();
+                if (!response.ok && !(response.status === 503 && data.status === "low_balance")) throw new Error("Status check failed");
 
                 if (data.status !== "ok" && data.status !== "low_balance") {
                     throw new Error("Faucet unavailable");
@@ -748,6 +749,9 @@
                     $("coreReserveLabel").textContent = `${data.network === "mainnet" ? "Mainnet" : "Testnet"} faucet`;
                     $("coreReserveBalance").textContent = $("coreTreasuryBalance").textContent;
                     $("coreReserveCurrency").textContent = corePresentation.currency;
+                    const coreCoverage = reserveCoverage(balance, data.dailyBudgetSats, corePresentation.currency);
+                    $("coreReserve").dataset.state = coreCoverage.state;
+                    $("coreReserveCoverage").textContent = coreCoverage.label;
                     $("invitationReserve").hidden = !data.invitationsEnabled;
                     if (data.invitationsEnabled) {
                         const invitationNetwork = data.invitationNetwork || data.network;
@@ -755,6 +759,9 @@
                         $("invitationReserveLabel").textContent = `${invitationNetwork === "mainnet" ? "Mainnet" : "Testnet"} invitations`;
                         $("invitationReserveBalance").textContent = data.invitationError ? "Unavailable" : formatBalance(data.invitationBalance);
                         $("invitationReserveCurrency").textContent = presentation.currency;
+                        const invitationCoverage = reserveCoverage(data.invitationError ? NaN : data.invitationBalance, undefined, presentation.currency);
+                        $("invitationReserve").dataset.state = invitationCoverage.state;
+                        $("invitationReserveCoverage").textContent = invitationCoverage.label;
                         $("invitationEntryAmount").textContent = data.invitationAmount ?? "Unavailable";
                         $("invitationEntryCurrency").textContent = presentation.currency;
                         const kicker = $("invitationEntry").querySelector(".network-kicker");
@@ -820,7 +827,13 @@
                 $("statusSource").textContent = lastStatusSuccess ? "Refresh failed. Last read: " + statusTime(lastStatusSuccess) + "." : "No status read available";
                 if (!invitationPage) void validateAddressInput();
                 if (!invitationPage) $("invitationEntryAvailability").textContent = "Invitation availability unknown: the status check failed.";
-                if (!invitationPage) $("reserveStatus").textContent = "Last known balances · status unavailable";
+                if (!invitationPage) {
+                    $("reserveStatus").textContent = "Last known balances · status unavailable";
+                    for (const prefix of ["core", "invitation"]) {
+                        $(`${prefix}Reserve`).dataset.state = "unknown";
+                        $(`${prefix}ReserveCoverage`).textContent = "Last known balance · refresh failed";
+                    }
+                }
                 $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
             }
