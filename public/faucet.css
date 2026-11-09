@@ -76,7 +76,8 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #addressIntro a::before { content: "→"; flex: none; width: 16px; text-align: center; }
 #addressIntro a:hover { text-decoration: underline; }
 .next-step { margin-block: 20px; }
-.invitation-entry { margin-top: 24px; }
+.faucet-home { max-width: var(--dh-w-narrow); }
+.faucet-offers { display: grid; gap: var(--dh-5); }
 .invitation-entry .network-kicker { margin-bottom: 8px; }
 .invitation-entry .description { margin-bottom: 16px; }
 .reserve-summary { margin-top: 24px; padding-block: 16px; border-block: 1px solid var(--dh-line); }
@@ -90,14 +91,14 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 @media(max-width:640px) {
   body:has(#coreFaucetCard) .dh-page-header { gap: 8px; margin-bottom: 20px; }
   body:has(#coreFaucetCard) .code-row { margin-top: 12px; }
-  .invitation-entry { margin-top: 12px; }
+  .faucet-offers { gap: var(--dh-3); }
   .invitation-entry h2 { margin-bottom: 8px; }
   .invitation-entry .description { margin-bottom: 12px; }
 }
 
 body > main { width: 100%; }
 
-body > main > .dh-narrow { margin-inline: auto; max-width: 680px; }
+@media(max-width:480px) { #networkChoice { flex: 1 1 100%; } }
 #addressInput::placeholder { font-family: var(--dh-font); }
 #addressValidation:empty { display: none; }
 #addressHint { margin-bottom: 12px; }
@@ -108,9 +109,17 @@ body > main > .dh-narrow { margin-inline: auto; max-width: 680px; }
 
 @media(min-width:721px) {
   body:has(#coreFaucetCard) > main.dh-page { padding-block: 64px; }
-  body:has(#coreFaucetCard) > main > .dh-narrow { display: flex; flex-direction: column; min-height: min(560px, calc(100vh - 260px)); }
+  .faucet-home { display: flex; flex-direction: column; min-height: min(560px, calc(100vh - 260px)); }
   #addressIntro { margin-top: 12px; }
   body:has(#coreFaucetCard) .treasury-panel { margin-top: 24px; }
   .faucet-source { margin-top: auto; padding-top: 24px; }
   .treasury-panel[open] ~ .faucet-source { margin-top: 32px; }
+}
+
+@media(min-width:900px) {
+  .faucet-home:has(#invitationEntry:not([hidden])) { max-width: none; }
+  .faucet-home:has(#invitationEntry:not([hidden])) .reserve-figures { column-gap: var(--dh-5); }
+  .faucet-offers:has(> #invitationEntry:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .faucet-offers:has(> #invitationEntry:not([hidden])) > * { padding: var(--dh-5); }
+  .faucet-offers:has(> #invitationEntry:not([hidden])) > .faucet-request { background: var(--dh-surface); border: 1px solid var(--dh-line); border-radius: var(--dh-r3); }
 }

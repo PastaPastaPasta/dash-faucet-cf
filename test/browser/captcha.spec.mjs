@@ -260,7 +260,11 @@ test("shows an amber request action, invitation stock and both reserves before i
   await expect(page.locator('#invitationEntry')).toBeVisible();
   await expect(page.locator('#invitationEntryAvailability')).toHaveText('1 invitation ready now');
   await expect(page.locator('#invitationEntry .description')).toHaveText('Get an invitation with 0.03 DASH for one identity and a non-contested name. Open it in Dash Wallet, then choose your name.');
-  await expect(page.locator('#networkChoice')).toHaveClass('dh-btn dh-btn--block');
+  await expect(page.locator('#networkChoice')).toHaveClass('dh-btn');
+  const request = await page.locator('.faucet-request').boundingBox();
+  const invitation = await page.locator('#invitationEntry').boundingBox();
+  expect(invitation.y).toBe(request.y);
+  expect(invitation.width).toBe(request.width);
   await expect(page.locator('#networkChoice')).toHaveAttribute('href', '/invitations');
   await expect(page.locator('#reserveSummary')).toBeVisible();
   await expect(page.locator('#coreReserveLabel')).toHaveText('Testnet faucet');

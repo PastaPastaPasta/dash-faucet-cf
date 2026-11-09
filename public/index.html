@@ -15,7 +15,9 @@
 </head>
 <body class="dh-fill">
     <dashhq-bar product="faucet" network="testnet" aria-description="This faucet serves Testnet only. The network cannot be changed here." sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
-    <main class="dh-container dh-page"><div class="dh-narrow">
+    <main class="dh-container dh-page"><div class="faucet-home">
+        <div class="faucet-offers">
+        <div class="faucet-request">
         <header class="dh-page-header">
             <h1 class="dh-page-header__title dh-h1" id="pageTitle">Get testnet DASH</h1>
             <p class="dh-page-header__lede" id="pageSubtitle">Practice funds with no monetary value.</p>
@@ -75,14 +77,18 @@
             <p>Funds sent. <a id="returnBridgeBtn" href="https://bridge.thepasta.org/?mode=resume&amp;journey=start&amp;network=testnet">Back to Start on Testnet →</a></p>
         </section>
         <p id="addressIntro"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Start on Testnet</a></p>
+        </div>
 
         <section class="dh-card invitation-entry" id="invitationEntry" aria-labelledby="invitationEntryHeading">
             <p class="network-kicker mainnet">Mainnet · real DASH</p>
             <h2 class="dh-h2" id="invitationEntryHeading">Create a Dash Identity</h2>
             <p class="description">Get an invitation with <span id="invitationEntryAmount">…</span> <span id="invitationEntryCurrency">DASH</span> for one identity and a non-contested name. Open it in Dash Wallet, then choose your name.</p>
-            <a class="dh-btn dh-btn--block" id="networkChoice" href="/invitations">Get invitation</a>
-            <p class="availability-line" id="invitationEntryAvailability" role="status">Checking invitation availability…</p>
+            <div class="dh-actions">
+                <a class="dh-btn" id="networkChoice" href="/invitations">Get invitation</a>
+                <p class="dh-actions__note" id="invitationEntryAvailability" role="status">Checking invitation availability…</p>
+            </div>
         </section>
+        </div>
 
         <section class="reserve-summary" id="reserveSummary" aria-labelledby="reserveHeading" hidden>
             <div class="reserve-summary-heading">
