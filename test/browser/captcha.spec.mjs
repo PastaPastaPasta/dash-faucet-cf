@@ -309,3 +309,35 @@ test("low-balance status still displays reserve coverage on HTTP 503", async ({ 
   await expect(page.locator("#coreReserve")).toHaveAttribute("data-state", "warn");
   await expect(page.locator("#coreReserveCoverage")).toContainText("Under a day of payouts");
 });
+
+
+test("home restores the separate mainnet invitation funding address and Copy", async ({ page }) => {
+  const address = "Xm77DBJzsf6aMBSb25BAzTNxcjgvUECEeB";
+  await page.addInitScript(() => {
+    window.copiedFunding = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async text => window.copiedFunding.push(text) } });
+  });
+  const reserve = { invitationDepositAddress: address };
+  const requests = await openFaucet(page, { reserve });
+  await page.locator("#treasuryPanel summary").click();
+  await expect(page.locator("#invitationHomeTreasuryCard")).toBeVisible();
+  await expect(page.locator("#invitationNetworkBadge")).toHaveText("Mainnet · real DASH");
+  await expect(page.locator("#invitationHomeTreasuryCard .network-warning")).toHaveText("Send real mainnet DASH only to this address.");
+  await expect(page.locator("#invitationDepositAddress")).toHaveAttribute("value", address);
+  expect(await page.locator("#invitationDepositAddress").evaluate(element => element.textContent)).toBe(address);
+  await page.locator("#invitationFundingCopy").click();
+  await expect(page.locator("#invitationFundingCopy")).toHaveText("Copied");
+  expect(await page.evaluate(() => window.copiedFunding)).toEqual([address]);
+  expect(requests).toEqual([]);
+  delete reserve.invitationDepositAddress;
+  await page.locator("#retryStatusBtn").evaluate(button => button.click());
+  await expect(page.locator("#invitationHomeTreasuryCard")).toBeHidden();
+  await expect(page.locator("#invitationFundingCopy")).toBeDisabled();
+});
+
+test("home hides invitation funding when status does not provide an address", async ({ page }) => {
+  const requests = await openFaucet(page);
+  await page.locator("#treasuryPanel summary").click();
+  await expect(page.locator("#invitationHomeTreasuryCard")).toBeHidden();
+  expect(requests).toEqual([]);
+});

@@ -148,7 +148,20 @@
                         <p class="network-warning">Send <strong id="coreNetworkWarning">testnet DASH only</strong> to this address.</p>
                     </div>
                 </article>
-
+                <article class="treasury-card" id="invitationHomeTreasuryCard" hidden>
+                    <div class="treasury-card-title">
+                        <h3 class="dh-h3">Identity invitations</h3>
+                        <span class="network-badge dh-badge dh-badge--info" id="invitationNetworkBadge">Mainnet · real DASH</span>
+                    </div>
+                    <div class="funding-address">
+                        <div class="funding-address-header">
+                            <span class="funding-address-label">Funding address</span>
+                            <button class="copy-btn dh-btn dh-btn--sm" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
+                        </div>
+                        <dashhq-hash full no-copy id="invitationDepositAddress" value="—">—</dashhq-hash>
+                        <p class="network-warning">Send <strong id="invitationNetworkWarning">real mainnet DASH only</strong> to this address.</p>
+                    </div>
+                </article>
             </div>
         </details>
 

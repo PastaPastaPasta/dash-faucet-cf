@@ -29,7 +29,7 @@ h2.dh-h2 { margin-bottom: 12px; }
 summary { font-weight: 620; cursor: pointer; }
 .treasury-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin: 20px 0; }
 .treasury-heading p,.treasury-detail,.network-warning { color: var(--dh-ink-2); font-size: 13px; }
-.treasury-grid { display: grid; gap: 24px; }
+.treasury-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 24px; }
 .treasury-card { min-width: 0; }
 .treasury-card-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .treasury-balance { margin: 12px 0 6px; font-size: 26px; font-variant-numeric: tabular-nums; }

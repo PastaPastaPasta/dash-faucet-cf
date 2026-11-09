@@ -768,6 +768,14 @@
                         kicker.textContent = presentation.badge;
                         kicker.classList.toggle("mainnet", invitationNetwork === "mainnet");
                     }
+                    const invitationAddress = typeof data.invitationDepositAddress === "string" ? data.invitationDepositAddress.trim() : "";
+                    $("invitationHomeTreasuryCard").hidden = !invitationAddress;
+                    $("invitationDepositAddress").textContent = invitationAddress || "—";
+                    $("invitationDepositAddress").setAttribute("value", invitationAddress || "—");
+                    $("invitationFundingCopy").disabled = !invitationAddress;
+                    const invitationPresentation = networkPresentation(data.invitationNetwork || data.network);
+                    $("invitationNetworkBadge").textContent = invitationPresentation.badge;
+                    $("invitationNetworkWarning").textContent = invitationPresentation.warning;
                     $("reserveStatus").textContent = "Live";
                     $("reserveSummary").hidden = false;
                     $("coreTreasuryExact").textContent = `Exact balance: ${formatBalance(balance)} ${corePresentation.currency}`;
