@@ -28,6 +28,7 @@ import {
   rawClientIp,
   verifyTurnstile,
 } from "./http";
+import { checkCsrf, readSession } from "./auth";
 import { invitationTreasury, treasury } from "./durable";
 import { handlePortal } from "./portal";
 import { type InvitationIssueResult, type PayoutResult } from "./treasury";
@@ -123,6 +124,14 @@ async function handleStatus(request: Request, env: Env): Promise<Response> {
       // Where people sign in for their own API key; null when login is off.
       accountUrl: cfg.auth.origin ? `${cfg.auth.origin}/keys` : null,
       keyMaxPerRequest: toDash(cfg.apiKeys.maxPerRequestSats),
+      // What a captcha buys: up to `turnstileAbove` any proof, up to
+      // `publicMax` only Turnstile; beyond that a code or a signed-in account.
+      amountLimits: {
+        turnstileAbove: toDash(cfg.amounts.turnstileAboveSats),
+        publicMax: toDash(cfg.amounts.publicMaxSats),
+        signedInMax: cfg.auth.origin ? toDash(cfg.apiKeys.maxPerRequestSats) : null,
+        perIpDaily: cfg.amounts.ipDailySats ? toDash(cfg.amounts.ipDailySats) : null,
+      },
       mnCollateralAmount: toDash(MN_COLLATERAL_SATS),
       invitationsEnabled: cfg.invitations.enabled,
       invitationNetwork: cfg.invitations.network,
@@ -161,6 +170,11 @@ const PAYOUT_FAILURES: Record<
 > = {
   rate_limited: { status: 429, message: "Rate limit exceeded" },
   budget_exhausted: { status: 429, message: "Faucet daily budget exhausted" },
+  ip_allowance: { status: 429, message: "This IP's daily allowance does not cover that amount" },
+  turnstile_required: {
+    status: 400,
+    message: "Large amounts need the Turnstile captcha; proof of work is not enough",
+  },
   insufficient_funds: { status: 503, message: "Faucet has insufficient funds" },
   self_pay: {
     status: 400,
@@ -190,6 +204,9 @@ function payoutFailure(result: PayoutFailure, escalatable: boolean): Response {
   if (result.code === "bad_request") return errorJson(status, result.detail);
   if (result.code === "unauthorized") {
     return errorJson(status, message, {}, { "WWW-Authenticate": "Bearer" });
+  }
+  if (result.code === "turnstile_required") {
+    return errorJson(status, message, { requiresTurnstile: true });
   }
   const detail = "detail" in result ? result.detail : undefined;
   const retryAfter = "retryAfter" in result ? result.retryAfter : undefined;
@@ -372,15 +389,46 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     if (code) return errorJson(400, "A code cannot be combined with an API key");
     return handleKeyFaucet(env, cfg, ip, token, body);
   }
-  // Clients written before API keys (the bridge, older wallets) send the
-  // standard amount explicitly. Asking for no more than the standard payout
-  // changes nothing, so it is ignored; only a larger amount needs a key.
+
+  let requestedSats: number | undefined;
   if (body.amount !== undefined) {
-    const requested = parseAmountSats(body.amount);
-    if (requested === undefined) return errorJson(400, "Invalid amount");
-    if (requested > cfg.payoutSats) {
-      return errorJson(400, `amounts above ${toDash(cfg.payoutSats)} require an API key`);
+    requestedSats = parseAmountSats(body.amount);
+    if (requestedSats === undefined) {
+      return errorJson(400, "amount must be a number of DASH, at least 0.001, with at most 8 decimals");
     }
+  }
+
+  // The faucet page sends the session's CSRF token only when it means to pay
+  // as the signed-in person; without it the cookie is ignored.
+  if (request.headers.has("X-CSRF-Token")) {
+    const session = readSession(request, cfg.auth);
+    if (!session || !checkCsrf(request, session, cfg.auth)) {
+      return errorJson(403, "Your sign-in has expired; sign in again", { requiresSignIn: true });
+    }
+    if (code) return errorJson(400, "A code cannot be combined with a signed-in request");
+    const recipient = await parseRecipient(body, cfg);
+    if (recipient instanceof Response) return recipient;
+    const result = await treasury(env).payout({
+      ...recipient,
+      ip,
+      requestedSats,
+      user: { id: session.id, email: session.email },
+    });
+    if (!result.ok) return payoutFailure(result, false);
+    return payoutSuccess(result, recipient.address, cfg);
+  }
+
+  const { publicMaxSats, turnstileAboveSats } = cfg.amounts;
+  const powSuffices = (requestedSats ?? cfg.payoutSats) <= turnstileAboveSats;
+  if (!code && requestedSats !== undefined && requestedSats > publicMaxSats) {
+    if (!cfg.apiKeys.enabled) {
+      return errorJson(400, `amount may be at most ${toDash(publicMaxSats)}`);
+    }
+    return errorJson(
+      403,
+      `Amounts above ${toDash(publicMaxSats)} need a dash.org sign-in or a code`,
+      { requiresSignIn: true, ...(cfg.auth.origin ? { accountUrl: `${cfg.auth.origin}/keys` } : {}) },
+    );
   }
 
   const limited = await edgeLimited(env, ip);
@@ -392,12 +440,22 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
   const recipient = await parseRecipient(body, cfg);
   if (recipient instanceof Response) return recipient;
 
+  // Same reason: refuse a proof of work for a large amount before burning it.
+  // A code's own amount is only known inside the Treasury, which re-checks.
+  if (!powSuffices && !body.turnstileToken) {
+    return payoutFailure({ ok: false, code: "turnstile_required" }, false);
+  }
+
   const captcha = await verifyCaptcha(env, cfg, ip, body);
   if (!captcha.ok) {
     return errorJson(
       captcha.status,
       captcha.reason,
-      cfg.network === "testnet" && cfg.capSecret && !body.capToken && !body.hardCapToken
+      cfg.network === "testnet" &&
+        cfg.capSecret &&
+        !body.capToken &&
+        !body.hardCapToken &&
+        powSuffices
         ? { requiresProofOfWork: true }
         : {},
     );
@@ -407,10 +465,13 @@ async function handleFaucet(request: Request, env: Env): Promise<Response> {
     ...recipient,
     ip,
     tier: captcha.tier,
+    requestedSats,
     ...(code ? { codeKey: code.key } : {}),
   });
-  // A code's refusal is about the code; a harder captcha would not change it.
-  if (!result.ok) return payoutFailure(result, !code && canEscalate(cfg, captcha.tier));
+  // A code's refusal is about the code, and a large amount takes Turnstile
+  // only: in neither case would a hard proof of work change the answer.
+  const escalatable = !code && powSuffices && canEscalate(cfg, captcha.tier);
+  if (!result.ok) return payoutFailure(result, escalatable);
   return payoutSuccess(result, recipient.address, cfg);
 }
 
