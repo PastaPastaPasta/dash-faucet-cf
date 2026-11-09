@@ -167,56 +167,111 @@
             display: block;
             animation: fadeIn 0.3s ease forwards;
         }
-        /* Inline input + button row */
-        .input-row {
-            display: flex;
-            gap: 12px;
-            align-items: center;
+        /* Core faucet form */
+        .core-form {
+            display: grid;
+            gap: 14px;
+            margin-top: 16px;
         }
-        .code-row {
-            margin-top: 10px;
+        .core-form .sign-in-box {
+            margin-top: 0;
         }
-        .amount-row[hidden] {
-            display: none;
-        }
-        .amount-row {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-top: 10px;
-        }
-        .amount-row label {
-            color: #aaa;
-            font-size: 0.9rem;
-        }
-        .amount-row input {
-            width: 10rem;
+        .field {
+            display: grid;
+            gap: 6px;
             min-width: 0;
-            padding: 9px 15px;
+        }
+        .field-name {
+            color: #aaa;
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+        }
+        .field-name .optional {
+            color: #666;
+            font-weight: 400;
+        }
+        .field-pair {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+        }
+        .core-form input {
+            width: 100%;
+            min-width: 0;
+            padding: 11px 14px;
             border-radius: 8px;
             border: 1px solid rgba(255,255,255,0.2);
             background: rgba(0,0,0,0.3);
             color: #e0e0e0;
-            font-size: 0.9rem;
+            font-size: 0.95rem;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
         }
-        .amount-row input:focus {
+        .core-form input:focus {
             outline: none;
             border-color: #008de4;
             box-shadow: 0 0 0 3px rgba(0, 141, 228, 0.15);
         }
+        .core-form input::placeholder {
+            color: #666;
+        }
+        .core-form .address-input {
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 0.85rem;
+        }
+        .suffix-input {
+            position: relative;
+        }
+        .suffix-input input {
+            padding-right: 64px;
+            -moz-appearance: textfield;
+            appearance: textfield;
+        }
+        .suffix-input input::-webkit-outer-spin-button,
+        .suffix-input input::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
         .amount-unit {
-            color: #888;
-            font-size: 0.9rem;
+            position: absolute;
+            right: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #777;
+            font-size: 0.85rem;
+            pointer-events: none;
         }
         .amount-hint {
             color: #999;
-            font-size: 0.8rem;
-            margin: 6px 0 0 0;
-            min-height: 1em;
+            font-size: 0.82rem;
+            line-height: 1.45;
+            margin: -4px 0 0 0;
+            text-wrap: pretty;
         }
         .amount-hint:empty {
-            min-height: 0;
-            margin: 0;
+            display: none;
+        }
+        .amount-hint.signed-in {
+            color: #8fd19e;
+        }
+        .amount-hint.signed-in::before {
+            content: "";
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            margin-right: 8px;
+            border-radius: 50%;
+            background: #28a745;
+            vertical-align: 1px;
+        }
+        .btn.btn-block {
+            width: 100%;
+            justify-content: center;
+            padding: 13px 20px;
+            font-size: 1.05rem;
+        }
+        .btn.btn-block:hover:not(:disabled) {
+            transform: none;
         }
         .sign-in-box a.btn-secondary {
             display: inline-block;
@@ -226,30 +281,9 @@
         .sign-in-box a.btn-secondary[hidden] {
             display: none;
         }
-        .code-row input {
-            width: 100%;
-            padding: 9px 15px;
-            border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.2);
-            background: rgba(0,0,0,0.3);
-            color: #e0e0e0;
-            font-size: 0.9rem;
-        }
         .footer-links a {
             color: #9aa;
             font-size: 0.85rem;
-        }
-        .input-row input {
-            flex: 1;
-            padding: 12px 15px;
-            border-radius: 8px;
-            border: 1px solid rgba(255,255,255,0.2);
-            background: rgba(0,0,0,0.3);
-            color: #e0e0e0;
-            font-size: 1rem;
-        }
-        .input-row .btn {
-            white-space: nowrap;
         }
         /* Back button */
         .back-link {
@@ -731,11 +765,15 @@
             .treasury-card {
                 padding: 0;
             }
-            .input-row {
-                align-items: stretch;
-                flex-direction: column;
+            /* iOS zooms into inputs with text under 16px. */
+            .core-form input,
+            .core-form .address-input {
+                font-size: 16px;
             }
-            .input-row .btn,
+            /* A full address fits at 16px only in the proportional font. */
+            .core-form .address-input {
+                font-family: inherit;
+            }
             .feature-card .btn {
                 justify-content: center;
                 width: 100%;
@@ -778,27 +816,34 @@
             <div class="config-view">
                 <span class="back-link" id="backLink">&larr; Back</span>
                 <h2 id="configHeading">Get DASH</h2>
-                <p class="description">Enter your address to receive coins.</p>
-                <div class="input-row">
-                    <input type="text" id="addressInput" placeholder="Enter your Dash address" autocomplete="off" spellcheck="false">
-                    <button class="btn" id="coreFaucetBtn">
+                <div class="core-form">
+                    <div class="field">
+                        <label class="field-name" for="addressInput">Address</label>
+                        <input type="text" id="addressInput" class="address-input" placeholder="Your Dash address" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="field-pair">
+                        <div class="field" id="amountRow">
+                            <label class="field-name" for="amountInput">Amount</label>
+                            <div class="suffix-input">
+                                <input type="number" id="amountInput" min="0.001" step="any" inputmode="decimal" placeholder="1" autocomplete="off">
+                                <span class="amount-unit coin-name">tDASH</span>
+                            </div>
+                        </div>
+                        <div class="field">
+                            <label class="field-name" for="codeInput">Code <span class="optional">optional</span></label>
+                            <input type="text" id="codeInput" placeholder="If you have one" autocomplete="off" spellcheck="false" maxlength="64">
+                        </div>
+                    </div>
+                    <p class="amount-hint" id="amountHint"></p>
+                    <div class="hard-cap sign-in-box" id="signInBox">
+                        <strong id="signInTitle">Sign in for larger amounts</strong>
+                        <p id="signInDescription">Sign in with your dash.org account, or enter a code above.</p>
+                        <a class="btn-secondary" id="signInLink" href="/keys">Sign in with dash.org</a>
+                    </div>
+                    <button class="btn btn-block" id="coreFaucetBtn">
                         <span class="spinner"></span>
                         <span class="btn-text">Send</span>
                     </button>
-                </div>
-                <div class="amount-row" id="amountRow">
-                    <label for="amountInput">Amount</label>
-                    <input type="number" id="amountInput" min="0.001" step="any" inputmode="decimal" placeholder="1" autocomplete="off">
-                    <span class="amount-unit coin-name">tDASH</span>
-                </div>
-                <p class="amount-hint" id="amountHint"></p>
-                <div class="code-row">
-                    <input type="text" id="codeInput" placeholder="Have a code? (optional)" autocomplete="off" spellcheck="false" maxlength="64">
-                </div>
-                <div class="hard-cap sign-in-box" id="signInBox">
-                    <strong id="signInTitle">Sign in for larger amounts</strong>
-                    <p id="signInDescription">Sign in with your dash.org account, or enter a code above.</p>
-                    <a class="btn-secondary" id="signInLink" href="/keys">Sign in with dash.org</a>
                 </div>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
@@ -1027,14 +1072,16 @@
             const hint = $("amountHint");
             const amount = requestedAmount();
             showSignIn(false);
+            hint.classList.remove("signed-in");
             if (Number.isNaN(amount)) {
                 hint.textContent = "Enter at least 0.001.";
                 return;
             }
             if (session && !$("codeInput").value.trim()) {
                 const max = amountLimits?.signedInMax;
-                hint.textContent = `Signed in as ${session.email}; no captcha needed` +
-                    (max ? ` (up to ${max.toLocaleString()} ${coinName}).` : ".");
+                hint.textContent = `Signed in as ${session.email} · no captcha` +
+                    (max ? `, up to ${max.toLocaleString()} ${coinName}` : "");
+                hint.classList.add("signed-in");
                 return;
             }
             if (!amountLimits || amount === null || amount <= amountLimits.turnstileAbove) {
@@ -1814,9 +1861,11 @@
                 updateAmountHint();
             });
         }
-        $("amountInput").addEventListener("keydown", (e) => {
-            if (e.key === "Enter") requestCoreFaucet();
-        });
+        for (const id of ["amountInput", "codeInput"]) {
+            $(id).addEventListener("keydown", (e) => {
+                if (e.key === "Enter") requestCoreFaucet();
+            });
+        }
         $("backLink").addEventListener("click", resetCoreFaucetCard);
         $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
         // Wrapped, not passed directly: the click event would arrive as `proof`.
