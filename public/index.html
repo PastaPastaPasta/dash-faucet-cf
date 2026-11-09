@@ -33,7 +33,7 @@
                 <p id="addressHint" class="dh-field__help">A testnet address starts with y or 8.</p>
                 <div class="dh-inline-form">
                     <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="y… address" autocomplete="off" spellcheck="false">
-                    <button class="btn dh-btn dh-btn--primary" id="coreFaucetBtn" disabled>
+                    <button class="btn dh-btn dh-btn--primary" id="coreFaucetBtn">
 
                         <span class="btn-text">Get 1 tDASH</span>
                     </button>
@@ -76,6 +76,14 @@
         </section>
         <p id="addressIntro"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Start on Testnet</a></p>
 
+        <section class="dh-card invitation-entry" id="invitationEntry" aria-labelledby="invitationEntryHeading">
+            <p class="network-kicker mainnet">Mainnet · real DASH</p>
+            <h2 class="dh-h2" id="invitationEntryHeading">Create a Dash Identity</h2>
+            <p class="description">Get an invitation for an identity and username in Dash Wallet.</p>
+            <a class="dh-btn" id="networkChoice" href="/invitations">Get invitation</a>
+            <p class="availability-line" id="invitationEntryAvailability" role="status">Checking invitation availability…</p>
+        </section>
+
         <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>
             <summary><span>Fund the faucet</span></summary>
             <div class="treasury-heading">
@@ -116,7 +124,7 @@
 
     </div></main>
 
-    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a> <span><a id="networkChoice" href="/invitations">Developer identity invitations (Mainnet)</a></span></dashhq-footer>
+    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a></dashhq-footer>
     <script type="module" src="/faucet.js"></script>
 </body>
 </html>

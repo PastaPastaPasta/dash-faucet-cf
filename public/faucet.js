@@ -68,7 +68,7 @@
             input.setAttribute("aria-invalid", String(Boolean(error && addressTouched)));
             $("addressValidation").textContent = addressTouched && error ? (value ? error : "Enter a receiving address.") : "";
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && addressTouched));
-            $("coreFaucetBtn").disabled = Boolean(error) || !statusReady || coreRequestPending || capSolving;
+            $("coreFaucetBtn").disabled = coreRequestPending || capSolving;
             return !error;
         }
 
@@ -425,7 +425,6 @@
          * response can offer the hard tier after either initial proof.
          */
         async function requestCoreFaucet(proof, proofTier) {
-            if (!statusReady) return;
             const card = $("coreFaucetCard");
             const btn = $("coreFaucetBtn");
             const addressInput = $("addressInput");
@@ -440,6 +439,12 @@
             addressTouched = true;
             if (!await validateAddressInput()) {
                 addressInput.focus();
+                return;
+            }
+            if (!statusReady) {
+                showError(statusFailed
+                    ? "Faucet availability is unknown. Retry faucet status before requesting funds."
+                    : "Checking faucet availability. Please try again once the status is ready.");
                 return;
             }
             if (coreRequestPending || (capSolving && !proof)) return;
@@ -571,12 +576,23 @@
         }
 
         function formatBalance(value) {
+            if (value == null || value === "") return "Unavailable";
             const amount = Number(value);
             if (!Number.isFinite(amount)) return "Unavailable";
             return amount.toLocaleString(undefined, {
                 minimumFractionDigits: 4,
                 maximumFractionDigits: 8,
             });
+        }
+
+        function invitationAvailability(data) {
+            const inventory = data.invitationInventory || {};
+            const available = Number(inventory.available) || 0;
+            const preparing = Number(inventory.preparing) || 0;
+            if (data.invitationError) return "Invitation treasury unavailable";
+            if (available > 0) return `${available.toLocaleString()} invitation${available === 1 ? "" : "s"} ready now`;
+            if (preparing > 0) return `${preparing.toLocaleString()} invitation${preparing === 1 ? "" : "s"} preparing`;
+            return Number(data.invitationBalance) > 0 ? "Inventory is refilling" : "Inventory empty · funding required";
         }
 
         function networkPresentation(network) {
@@ -711,6 +727,8 @@
                     const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
                     const parts = [
                         "Faucet online",
+                        `${data.network === "mainnet" ? "Mainnet" : "Testnet"} reserve: ${formatBalance(data.balance)} ${coinName}`,
+                        ...(data.invitationsEnabled ? [`${data.invitationNetwork === "testnet" ? "Testnet" : "Mainnet"} invitation reserve: ${formatBalance(data.invitationBalance)} ${data.invitationNetwork === "testnet" ? "tDASH" : "DASH"}`] : []),
                         `Core rate limit: ${limit}/hour`,
                         `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
@@ -744,6 +762,10 @@
                 }
                 capEndpoint = data.network === "testnet" ? data.capEndpoint || "" : "";
                 $("networkChoice").hidden = Boolean(returnUrl) || (!invitationPage && !data.invitationsEnabled);
+                if (!invitationPage) {
+                    $("invitationEntry").hidden = Boolean(returnUrl) || !data.invitationsEnabled;
+                    $("invitationEntryAvailability").textContent = invitationAvailability(data);
+                }
                 if (data.invitationsEnabled && invitationPage) {
                     $("statusBar").textContent = "Mainnet invitations";
                     $("invitationCard").hidden = false;
@@ -770,19 +792,7 @@
                     $("invitationPreparing").textContent = preparing.toLocaleString();
                     $("invitationIssued").textContent = issued.toLocaleString();
 
-                    if (data.invitationError) {
-                        $("invitationAvailability").textContent = "Invitation treasury unavailable";
-                    } else if (available > 0) {
-                        $("invitationAvailability").textContent =
-                            `${available.toLocaleString()} invitation${available === 1 ? "" : "s"} ready now`;
-                    } else if (preparing > 0) {
-                        $("invitationAvailability").textContent =
-                            `${preparing.toLocaleString()} invitation${preparing === 1 ? "" : "s"} preparing`;
-                    } else if (Number(data.invitationBalance) > 0) {
-                        $("invitationAvailability").textContent = "Inventory is refilling";
-                    } else {
-                        $("invitationAvailability").textContent = "Inventory empty · funding required";
-                    }
+                    $("invitationAvailability").textContent = invitationAvailability(data);
 
 
                 } else if (invitationPage) {
@@ -793,6 +803,7 @@
                 statusFailed = true;
                 $("statusSource").textContent = lastStatusSuccess ? "Refresh failed. Last read: " + statusTime(lastStatusSuccess) + "." : "No status read available";
                 if (!invitationPage) void validateAddressInput();
+                if (!invitationPage) $("invitationEntryAvailability").textContent = "Invitation availability unknown: the status check failed.";
                 $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
                 if (!invitationPage) $("retryStatusBtn").hidden = false;
             }
@@ -815,6 +826,7 @@
             if (returnUrl) {
                 $("returnBridgeBtn").href = returnUrl;
                 $("addressIntro").hidden = true;
+                $("invitationEntry").hidden = true;
             }
             $("addressInput").addEventListener("blur", () => {
                 addressTouched = true;

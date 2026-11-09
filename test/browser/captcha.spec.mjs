@@ -18,7 +18,7 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
         turnstileSiteKey: turnstile === "no-key" ? "" : "test-key", capEndpoint: `${origin}/cap/v1/`,
         hardCapEndpoint: `${origin}/cap/hard/`,
         invitationsEnabled: true, invitationNetwork: "mainnet",
-        invitationAmount: 0.03, invitationMaxPerRequest: 1,
+        invitationAmount: 0.03, invitationBalance: 0.0078, invitationMaxPerRequest: 1,
         invitationInventory: { available: 1 },
       } });
     }
@@ -88,7 +88,7 @@ for (const turnstile of ["missing", "no-key", "throw", "error-callback", "timeou
     await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
     expect(requests).toEqual([{ address: "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs", capToken: "pow-1" }]);
     expect(await page.evaluate(() => window.powSolves)).toEqual([`${origin}/cap/v1/`]);
-    await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+    await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
     await page.locator("#sendMoreBtn").click();
     await page.locator("#addressInput").fill("yfJZVF5WhFsVXCvqiR4JqAM3TmEf3LpPfw");
     await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
@@ -180,7 +180,9 @@ test('checks malformed, wrong-network and checksum errors before a payout', asyn
     await page.locator('#addressInput').blur();
     await expect(page.locator('#addressValidation')).toContainText(message);
     await expect(page.locator('#addressInput')).toHaveAttribute('aria-invalid', 'true');
-    await expect(page.locator('#coreFaucetBtn')).toBeDisabled();
+    await expect(page.locator('#coreFaucetBtn')).toBeEnabled();
+    await page.locator('#coreFaucetBtn').click();
+    await expect(page.locator('#addressValidation')).toContainText(message);
   }
   expect(requests).toEqual([]);
 });
@@ -201,7 +203,7 @@ test("unknown availability preserves the address and records retry and last-succ
   statusResponses.push({ status: 502, body: "status service failed" });
   await page.locator("#retryStatusBtn").evaluate(button => button.click());
   await expect(page.locator("#statusBar")).toContainText("Last successful check:");
-  await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+  await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
   await expect(page.locator("#addressInput")).toHaveValue(address);
 });
 
@@ -246,4 +248,34 @@ test("keeps validation quiet until blur and rejects off-origin returns", async (
   await page.locator('#addressInput').blur();
   await expect(page.locator('#addressValidation')).toContainText('Testnet Core address');
   await expect(page.locator('#bridgeReturn')).toBeHidden();
+});
+
+
+test("shows an amber request action, invitation stock and both reserves before input", async ({ page }) => {
+  const requests = await openFaucet(page);
+  await page.locator('#addressInput').clear();
+  await expect(page.locator('#coreFaucetBtn')).toBeEnabled();
+  await expect(page.locator('#coreFaucetBtn')).toHaveClass(/dh-btn--primary/);
+  await expect(page.locator('#invitationEntry')).toBeVisible();
+  await expect(page.locator('#invitationEntryAvailability')).toHaveText('1 invitation ready now');
+  await expect(page.locator('#networkChoice')).toHaveClass('dh-btn');
+  await expect(page.locator('#networkChoice')).toHaveAttribute('href', '/invitations');
+  await expect(page.locator('#statusBar')).toContainText('Testnet reserve: 100.0000 tDASH');
+  await expect(page.locator('#statusBar')).toContainText('Mainnet invitation reserve: 0.0078 DASH');
+  await expect(page.locator('#treasuryPanel')).not.toHaveAttribute('open');
+  await page.locator('#coreFaucetBtn').click();
+  await expect(page.locator('#addressValidation')).toHaveText('Enter a receiving address.');
+  await expect(page.locator('#addressInput')).toBeFocused();
+  await expect(page.locator('#coreFaucetBtn')).toBeEnabled();
+  expect(requests).toEqual([]);
+});
+
+test("submitting with unknown availability gives a recovery message without requesting funds", async ({ page }) => {
+  const requests = await openFaucet(page, { statusResponses: [{ status: 503, json: {} }] });
+  await expect(page.locator('#statusBar')).toContainText('Availability unknown');
+  await page.locator('#addressInput').fill('yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs');
+  await expect(page.locator('#coreFaucetBtn')).toBeEnabled();
+  await page.locator('#coreFaucetBtn').click();
+  await expect(page.locator('#coreErrorBox')).toContainText('Retry faucet status');
+  expect(requests).toEqual([]);
 });
