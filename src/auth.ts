@@ -46,7 +46,7 @@ const OAUTH_COOKIE = "__Host-faucet_oauth";
 const SESSION_TTL_MS = 12 * 3_600_000;
 const OAUTH_TTL_MS = 10 * 60_000;
 /** Pages a login may return to. Anything else returns to `/keys`. */
-const RETURN_PATHS = new Set(["/keys", "/admin"]);
+const RETURN_PATHS = new Set(["/", "/keys", "/admin"]);
 const USER_AGENT = "dash-faucet-cf (+https://github.com/PastaPastaPasta/dash-faucet-cf)";
 
 const enc = new TextEncoder();

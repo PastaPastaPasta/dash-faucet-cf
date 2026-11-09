@@ -59,8 +59,18 @@
         "RATE_LIMIT_PER_HOUR": "3",
         "RATE_LIMIT_TURNSTILE_PER_HOUR": "10",
         "RATE_LIMIT_HARD_PER_HOUR": "25",
-        // 200 tDASH/day ceiling
-        "DAILY_BUDGET_SATS": "20000000000",
+        // 1000 tDASH/day ceiling on captcha-path payouts
+        "DAILY_BUDGET_SATS": "100000000000",
+        // People pick an amount in the UI. Up to 10 tDASH any captcha does;
+        // up to 100 only Turnstile (proof of work is just CPU); above 100 a
+        // code or a dash.org sign-in.
+        "TURNSTILE_ABOVE_SATS": "1000000000",
+        "PUBLIC_MAX_SATS": "10000000000",
+        // So a few large asks from one IP cannot take the whole budget...
+        "IP_DAILY_SATS": "10000000000",
+        // ...and asks above 10 together cannot take more than 600 of the
+        // 1000, leaving 400 a day (twice the old budget) for small ones.
+        "LARGE_DAILY_BUDGET_SATS": "60000000000",
         // below this the faucet reports low_balance
         "MIN_BALANCE_SATS": "5000000000",
         "POOL_MIN": "8",

@@ -5,7 +5,7 @@ const origin = "https://faucet.test";
 
 // Exercise the shipped page with deterministic CAPTCHA providers and payouts.
 // Worker tests separately solve and verify real CAP challenges and rate tiers.
-async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [] } = {}) {
+async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], amountLimits, me, headers = [] } = {}) {
   const requests = [];
   await page.route(`${origin}/**`, async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -18,10 +18,15 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
         invitationsEnabled: true, invitationNetwork: "mainnet",
         invitationAmount: 0.03, invitationMaxPerRequest: 1,
         invitationInventory: { available: 1 },
+        ...(amountLimits ? { amountLimits, accountUrl: `${origin}/keys` } : {}),
       } });
+    }
+    if (path === "/api/me") {
+      return route.fulfill({ json: me || { authenticated: false, providers: ["google"], loginOrigin: "https://login.test" } });
     }
     if (path === "/api/core-faucet") {
       requests.push(route.request().postDataJSON());
+      headers.push(route.request().headers());
       return route.fulfill(responses.shift() || { json: { txid: "a".repeat(64), amount: 1 } });
     }
     return route.fulfill({
@@ -157,4 +162,142 @@ test("mainnet invitations still require Turnstile on the testnet page", async ({
   await page.locator("#invitationBtn").click();
   await expect(page.locator("#invitationErrorBox")).toContainText("Captcha failed to load");
   expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+const LIMITS = { turnstileAbove: 10, publicMax: 100, signedInMax: 5000, perIpDaily: 100 };
+
+test("small amounts keep the proof-of-work fallback", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "error-callback", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("5");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "yTestRecipient", capToken: "pow-1", amount: 5 }]);
+});
+
+test("amounts above the Turnstile threshold never fall back to proof of work", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "error-callback", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("50");
+  await expect(page.locator("#amountHint")).toContainText("full captcha check");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("need this check");
+  expect(requests).toEqual([]);
+  expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+test("amounts above the Turnstile threshold pay with Turnstile", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("50");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "yTestRecipient", turnstileToken: "web-token", amount: 50 }]);
+});
+
+test("amounts above the public maximum ask for a sign-in or a code", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#signInBox")).toBeVisible();
+  await expect(page.locator("#signInLink")).toHaveAttribute("href", "https://login.test/auth/google/login?return=/");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("dash.org sign-in or a code");
+  expect(requests).toEqual([]);
+
+  await page.locator("#codeInput").fill("masternode");
+  await expect(page.locator("#signInBox")).toBeHidden();
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "yTestRecipient", turnstileToken: "web-token", amount: 500, code: "masternode" }]);
+});
+
+test("a signed-in request skips the captcha and sends the CSRF token", async ({ page }) => {
+  const headers = [];
+  const requests = await openFaucet(page, {
+    turnstile: "error-callback",
+    amountLimits: LIMITS,
+    headers,
+    me: { authenticated: true, user: { email: "dev@dash.org" }, csrf: "csrf-1", providers: ["google"], loginOrigin: origin },
+  });
+  await page.locator("#amountInput").fill("1500");
+  await expect(page.locator("#amountHint")).toContainText("Signed in as dev@dash.org");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "yTestRecipient", amount: 1500 }]);
+  expect(headers[0]["x-csrf-token"]).toBe("csrf-1");
+  expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+test("a code refused for proof of work retries with Turnstile only", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "error-callback", amountLimits: LIMITS, responses: [
+    { status: 400, json: { error: "Large amounts need the Turnstile captcha; proof of work is not enough", requiresTurnstile: true } },
+  ] });
+  await page.locator("#codeInput").fill("masternode");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("needs the full captcha check");
+  await expect(page.locator("#hardCapBox")).toBeHidden();
+  expect(requests).toEqual([{ address: "yTestRecipient", capToken: "pow-1", code: "masternode" }]);
+
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("need this check");
+  expect(requests).toHaveLength(1);
+  expect(await page.evaluate(() => window.powSolves)).toHaveLength(1);
+});
+
+test("a signed-in user redeeming a code goes through the captcha", async ({ page }) => {
+  const headers = [];
+  const requests = await openFaucet(page, {
+    turnstile: "success",
+    amountLimits: LIMITS,
+    headers,
+    me: { authenticated: true, user: { email: "dev@dash.org" }, csrf: "csrf-1", providers: ["google"], loginOrigin: origin },
+  });
+  await page.locator("#codeInput").fill("masternode");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "yTestRecipient", turnstileToken: "web-token", code: "masternode" }]);
+  expect(headers[0]["x-csrf-token"]).toBeUndefined();
+});
+
+test("an unparseable amount is refused rather than sent as the default", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").pressSequentially("1e");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("at least 0.001");
+  expect(requests).toEqual([]);
+});
+
+test("a sign-in panel without a login URL hides its link", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success", amountLimits: LIMITS, me: { authenticated: false, providers: [] } });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#signInBox")).toBeVisible();
+  await expect(page.locator("#signInLink")).toBeHidden();
+  await expect(page.locator("#signInDescription")).toHaveText("Enter a code above.");
+});
+
+test("a hidden amount field never sends a prefilled amount", async ({ page }) => {
+  const requests = [];
+  await page.route(`${origin}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/status") {
+      return route.fulfill({ json: { status: "ok", network: "mainnet", balance: 1, blockHeight: 1, coreFaucetAmount: 0.001,
+        turnstileSiteKey: "k", amountLimits: { turnstileAbove: 0.001, publicMax: 0.001, signedInMax: null } } });
+    }
+    if (path === "/api/core-faucet") {
+      requests.push(route.request().postDataJSON());
+      return route.fulfill({ json: { txid: "a".repeat(64), amount: 0.001 } });
+    }
+    return route.fulfill({
+      contentType: path.endsWith(".mjs") ? "text/javascript" : "text/html",
+      body: await readFile(new URL(`../../public${path === "/" ? "/index.html" : path}`, import.meta.url)),
+    });
+  });
+  await page.route("https://challenges.cloudflare.com/**", (route) => route.abort());
+  await page.addInitScript(() => {
+    window.turnstile = { render: () => "w", remove: () => {}, execute: (_id, opts) => opts.callback("web-token") };
+  });
+  await page.goto(`${origin}/?amount=5`);
+  await expect(page.locator("#statusBar")).toContainText("Faucets online");
+  await expect(page.locator("#amountRow")).toBeHidden();
+  await page.locator("#addressInput").fill("XTestRecipient");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "XTestRecipient", turnstileToken: "web-token" }]);
 });

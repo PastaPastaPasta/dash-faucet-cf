@@ -8,6 +8,7 @@ import {
   ProofTier,
   resolveConfig,
   resolveInvitationTreasuryConfig,
+  toDash,
 } from "./config";
 import {
   type CodeInfo,
@@ -146,7 +147,11 @@ export interface PayoutRequest {
    * payout, and its own limits apply instead of the public ones.
    */
   apiKeyHash?: string;
-  /** Amount an API-key caller asked for; ignored without a key. */
+  /**
+   * Amount the caller asked for; the standard payout when absent. A code's
+   * amount is the most it pays, and a captcha alone buys at most
+   * `amounts.publicMaxSats`.
+   */
   requestedSats?: number;
   /**
    * Normalized redemption code (see `codeKey`). Like a key, it replaces the
@@ -154,6 +159,11 @@ export interface PayoutRequest {
    * key, the caller has still passed a captcha.
    */
   codeKey?: string;
+  /**
+   * A signed-in person (session cookie plus CSRF token, checked by the
+   * Worker). Like a key: no captcha and none of the public limits.
+   */
+  user?: { id: string; email: string };
 }
 
 export interface ApiKeyInfo {
@@ -242,7 +252,11 @@ export type PayoutResult =
       codeLabel?: string;
     }
   | { ok: false; code: "rate_limited"; retryAfter: number }
-  | { ok: false; code: "budget_exhausted"; retryAfter: number }
+  | { ok: false; code: "budget_exhausted"; retryAfter: number; detail?: string }
+  /** This IP's captcha-path tDASH for the last 24 h is spent. */
+  | { ok: false; code: "ip_allowance"; detail: string; retryAfter: number }
+  /** The amount needs Turnstile and the caller presented proof of work. */
+  | { ok: false; code: "turnstile_required" }
   | { ok: false; code: "unauthorized" }
   | { ok: false; code: "code_invalid" }
   | { ok: false; code: "code_used" }
@@ -457,6 +471,16 @@ export class Treasury extends DurableObject<Env> {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS key_payouts_lookup ON key_payouts (key_id, created_at);
+      -- Audit log of payouts to signed-in people; never pruned.
+      CREATE TABLE IF NOT EXISTS user_payouts (
+        user_id    TEXT    NOT NULL,
+        email      TEXT    NOT NULL,
+        txid       TEXT    NOT NULL,
+        address    TEXT    NOT NULL,
+        satoshis   INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS user_payouts_lookup ON user_payouts (user_id, created_at);
       -- Coin sizes payouts asked for and that only a merge can provide.
       CREATE TABLE IF NOT EXISTS merge_demand (
         satoshis   INTEGER NOT NULL,
@@ -474,6 +498,15 @@ export class Treasury extends DurableObject<Env> {
       this.ctx.storage.sql.exec(
         `ALTER TABLE invitation_inventory ADD COLUMN amount_sats INTEGER`,
       );
+    }
+    const hitColumns = new Set(
+      this.ctx.storage.sql
+        .exec<{ name: string }>(`PRAGMA table_info(ip_hits)`)
+        .toArray()
+        .map((row) => row.name),
+    );
+    if (!hitColumns.has("satoshis")) {
+      this.ctx.storage.sql.exec(`ALTER TABLE ip_hits ADD COLUMN satoshis INTEGER NOT NULL DEFAULT 0`);
     }
     this.backfillInvitationAmounts();
     migrateAccounts(this.ctx.storage.sql, { selfServeKeysExpire: this.config.auth.keyTtlMs > 0 });
@@ -519,7 +552,8 @@ export class Treasury extends DurableObject<Env> {
   /** Time-based cleanup. Synchronous, and only called inside `serialize()`. */
   private prune(now: number): void {
     const sql = this.ctx.storage.sql;
-    sql.exec(`DELETE FROM ip_hits WHERE created_at < ?`, now - HOUR_MS);
+    // A day, not an hour: the per-IP amount allowance looks back 24 h.
+    sql.exec(`DELETE FROM ip_hits WHERE created_at < ?`, now - DAY_MS);
     sql.exec(`DELETE FROM claims WHERE created_at < ?`, now - 7 * DAY_MS);
     sql.exec(`DELETE FROM budget WHERE day < ?`, utcDay(now - 7 * DAY_MS));
     // A capToken past its own expiry can never be accepted again, so the row
@@ -759,14 +793,24 @@ export class Treasury extends DurableObject<Env> {
 
     this.prune(now);
 
-    let satoshis = cfg.payoutSats;
+    let satoshis = input.requestedSats ?? cfg.payoutSats;
     let apiKey: ApiKeyRow | undefined;
     let code: CodeRow | undefined;
+    const user = input.user;
     if (input.apiKeyHash !== undefined) {
       const auth = this.authorizeKeyPayout(input, now);
       if (!auth.ok) return auth;
       apiKey = auth.key;
       satoshis = auth.satoshis;
+    } else if (user) {
+      if (!cfg.apiKeys.enabled) return { ok: false, code: "unauthorized" };
+      if (satoshis > cfg.apiKeys.maxPerRequestSats) {
+        return {
+          ok: false,
+          code: "bad_request",
+          detail: `amount may be at most ${toDash(cfg.apiKeys.maxPerRequestSats)} DASH per request`,
+        };
+      }
     } else if (input.codeKey !== undefined) {
       // Decided inside the payout lock, so two people racing for a code's
       // last redemption cannot both get it.
@@ -774,8 +818,23 @@ export class Treasury extends DurableObject<Env> {
       const check = checkCode(sql, input.codeKey, input.address, now);
       if (!check.ok) return { ok: false, code: check.reason === "used" ? "code_used" : "code_invalid" };
       code = check.code;
-      satoshis = code.amount_sats;
+      // A code's amount is its ceiling; asking for less is fine.
+      satoshis = input.requestedSats ?? code.amount_sats;
+      if (satoshis > code.amount_sats) {
+        return {
+          ok: false,
+          code: "bad_request",
+          detail: `This code pays at most ${toDash(code.amount_sats)} DASH`,
+        };
+      }
     } else {
+      if (satoshis > cfg.amounts.publicMaxSats) {
+        return {
+          ok: false,
+          code: "bad_request",
+          detail: `amounts above ${toDash(cfg.amounts.publicMaxSats)} need a code or a signed-in account`,
+        };
+      }
       // 1. Idempotency. A repeated request for the same address on the same day
       //    returns the original transaction instead of paying twice.
       const prior = sql
@@ -796,7 +855,39 @@ export class Treasury extends DurableObject<Env> {
         };
       }
 
-      // 2. Durable per-IP limit, scaled by how strong a proof was presented.
+      const midnight = (() => {
+        const today = new Date(now);
+        return Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1);
+      })();
+      const untilMidnight = Math.max(1, Math.ceil((midnight - now) / 1000));
+
+      // 2. Per-IP tDASH over the last day, so a few large asks from one place
+      //    cannot take the whole public budget. Before the hourly count: no
+      //    harder proof raises it, so it must not be masked by a 429 that
+      //    offers one.
+      if (cfg.amounts.ipDailySats > 0) {
+        const taken = sql
+          .exec<{ oldest: number | null; total: number | null }>(
+            `SELECT MIN(created_at) AS oldest, SUM(satoshis) AS total
+               FROM ip_hits WHERE ip = ? AND created_at > ?`,
+            input.ip,
+            now - DAY_MS,
+          )
+          .toArray()[0];
+        const total = taken?.total ?? 0;
+        if (total + satoshis > cfg.amounts.ipDailySats) {
+          const left = Math.max(0, cfg.amounts.ipDailySats - total);
+          const oldest = taken?.oldest ?? now;
+          return {
+            ok: false,
+            code: "ip_allowance",
+            detail: `${toDash(left)} of the ${toDash(cfg.amounts.ipDailySats)} DASH one IP may receive per day is left`,
+            retryAfter: Math.max(1, Math.ceil((oldest + DAY_MS - now) / 1000)),
+          };
+        }
+      }
+
+      // 3. Durable per-IP limit, scaled by how strong a proof was presented.
       const limit = cfg.rateLimits[input.tier ?? "soft"];
       const hits = sql
         .exec<{ oldest: number | null; n: number }>(
@@ -812,21 +903,44 @@ export class Treasury extends DurableObject<Env> {
         return { ok: false, code: "rate_limited", retryAfter };
       }
 
-      // 3. Global daily budget — the hard ceiling on a day's total loss.
+      // 4. Large asks share a smaller slice of the day, so a handful of them
+      //    cannot leave nothing for ordinary 1-tDASH requests.
+      if (satoshis > cfg.amounts.turnstileAboveSats) {
+        const large = sql
+          .exec<{ total: number | null }>(
+            `SELECT SUM(satoshis) AS total FROM ip_hits WHERE satoshis > ? AND created_at >= ?`,
+            cfg.amounts.turnstileAboveSats,
+            midnight - DAY_MS,
+          )
+          .toArray()[0];
+        if ((large?.total ?? 0) + satoshis > cfg.amounts.largeDailySats) {
+          return {
+            ok: false,
+            code: "budget_exhausted",
+            detail: `Large requests are used up for today; up to ${toDash(cfg.amounts.turnstileAboveSats)} DASH still works`,
+            retryAfter: untilMidnight,
+          };
+        }
+      }
+
+      // 5. Global daily budget — the hard ceiling on a day's total loss.
       const spent = this.spentToday(day);
-      if (spent + cfg.payoutSats > cfg.dailyBudgetSats) {
-        const today = new Date(now);
-        const midnight = Date.UTC(
-          today.getUTCFullYear(),
-          today.getUTCMonth(),
-          today.getUTCDate() + 1,
-        );
+      if (spent + satoshis > cfg.dailyBudgetSats) {
         return {
           ok: false,
           code: "budget_exhausted",
-          retryAfter: Math.max(1, Math.ceil((midnight - now) / 1000)),
+          ...(satoshis > cfg.payoutSats && spent + cfg.payoutSats <= cfg.dailyBudgetSats
+            ? { detail: `Not enough left today for that amount; try ${toDash(cfg.payoutSats)} DASH` }
+            : {}),
+          retryAfter: untilMidnight,
         };
       }
+    }
+
+    // Proof of work only costs CPU, so it never pays out a large amount, even
+    // through a code. Checked here, where a code's amount is finally known.
+    if (!apiKey && !user && satoshis > cfg.amounts.turnstileAboveSats && input.tier !== "turnstile") {
+      return { ok: false, code: "turnstile_required" };
     }
 
     const key = await this.key();
@@ -838,7 +952,7 @@ export class Treasury extends DurableObject<Env> {
       return { ok: false, code: "chain_unavailable", detail: describeError(err) };
     }
 
-    if (apiKey || code) {
+    if (apiKey || code || user) {
       const balance = view.utxos.reduce((acc, u) => acc + u.satoshis, 0);
       if (balance - satoshis < cfg.apiKeys.reserveSats) {
         return {
@@ -914,6 +1028,7 @@ export class Treasury extends DurableObject<Env> {
       if (code && outcome.uncertain) {
         recordRedemption(sql, code, input.address, built.txid, satoshis, now);
       }
+      if (user && outcome.uncertain) this.recordUserPayout(user, built, input.address, satoshis, now);
       return outcome.result;
     }
 
@@ -924,6 +1039,8 @@ export class Treasury extends DurableObject<Env> {
       // consume an address's daily claim nor an IP's allowance nor the public
       // daily budget, so trusted use can never lock the public out.
       this.recordKeyPayout(apiKey, built, input.address, satoshis, now);
+    } else if (user) {
+      this.recordUserPayout(user, built, input.address, satoshis, now);
     } else if (code) {
       // Code payouts, too, stay out of the public ledgers: the code's own cap
       // and once-per-address rule are its limits.
@@ -938,7 +1055,12 @@ export class Treasury extends DurableObject<Env> {
         satoshis,
         now,
       );
-      sql.exec(`INSERT INTO ip_hits (ip, created_at) VALUES (?, ?)`, input.ip, now);
+      sql.exec(
+        `INSERT INTO ip_hits (ip, created_at, satoshis) VALUES (?, ?, ?)`,
+        input.ip,
+        now,
+        satoshis,
+      );
       sql.exec(
         `INSERT INTO budget (day, satoshis) VALUES (?, ?)
          ON CONFLICT(day) DO UPDATE SET satoshis = satoshis + excluded.satoshis`,
@@ -954,7 +1076,9 @@ export class Treasury extends DurableObject<Env> {
     const spentCollateral = view.utxos.some(
       (u) => u.satoshis >= COLLATERAL_COIN_SATS && spent.has(outpointKey(u.txid, u.outputIndex)),
     );
-    if (apiKey || spentCollateral) await this.scheduleMaintenance(FOLLOW_UP_MS);
+    if (apiKey || user || spentCollateral || satoshis > cfg.poolUtxoSats) {
+      await this.scheduleMaintenance(FOLLOW_UP_MS);
+    }
 
     return {
       ok: true,
@@ -1024,6 +1148,25 @@ export class Treasury extends DurableObject<Env> {
       now,
       satoshis,
       key.hash,
+    );
+  }
+
+  private recordUserPayout(
+    user: { id: string; email: string },
+    built: BuiltTx,
+    address: string,
+    satoshis: number,
+    now: number,
+  ): void {
+    this.ctx.storage.sql.exec(
+      `INSERT INTO user_payouts (user_id, email, txid, address, satoshis, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      user.id,
+      user.email,
+      built.txid,
+      address,
+      satoshis,
+      now,
     );
   }
 

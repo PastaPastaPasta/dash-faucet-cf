@@ -176,6 +176,56 @@
         .code-row {
             margin-top: 10px;
         }
+        .amount-row[hidden] {
+            display: none;
+        }
+        .amount-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .amount-row label {
+            color: #aaa;
+            font-size: 0.9rem;
+        }
+        .amount-row input {
+            width: 10rem;
+            min-width: 0;
+            padding: 9px 15px;
+            border-radius: 8px;
+            border: 1px solid rgba(255,255,255,0.2);
+            background: rgba(0,0,0,0.3);
+            color: #e0e0e0;
+            font-size: 0.9rem;
+        }
+        .amount-row input:focus {
+            outline: none;
+            border-color: #008de4;
+            box-shadow: 0 0 0 3px rgba(0, 141, 228, 0.15);
+        }
+        .amount-unit {
+            color: #888;
+            font-size: 0.9rem;
+        }
+        .amount-hint {
+            color: #999;
+            font-size: 0.8rem;
+            margin: 6px 0 0 0;
+            min-height: 1em;
+        }
+        .amount-hint:empty {
+            min-height: 0;
+            margin: 0;
+        }
+        .sign-in-box a.btn-secondary {
+            display: inline-block;
+            margin-top: 12px;
+            text-decoration: none;
+        }
+        .sign-in-box a.btn-secondary[hidden] {
+            display: none;
+        }
         .code-row input {
             width: 100%;
             padding: 9px 15px;
@@ -736,8 +786,19 @@
                         <span class="btn-text">Send</span>
                     </button>
                 </div>
+                <div class="amount-row" id="amountRow">
+                    <label for="amountInput">Amount</label>
+                    <input type="number" id="amountInput" min="0.001" step="any" inputmode="decimal" placeholder="1" autocomplete="off">
+                    <span class="amount-unit coin-name">tDASH</span>
+                </div>
+                <p class="amount-hint" id="amountHint"></p>
                 <div class="code-row">
                     <input type="text" id="codeInput" placeholder="Have a code? (optional)" autocomplete="off" spellcheck="false" maxlength="64">
+                </div>
+                <div class="hard-cap sign-in-box" id="signInBox">
+                    <strong id="signInTitle">Sign in for larger amounts</strong>
+                    <p id="signInDescription">Sign in with your dash.org account, or enter a code above.</p>
+                    <a class="btn-secondary" id="signInLink" href="/keys">Sign in with dash.org</a>
                 </div>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
@@ -754,6 +815,7 @@
             <!-- Results View -->
             <div class="results-view">
                 <h2 style="color: #28a745;" id="sentHeading">Sent!</h2>
+                <p class="description" id="coreSentAmount"></p>
                 <div class="stat-item" style="margin: 15px 0;">
                     <div class="stat-label">Transaction ID</div>
                     <div class="stat-value" id="coreTxid" style="word-break: break-all;"></div>
@@ -930,8 +992,80 @@
         let capSolving = false;
         let coreRequestPending = false;
         let invitationExpiryTimer = null;
+        /** From /api/status: `{ turnstileAbove, publicMax, signedInMax }` in DASH. */
+        let amountLimits = null;
+        /** `{ email, csrf }` when signed in on this host; such requests skip the captcha. */
+        let session = null;
+        let signInUrl = "";
+        /** Set once the server refused proof of work for this amount. */
+        let needTurnstile = false;
 
         const $ = (id) => document.getElementById(id);
+
+        /** The requested amount: null for the default, NaN when unusable. */
+        function requestedAmount() {
+            const input = $("amountInput");
+            // A number input reads "" for text it cannot parse, e.g. "1e".
+            if (input.validity.badInput) return NaN;
+            const text = input.value.trim();
+            if (!text) return null;
+            const amount = Number(text);
+            return Number.isFinite(amount) && amount >= 0.001 ? amount : NaN;
+        }
+
+        function showSignIn(visible) {
+            const box = $("signInBox");
+            box.classList.toggle("visible", visible);
+            $("signInLink").hidden = !signInUrl;
+            if (signInUrl) $("signInLink").href = signInUrl;
+            $("signInDescription").textContent = signInUrl
+                ? "Sign in with your dash.org account, or enter a code above."
+                : "Enter a code above.";
+        }
+
+        function updateAmountHint() {
+            const hint = $("amountHint");
+            const amount = requestedAmount();
+            showSignIn(false);
+            if (Number.isNaN(amount)) {
+                hint.textContent = "Enter at least 0.001.";
+                return;
+            }
+            if (session && !$("codeInput").value.trim()) {
+                const max = amountLimits?.signedInMax;
+                hint.textContent = `Signed in as ${session.email}; no captcha needed` +
+                    (max ? ` (up to ${max.toLocaleString()} ${coinName}).` : ".");
+                return;
+            }
+            if (!amountLimits || amount === null || amount <= amountLimits.turnstileAbove) {
+                hint.textContent = "";
+            } else if (amount <= amountLimits.publicMax) {
+                hint.textContent = `Amounts above ${amountLimits.turnstileAbove} ${coinName} need a full captcha check.`;
+            } else {
+                hint.textContent = `Amounts above ${amountLimits.publicMax} ${coinName} need a dash.org sign-in or a code.`;
+                showSignIn(!$("codeInput").value.trim());
+            }
+        }
+
+        /** Who is signed in here, and where to sign in otherwise. Cookies are host-only. */
+        async function loadSession() {
+            try {
+                const response = await fetch("/api/me", { credentials: "same-origin" });
+                const me = await response.json();
+                if (me.authenticated && me.csrf) {
+                    session = { email: me.user.email, csrf: me.csrf };
+                } else {
+                    session = null;
+                    const provider = (me.providers || [])[0];
+                    signInUrl = me.loginOrigin && provider
+                        ? `${me.loginOrigin}/auth/${provider}/login?return=/`
+                        : "";
+                }
+            } catch {
+                session = null;
+            }
+            updateAmountHint();
+        }
 
         function showError(message) {
             const errorBox = $("coreErrorBox");
@@ -1059,10 +1193,14 @@
 
         /**
          * Resolve a Turnstile token, rendering the widget on first use.
-         * Testnet falls back quickly if Turnstile needs interaction or stalls.
+         * Testnet falls back quickly if Turnstile needs interaction or stalls,
+         * unless `strict`: large amounts take Turnstile or nothing.
          */
-        function solveTurnstile(kind = "core") {
+        function solveTurnstile(kind = "core", strict = false) {
             const invitation = kind === "invitation";
+            if (strict && !turnstileSiteKey) {
+                return Promise.reject(new Error("The captcha this amount needs is not configured"));
+            }
             if (!turnstileSiteKey) {
                 return invitation
                     ? Promise.reject(new Error("Invitation captcha is not configured"))
@@ -1080,7 +1218,7 @@
                     clearTimeout(timer);
                     fn(value);
                 };
-                const canFallback = !invitation && !!capEndpoint;
+                const canFallback = !invitation && !strict && !!capEndpoint;
                 const timer = setTimeout(
                     () => settle(reject, new Error("Captcha timed out — please try again")),
                     canFallback ? 8000 : 60000
@@ -1301,6 +1439,23 @@
                 showError("Please enter a Dash address");
                 return;
             }
+            const amount = requestedAmount();
+            if (Number.isNaN(amount)) {
+                showError("Enter an amount of at least 0.001");
+                return;
+            }
+            const code = $("codeInput").value.trim();
+            if (!session && !code && amount !== null && amountLimits && amount > amountLimits.publicMax) {
+                showSignIn(true);
+                showError(`Amounts above ${amountLimits.publicMax} ${coinName} need a dash.org sign-in or a code.`);
+                return;
+            }
+            // Large amounts take Turnstile or nothing: the server refuses proof
+            // of work for them, so falling back to it would only waste a solve.
+            // A code goes through the captcha path even when signed in.
+            const useSession = !!session && !code;
+            const strict = !useSession && (needTurnstile ||
+                (amount !== null && !!amountLimits && amount > amountLimits.turnstileAbove));
 
             btn.classList.add("loading");
             btn.disabled = true;
@@ -1309,18 +1464,27 @@
 
             try {
                 let body;
+                const headers = { "Content-Type": "application/json" };
                 if (proof) {
                     body = { address, ...proof };
+                } else if (useSession) {
+                    // Signed in: the session pays, no captcha. The CSRF token
+                    // is what tells the server to use the cookie at all.
+                    body = { address };
+                    headers["X-CSRF-Token"] = session.csrf;
                 } else {
                     disposeCapWidget();
                     hideHardCaptcha();
                     btnText.textContent = "Verifying...";
                     body = { address };
                     try {
-                        const turnstileToken = await solveTurnstile();
+                        const turnstileToken = await solveTurnstile("core", strict);
                         if (turnstileToken) body.turnstileToken = turnstileToken;
                         else if (capEndpoint) throw new Error("Using proof of work");
                     } catch (error) {
+                        if (strict) {
+                            throw new Error(`${error.message}. Amounts above ${amountLimits?.turnstileAbove ?? "this"} ${coinName} need this check; try again or ask for less.`);
+                        }
                         if (!capEndpoint) throw error;
                         clearTurnstile("core");
                         await showPowCaptcha("soft", true);
@@ -1328,12 +1492,13 @@
                     }
                 }
 
-                const code = $("codeInput").value.trim();
+                if (amount !== null) body.amount = amount;
                 if (code) body.code = code;
                 btnText.textContent = "Sending...";
                 const response = await fetch("/api/core-faucet", {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers,
+                    credentials: "same-origin",
                     body: JSON.stringify(body),
                 });
                 const data = await response.json().catch(() => ({}));
@@ -1342,7 +1507,18 @@
                 if (proof) disposeCapWidget();
 
                 if (!response.ok) {
-                    if (!proof && capEndpoint && data.requiresProofOfWork) {
+                    if (data.requiresTurnstile) {
+                        // Only reachable when a proof of work stood in for
+                        // Turnstile, e.g. a code worth more than the threshold.
+                        needTurnstile = true;
+                        hideHardCaptcha();
+                        throw new Error("This amount needs the full captcha check, not proof of work. Press Send to try it.");
+                    }
+                    if (data.requiresSignIn) {
+                        if (session) await loadSession();
+                        showSignIn(!session);
+                    }
+                    if (!proof && !strict && capEndpoint && data.requiresProofOfWork) {
                         clearTurnstile("core");
                         await showPowCaptcha("soft", true);
                         return;
@@ -1362,6 +1538,7 @@
                     }
 
                     let message = data.error || data.detail?.error || "Request failed";
+                    if (data.detailMessage && response.status < 500) message += ` (${data.detailMessage})`;
                     const retryAfter = data.retryAfter ?? data.detail?.retryAfter;
                     if (response.status === 429 && retryAfter) {
                         message += ` — try again in ${formatDuration(retryAfter)}.`;
@@ -1377,24 +1554,29 @@
                 if (data.replay) {
                     throw new Error(
                         `That address already received ${data.amount} ${coinName} today ` +
-                            `(tx ${data.txid.slice(0, 12)}\u2026). Use a different address, ` +
+                            `(tx ${data.txid.slice(0, 12)}…). Use a different address, ` +
                             `or try again after 00:00 UTC.`
                     );
                 }
 
                 hideHardCaptcha();
+                showSignIn(false);
+                needTurnstile = false;
+                $("coreSentAmount").textContent = `${data.amount} ${coinName} to ${data.address}`;
                 $("coreTxid").textContent = data.txid;
                 card.classList.remove("show-config");
                 card.classList.add("show-results", "success");
                 addressInput.value = "";
                 $("codeInput").value = "";
+                $("amountInput").value = "";
+                updateAmountHint();
             } catch (error) {
                 showError(error.message);
                 // An escalated attempt that failed leaves the box open but
                 // empty, so offer a fresh challenge rather than a dead panel.
                 // Dispose again here: a request that threw before reaching the
                 // response never got to burn its widget above.
-                if (proof) {
+                if (proof && !needTurnstile) {
                     disposeCapWidget();
                     await showPowCaptcha(proofTier).catch((err) => showError(err.message));
                 }
@@ -1481,6 +1663,8 @@
             $("coreErrorBox").classList.remove("visible");
             hideHardCaptcha();
             disposeCapWidget();
+            needTurnstile = false;
+            updateAmountHint();
         }
 
         function applyNetworkCopy(network) {
@@ -1530,13 +1714,29 @@
                 } else {
                     $("coreFundingCopy").disabled = true;
                 }
+                amountLimits = data.amountLimits || null;
+                const publicMax = amountLimits?.publicMax;
+                const choosesAmount = publicMax > data.coreFaucetAmount;
                 if (data.coreFaucetAmount) {
-                    $("coreFaucetAmountDisplay").textContent = data.coreFaucetAmount;
+                    $("coreFaucetAmountDisplay").textContent = choosesAmount
+                        ? `up to ${publicMax}`
+                        : data.coreFaucetAmount;
+                    $("amountInput").placeholder = String(data.coreFaucetAmount);
                 }
+                // Where a captcha buys only the standard payout and nobody can
+                // sign in (mainnet), there is nothing to choose.
+                const showAmount = !!(data.accountUrl || choosesAmount);
+                $("amountRow").hidden = !showAmount;
+                // A `?amount=` link must not send a value nobody can see.
+                if (!showAmount) $("amountInput").value = "";
+                if (data.accountUrl) void loadSession();
+                else updateAmountHint();
                 const corePresentation = applyNetworkPresentation("core", data.network);
                 $("coreTreasuryBalance").textContent = formatBalance(balance);
                 $("coreTreasuryDetail").textContent =
-                    `${data.coreFaucetAmount} ${corePresentation.currency} per request` +
+                    (choosesAmount
+                        ? `Up to ${publicMax} ${corePresentation.currency} per request`
+                        : `${data.coreFaucetAmount} ${corePresentation.currency} per request`) +
                     (Number.isFinite(Number(data.availableUtxos))
                         ? ` · ${Number(data.availableUtxos).toLocaleString()} spendable outputs`
                         : "");
@@ -1597,11 +1797,26 @@
 
         $("startBtn").addEventListener("click", showCoreFaucetConfig);
         // Voucher and event links carry their code: open the form with it filled in.
-        const sharedCode = new URLSearchParams(location.search).get("code");
+        const params = new URLSearchParams(location.search);
+        const sharedCode = params.get("code");
         if (sharedCode) {
             $("codeInput").value = sharedCode.slice(0, 64);
             showCoreFaucetConfig();
         }
+        const sharedAmount = Number(params.get("amount"));
+        if (sharedAmount > 0) {
+            $("amountInput").value = String(sharedAmount);
+            showCoreFaucetConfig();
+        }
+        for (const id of ["amountInput", "codeInput"]) {
+            $(id).addEventListener("input", () => {
+                needTurnstile = false;
+                updateAmountHint();
+            });
+        }
+        $("amountInput").addEventListener("keydown", (e) => {
+            if (e.key === "Enter") requestCoreFaucet();
+        });
         $("backLink").addEventListener("click", resetCoreFaucetCard);
         $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
         // Wrapped, not passed directly: the click event would arrive as `proof`.

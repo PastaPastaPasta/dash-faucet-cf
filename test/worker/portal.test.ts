@@ -84,7 +84,7 @@ async function resetStore(): Promise<void> {
   await runInDurableObject(stub, (_instance, state) => {
     for (const table of [
       "claims", "ip_hits", "spent", "pending", "budget", "used_cap",
-      "api_keys", "key_payouts", "users", "codes", "code_redemptions",
+      "api_keys", "key_payouts", "users", "codes", "code_redemptions", "user_payouts",
     ]) {
       state.storage.sql.exec(`DELETE FROM ${table}`);
     }
@@ -374,6 +374,84 @@ describe("self-serve keys", () => {
   });
 });
 
+describe("signed-in payouts", () => {
+  async function pay(cookie: string | undefined, body: Record<string, unknown>, headers: Record<string, string> = {}) {
+    const res = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Origin: ORIGIN,
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as Record<string, any> };
+  }
+
+  it("pay any amount up to the key cap with no captcha, and log who asked", async () => {
+    googleClaims = dashOrg();
+    const { cookie } = await login("google");
+    const { csrf } = await me(cookie);
+    const verified = chain.siteverifyTokens.length;
+
+    const big = await pay(cookie, { address: RECIPIENT.testnet.address, amount: 1500 }, { "X-CSRF-Token": csrf });
+    expect(big.status).toBe(200);
+    expect(big.body.amount).toBe(1500);
+    // No public limits: the same address again the same day is a new payout.
+    const again = await pay(cookie, { address: RECIPIENT.testnet.address, amount: 2 }, { "X-CSRF-Token": csrf });
+    expect(again.status).toBe(200);
+    expect(again.body.replay).toBe(false);
+    expect(chain.siteverifyTokens).toHaveLength(verified);
+
+    const over = await pay(cookie, { address: RECIPIENT.testnet.address, amount: 2001 }, { "X-CSRF-Token": csrf });
+    expect(over.status).toBe(400);
+
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const logged = await runInDurableObject(stub, (_i, state) =>
+      state.storage.sql.exec(`SELECT user_id, email, satoshis FROM user_payouts ORDER BY created_at`).toArray(),
+    );
+    expect(logged).toEqual([
+      { user_id: "google:g-1", email: "dev@dash.org", satoshis: 1500 * 100_000_000 },
+      { user_id: "google:g-1", email: "dev@dash.org", satoshis: 2 * 100_000_000 },
+    ]);
+  });
+
+  it("ignore the cookie without the CSRF token, and refuse a bad one or another origin", async () => {
+    googleClaims = dashOrg();
+    const { cookie } = await login("google");
+    const { csrf } = await me(cookie);
+    const address = RECIPIENT.testnet.address;
+
+    const noToken = await pay(cookie, { address, amount: 500 });
+    expect(noToken.status).toBe(403);
+    expect(noToken.body.requiresSignIn).toBe(true);
+
+    const forged = await pay(cookie, { address, amount: 500 }, { "X-CSRF-Token": "forged" });
+    expect(forged.status).toBe(403);
+    const crossSite = await pay(cookie, { address, amount: 500 }, { "X-CSRF-Token": csrf, Origin: "https://evil.test" });
+    expect(crossSite.status).toBe(403);
+    const signedOut = await pay(undefined, { address, amount: 500 }, { "X-CSRF-Token": csrf });
+    expect(signedOut.status).toBe(403);
+    expect(signedOut.body.requiresSignIn).toBe(true);
+
+    expect(chain.broadcastAttempts).toHaveLength(0);
+  });
+
+  it("can return to the faucet page after login", async () => {
+    const start = await SELF.fetch(`${ORIGIN}/auth/google/login?return=/`, { redirect: "manual" });
+    expect(start.status).toBe(302);
+    googleClaims = dashOrg();
+    const authorize = new URL(start.headers.get("Location")!);
+    lastNonce = authorize.searchParams.get("nonce") ?? "";
+    const callback = await SELF.fetch(
+      `${ORIGIN}/auth/google/callback?code=good-code&state=${authorize.searchParams.get("state")}`,
+      { redirect: "manual", headers: { Cookie: cookiesFrom(start) } },
+    );
+    expect(callback.headers.get("Location")).toBe("/");
+  });
+});
+
 describe("admin", () => {
   async function adminCookie() {
     googleClaims = dashOrg("admin@dash.org", "g-admin");
@@ -473,6 +551,36 @@ describe("admin", () => {
     expect((await redeem("DASHCON-24", third, "203.0.113.84")).status).toBe(400);
     await call(admin, "PATCH", `/api/admin/codes/${code.id}`, { maxRedemptions: 3 });
     expect((await redeem("DASHCON-24", third, "203.0.113.84")).status).toBe(200);
+  });
+
+  it("treats a code's amount as a ceiling, above the public maximum", async () => {
+    const admin = await adminCookie();
+    await call(admin, "POST", "/api/admin/codes", {
+      kind: "event", code: "MASTERNODE", label: "MN operators", amount: 1000, maxRedemptions: 10,
+    });
+    const redeem = async (n: number, extra: Record<string, unknown>) => {
+      const res = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "CF-Connecting-IP": `203.0.113.${90 + n}` },
+        body: JSON.stringify({
+          address: await DashKeys.pkhToAddr(new Uint8Array(20).fill(40 + n), { version: "testnet" }),
+          code: "masternode",
+          ...extra,
+        }),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, any> };
+    };
+
+    // Far above PUBLIC_MAX_SATS (0.4), and less than the code allows.
+    const some = await redeem(1, { turnstileToken: "ok", amount: 250 });
+    expect(some.status).toBe(200);
+    expect(some.body.amount).toBe(250);
+    const full = await redeem(2, { turnstileToken: "ok" });
+    expect(full.body.amount).toBe(1000);
+
+    const over = await redeem(3, { turnstileToken: "ok", amount: 1001 });
+    expect(over.status).toBe(400);
+    expect(over.body.error).toMatch(/at most 1000/);
   });
 
   it("issues single-use vouchers in a batch", async () => {

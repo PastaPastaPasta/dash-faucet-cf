@@ -253,11 +253,11 @@ describe("HTTP", () => {
     for (const amount of [0, -1, "5", 1e-9, 0.0001, 1.7e308, Number.NaN, null]) {
       expect((await post(auth, { address, amount })).status).toBe(400);
     }
-    // Without a key, amount is not a knob anyone can turn: more than the
-    // standard payout (0.1 here) is refused, and so is a malformed amount.
+    // Without a key or sign-in, a captcha buys at most PUBLIC_MAX_SATS (0.4
+    // here), and a malformed amount is refused either way.
     const above = await post({}, { address, amount: 5 });
-    expect(above.status).toBe(400);
-    expect(((await above.json()) as { error: string }).error).toMatch(/require an API key/);
+    expect(above.status).toBe(403);
+    expect(await above.json()).toMatchObject({ requiresSignIn: true, error: expect.stringMatching(/sign-in or a code/) });
     expect((await post({}, { address, amount: "1" })).status).toBe(400);
   });
 

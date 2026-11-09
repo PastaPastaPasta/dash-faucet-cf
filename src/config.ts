@@ -74,6 +74,14 @@ export interface Env {
   ADMIN_TOKEN_SHA256?: string;
   KEY_MAX_PER_REQUEST_SATS?: string;
   KEY_RESERVE_SATS?: string;
+  /** Largest amount a captcha alone may ask for. Defaults to PAYOUT_SATS. */
+  PUBLIC_MAX_SATS?: string;
+  /** Amounts above this need Turnstile; proof of work is not enough. */
+  TURNSTILE_ABOVE_SATS?: string;
+  /** Captcha-path tDASH one IP may receive per rolling 24 h; 0 disables. */
+  IP_DAILY_SATS?: string;
+  /** Daily share of the budget for asks above TURNSTILE_ABOVE_SATS. */
+  LARGE_DAILY_BUDGET_SATS?: string;
   MAX_PAYOUT_INPUTS?: string;
   COLLATERAL_COINS?: string;
   /** `fetch` only for tests; production reaches evonodes over sockets. */
@@ -142,6 +150,19 @@ export interface FaucetConfig {
    */
   rateLimits: Record<ProofTier, number>;
   dailyBudgetSats: number;
+  /**
+   * What a captcha-path caller may ask for. Anything above `publicMaxSats`
+   * needs a code or a signed-in session; anything above `turnstileAboveSats`
+   * needs Turnstile, because a proof of work is only CPU and scales with it.
+   */
+  amounts: {
+    publicMaxSats: number;
+    turnstileAboveSats: number;
+    /** 0: no per-IP amount ceiling, only the hourly request count. */
+    ipDailySats: number;
+    /** Most of `dailyBudgetSats` asks above `turnstileAboveSats` may take. */
+    largeDailySats: number;
+  };
   minBalanceSats: number;
   poolMin: number;
   poolTarget: number;
@@ -406,6 +427,44 @@ function adminTokenSha256(raw: string | undefined): string {
   return value;
 }
 
+/**
+ * Mainnet pays real money, so there a captcha never buys more than the
+ * standard payout, whatever the env says.
+ */
+function amountLimits(
+  env: Env,
+  network: NetworkName,
+  payoutSats: number,
+  maxPerRequestSats: number,
+  dailyBudgetSats: number,
+): FaucetConfig["amounts"] {
+  const publicMaxSats =
+    network === "testnet" ? int("PUBLIC_MAX_SATS", env.PUBLIC_MAX_SATS, payoutSats) : payoutSats;
+  const turnstileAboveSats = Math.min(
+    publicMaxSats,
+    int("TURNSTILE_ABOVE_SATS", env.TURNSTILE_ABOVE_SATS, publicMaxSats),
+  );
+  if (publicMaxSats < payoutSats || publicMaxSats > maxPerRequestSats) {
+    throw new Error("config PUBLIC_MAX_SATS must be between PAYOUT_SATS and KEY_MAX_PER_REQUEST_SATS");
+  }
+  if (turnstileAboveSats < payoutSats) {
+    throw new Error("config TURNSTILE_ABOVE_SATS must be at least PAYOUT_SATS");
+  }
+  const ipDailySats = int("IP_DAILY_SATS", env.IP_DAILY_SATS, 0);
+  if (ipDailySats > 0 && ipDailySats < publicMaxSats) {
+    throw new Error("config IP_DAILY_SATS must be 0 or at least PUBLIC_MAX_SATS");
+  }
+  return {
+    publicMaxSats,
+    turnstileAboveSats,
+    ipDailySats,
+    largeDailySats: Math.min(
+      dailyBudgetSats,
+      int("LARGE_DAILY_BUDGET_SATS", env.LARGE_DAILY_BUDGET_SATS, dailyBudgetSats),
+    ),
+  };
+}
+
 function networkName(name: string, raw: string): NetworkName {
   if (raw !== "mainnet" && raw !== "testnet") {
     throw new Error(`${name} must be "mainnet" or "testnet", got ${raw}`);
@@ -461,10 +520,19 @@ export function resolveConfig(env: Env): FaucetConfig {
     );
   }
 
+  const payoutSats = int("PAYOUT_SATS", env.PAYOUT_SATS);
+  const dailyBudgetSats = int("DAILY_BUDGET_SATS", env.DAILY_BUDGET_SATS);
+  const maxPerRequestSats = positiveInt(
+    "KEY_MAX_PER_REQUEST_SATS",
+    env.KEY_MAX_PER_REQUEST_SATS,
+    5000 * COIN,
+  );
+
   return {
     network,
     providers: providersFor(network, env),
-    payoutSats: int("PAYOUT_SATS", env.PAYOUT_SATS),
+    payoutSats,
+    amounts: amountLimits(env, network, payoutSats, maxPerRequestSats, dailyBudgetSats),
     rateLimits: {
       soft: int("RATE_LIMIT_PER_HOUR", env.RATE_LIMIT_PER_HOUR, 3),
       turnstile: int(
@@ -474,7 +542,7 @@ export function resolveConfig(env: Env): FaucetConfig {
       ),
       hard: int("RATE_LIMIT_HARD_PER_HOUR", env.RATE_LIMIT_HARD_PER_HOUR, 25),
     },
-    dailyBudgetSats: int("DAILY_BUDGET_SATS", env.DAILY_BUDGET_SATS),
+    dailyBudgetSats,
     minBalanceSats: int("MIN_BALANCE_SATS", env.MIN_BALANCE_SATS, 0),
     poolMin: int("POOL_MIN", env.POOL_MIN, 8),
     poolTarget: int("POOL_TARGET", env.POOL_TARGET, 20),
@@ -492,11 +560,7 @@ export function resolveConfig(env: Env): FaucetConfig {
     apiKeys: {
       enabled: network === "testnet",
       adminTokenSha256: adminTokenSha256(env.ADMIN_TOKEN_SHA256),
-      maxPerRequestSats: positiveInt(
-        "KEY_MAX_PER_REQUEST_SATS",
-        env.KEY_MAX_PER_REQUEST_SATS,
-        5000 * COIN,
-      ),
+      maxPerRequestSats,
       reserveSats: int("KEY_RESERVE_SATS", env.KEY_RESERVE_SATS, 0),
     },
     invitations: {
