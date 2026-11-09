@@ -263,3 +263,41 @@ test("an unparseable amount is refused rather than sent as the default", async (
   await expect(page.locator("#coreErrorBox")).toContainText("at least 0.001");
   expect(requests).toEqual([]);
 });
+
+test("a sign-in panel without a login URL hides its link", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success", amountLimits: LIMITS, me: { authenticated: false, providers: [] } });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#signInBox")).toBeVisible();
+  await expect(page.locator("#signInLink")).toBeHidden();
+  await expect(page.locator("#signInDescription")).toHaveText("Enter a code above.");
+});
+
+test("a hidden amount field never sends a prefilled amount", async ({ page }) => {
+  const requests = [];
+  await page.route(`${origin}/**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === "/api/status") {
+      return route.fulfill({ json: { status: "ok", network: "mainnet", balance: 1, blockHeight: 1, coreFaucetAmount: 0.001,
+        turnstileSiteKey: "k", amountLimits: { turnstileAbove: 0.001, publicMax: 0.001, signedInMax: null } } });
+    }
+    if (path === "/api/core-faucet") {
+      requests.push(route.request().postDataJSON());
+      return route.fulfill({ json: { txid: "a".repeat(64), amount: 0.001 } });
+    }
+    return route.fulfill({
+      contentType: path.endsWith(".mjs") ? "text/javascript" : "text/html",
+      body: await readFile(new URL(`../../public${path === "/" ? "/index.html" : path}`, import.meta.url)),
+    });
+  });
+  await page.route("https://challenges.cloudflare.com/**", (route) => route.abort());
+  await page.addInitScript(() => {
+    window.turnstile = { render: () => "w", remove: () => {}, execute: (_id, opts) => opts.callback("web-token") };
+  });
+  await page.goto(`${origin}/?amount=5`);
+  await expect(page.locator("#statusBar")).toContainText("Faucets online");
+  await expect(page.locator("#amountRow")).toBeHidden();
+  await page.locator("#addressInput").fill("XTestRecipient");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "XTestRecipient", turnstileToken: "web-token" }]);
+});

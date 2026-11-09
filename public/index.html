@@ -223,6 +223,9 @@
             margin-top: 12px;
             text-decoration: none;
         }
+        .sign-in-box a.btn-secondary[hidden] {
+            display: none;
+        }
         .code-row input {
             width: 100%;
             padding: 9px 15px;
@@ -1722,7 +1725,10 @@
                 }
                 // Where a captcha buys only the standard payout and nobody can
                 // sign in (mainnet), there is nothing to choose.
-                $("amountRow").hidden = !(data.accountUrl || choosesAmount);
+                const showAmount = !!(data.accountUrl || choosesAmount);
+                $("amountRow").hidden = !showAmount;
+                // A `?amount=` link must not send a value nobody can see.
+                if (!showAmount) $("amountInput").value = "";
                 if (data.accountUrl) void loadSession();
                 else updateAmountHint();
                 const corePresentation = applyNetworkPresentation("core", data.network);
