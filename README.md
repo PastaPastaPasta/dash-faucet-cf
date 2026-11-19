@@ -354,9 +354,10 @@ a session sealed before sign-in times were recorded has no admin rights at
 all. Every key an admin mints (at `/admin` or with the admin token) expires
 after `ADMIN_KEY_TTL_DAYS` (90). On each start the Treasury caps live admin
 keys at that lifetime: a key with no expiry, or a later one than the setting
-allows, gets `now + ADMIN_KEY_TTL_DAYS`, so lowering the setting shortens
-every admin key at once. Revoke a key to end it sooner; mint a new one to
-extend it.
+allows, gets `now + ADMIN_KEY_TTL_DAYS`. Lowering the setting therefore
+shortens only keys with more time left than the new lifetime, counted from
+that start; a key closer to its expiry keeps it. Revoke a key to end it
+sooner; mint a new one to extend it.
 
 ### Codes
 
