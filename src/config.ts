@@ -101,6 +101,10 @@ export interface Env {
   SELF_SERVE_KEY_TTL_DAYS?: string;
   /** Active self-serve keys one person may hold. */
   MAX_KEYS_PER_USER?: string;
+  /** Lifetime of an admin-minted API key, in days (default 90). Never unlimited. */
+  ADMIN_KEY_TTL_DAYS?: string;
+  /** How long after sign-in a session keeps admin rights, in hours (default 8). */
+  ADMIN_SESSION_TTL_HOURS?: string;
 
   // secrets
   FAUCET_WIF: string;
@@ -133,6 +137,10 @@ export interface AuthConfig {
   /** 0: self-serve keys never expire. */
   keyTtlMs: number;
   maxKeysPerUser: number;
+  /** Always positive: admin-minted keys always expire. */
+  adminKeyTtlMs: number;
+  /** Admin rights last this long after sign-in, within the session's own lifetime. */
+  adminSessionTtlMs: number;
 }
 
 export interface FaucetConfig {
@@ -402,6 +410,8 @@ function authConfig(env: Env, network: NetworkName): AuthConfig {
     github: usable ? oauthClient(env.GITHUB_CLIENT_ID, env.GITHUB_CLIENT_SECRET) : null,
     keyTtlMs: int("SELF_SERVE_KEY_TTL_DAYS", env.SELF_SERVE_KEY_TTL_DAYS, 0) * 86_400_000,
     maxKeysPerUser: positiveInt("MAX_KEYS_PER_USER", env.MAX_KEYS_PER_USER, 5),
+    adminKeyTtlMs: positiveInt("ADMIN_KEY_TTL_DAYS", env.ADMIN_KEY_TTL_DAYS, 90) * 86_400_000,
+    adminSessionTtlMs: positiveInt("ADMIN_SESSION_TTL_HOURS", env.ADMIN_SESSION_TTL_HOURS, 8) * 3_600_000,
   };
 }
 

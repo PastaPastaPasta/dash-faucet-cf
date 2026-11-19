@@ -17,6 +17,7 @@ import {
 import {
   type Provider,
   type Session,
+  adminExpiresAt,
   adminHandle,
   checkCsrf,
   clearSessionCookie,
@@ -170,6 +171,7 @@ async function handleMe(request: Request, cfg: FaucetConfig, env: Env, path: str
         login: session.login ?? null,
       },
       admin: isAdminSession(session, auth),
+      adminExpiresAt: adminExpiresAt(session, auth),
       csrf: csrfToken(session, auth),
       sessionExpiresAt: session.exp,
     });
@@ -209,7 +211,7 @@ async function handleMe(request: Request, cfg: FaucetConfig, env: Env, path: str
 
 function ownKeyRequest(session: Session, cfg: FaucetConfig) {
   // Only the identity crosses into the Durable Object, not the session's sid.
-  const { sid: _sid, exp: _exp, ...who } = session;
+  const { sid: _sid, iat: _iat, exp: _exp, ...who } = session;
   return {
     who,
     maxActive: cfg.auth.maxKeysPerUser,
@@ -264,7 +266,7 @@ async function handleAdmin(request: Request, cfg: FaucetConfig, env: Env, path: 
   if (!admin.ok) return admin.response;
 
   if (path === "/api/admin/keys" || path.startsWith("/api/admin/keys/")) {
-    return handleAdminKeys(request, env, path, admin.actor);
+    return handleAdminKeys(request, cfg, env, path, admin.actor);
   }
   if (path === "/api/admin/codes" || path.startsWith("/api/admin/codes/")) {
     return handleAdminCodes(request, cfg, env, path, admin.actor);
@@ -272,8 +274,14 @@ async function handleAdmin(request: Request, cfg: FaucetConfig, env: Env, path: 
   return errorJson(404, "Not found");
 }
 
-/** Mint (POST), list (GET) and revoke (DELETE …/<id>) any API key. */
-async function handleAdminKeys(request: Request, env: Env, path: string, actor: string): Promise<Response> {
+/** Mint (POST), list (GET) and revoke (DELETE …/<id>) any API key. Minted keys expire after `ADMIN_KEY_TTL_DAYS`. */
+async function handleAdminKeys(
+  request: Request,
+  cfg: FaucetConfig,
+  env: Env,
+  path: string,
+  actor: string,
+): Promise<Response> {
   const store = treasury(env);
   if (path === "/api/admin/keys" && request.method === "GET") {
     return noStore({ keys: await store.listApiKeys() });
@@ -295,6 +303,7 @@ async function handleAdminKeys(request: Request, env: Env, path: string, actor: 
       label: name,
       tier: tier as KeyTier,
       perDay: perDay as number | null | undefined,
+      expiresAt: Date.now() + cfg.auth.adminKeyTtlMs,
       createdBy: actor,
     });
     return noStore(created, 201);

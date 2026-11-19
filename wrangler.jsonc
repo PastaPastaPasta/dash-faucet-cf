@@ -138,6 +138,11 @@
         // 0: self-serve keys never expire; people revoke them when done.
         "SELF_SERVE_KEY_TTL_DAYS": "0",
         "MAX_KEYS_PER_USER": "5",
+        // Admin-minted keys always expire; on deploy, live admin keys with no
+        // expiry get one this far out. Admin rights lapse this many hours
+        // after sign-in, even while the 12 h session lasts.
+        "ADMIN_KEY_TTL_DAYS": "90",
+        "ADMIN_SESSION_TTL_HOURS": "8",
         "DRY_RUN": "0"
       }
     },

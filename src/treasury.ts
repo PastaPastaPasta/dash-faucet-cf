@@ -170,7 +170,7 @@ export interface ApiKeyInfo {
   id: string;
   label: string;
   tier: KeyTier;
-  /** `google:<sub>` / `github:<id>` for self-serve keys; null for admin-minted ones. */
+  /** `google:<sub>` / `github:<id>` for self-serve keys; null for admin-minted ones, which always expire. */
   owner: string | null;
   ownerEmail: string | null;
   expiresAt: number | null;
@@ -509,7 +509,10 @@ export class Treasury extends DurableObject<Env> {
       this.ctx.storage.sql.exec(`ALTER TABLE ip_hits ADD COLUMN satoshis INTEGER NOT NULL DEFAULT 0`);
     }
     this.backfillInvitationAmounts();
-    migrateAccounts(this.ctx.storage.sql, { selfServeKeysExpire: this.config.auth.keyTtlMs > 0 });
+    migrateAccounts(this.ctx.storage.sql, {
+      selfServeKeysExpire: this.config.auth.keyTtlMs > 0,
+      adminKeyTtlMs: this.config.auth.adminKeyTtlMs,
+    });
   }
 
   /**
@@ -1270,7 +1273,8 @@ export class Treasury extends DurableObject<Env> {
     const perDay = input.perDay === undefined ? DEFAULT_PER_DAY[input.tier] : input.perDay;
     const now = Date.now();
     const owner = input.owner?.id ?? null;
-    const expiresAt = input.expiresAt ?? null;
+    const adminCap = now + this.config.auth.adminKeyTtlMs;
+    const expiresAt = owner === null ? Math.min(input.expiresAt ?? adminCap, adminCap) : (input.expiresAt ?? null);
     const createdBy = input.createdBy ?? owner;
     this.ctx.storage.sql.exec(
       `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at, created_by)

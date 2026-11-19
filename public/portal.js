@@ -133,7 +133,7 @@ const Portal = (() => {
     fill(
       container,
       el("span", { class: "who-name", title: who }, who),
-      me.admin && here !== "/admin" ? el("a", { href: "/admin" }, "Admin") : null,
+      typeof me.adminExpiresAt === "number" && here !== "/admin" ? el("a", { href: "/admin" }, "Admin") : null,
       here !== "/keys" ? el("a", { href: "/keys" }, "My keys") : null,
       el("button", {
         class: "ghost small",

@@ -348,6 +348,17 @@ so a renamed account cannot inherit access. At `/admin` they manage codes, list 
 `mn` or service keys. The admin bearer token still works for every
 `/api/admin/*` route.
 
+Admin rights expire. A session carries admin rights for
+`ADMIN_SESSION_TTL_HOURS` (8) after sign-in, then the person signs in again;
+a session sealed before sign-in times were recorded has no admin rights at
+all. Every key an admin mints (at `/admin` or with the admin token) expires
+after `ADMIN_KEY_TTL_DAYS` (90). On each start the Treasury caps live admin
+keys at that lifetime: a key with no expiry, or a later one than the setting
+allows, gets `now + ADMIN_KEY_TTL_DAYS`. Lowering the setting therefore
+shortens only keys with more time left than the new lifetime, counted from
+that start; a key closer to its expiry keeps it. Revoke a key to end it
+sooner; mint a new one to extend it.
+
 ### Codes
 
 `POST /api/core-faucet` accepts `"code"` (or `"promoCode"`, the Python
@@ -577,6 +588,8 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `AUTH_EMAIL_DOMAIN` / `AUTH_GITHUB_ORG` | Who may sign in (default `dash.org` / `dashpay`) |
 | `AUTH_ADMINS` | Comma-separated admins: `google:<email>`, `google:@<domain>`, `github:<numeric id>` |
 | `SELF_SERVE_KEY_TTL_DAYS` / `MAX_KEYS_PER_USER` | Self-serve key lifetime in days (0, never expire) and per-person cap (5) |
+| `ADMIN_KEY_TTL_DAYS` | Lifetime of admin-minted keys in days (default 90, at least 1); also caps existing admin keys |
+| `ADMIN_SESSION_TTL_HOURS` | Hours after sign-in that a session keeps admin rights (default 8, at least 1) |
 | `SESSION_SECRET` | **secret**, ≥32 characters. Signs session and OAuth-state cookies; rotating it signs everyone out |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **secrets**. Google OAuth web client; redirect URI `AUTH_ORIGIN/auth/google/callback` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | **secrets**. GitHub OAuth app; callback `AUTH_ORIGIN/auth/github/callback` |
