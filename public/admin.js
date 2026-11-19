@@ -196,6 +196,7 @@
         el("td", {}, key.payouts ? `${dash(key.paidSats)} (${key.payouts})` : "—"),
         el("td", {},
           state === "active" ? pill("active", "ok") : pill(state, "off"),
+          state === "active" && key.expiresAt ? el("span", { class: "sub" }, `until ${date(key.expiresAt)}`) : null,
           key.revokedBy
             ? el("span", { class: "sub" }, key.revokedBy === key.owner ? "by its owner" : `by ${actorName(key.revokedBy)}`)
             : null),
@@ -231,6 +232,10 @@
     Portal.renderWho($("who"));
     if (!me.authenticated) {
       Portal.renderSignIn($("signIn"), "/admin", "Faucet admin", "Sign in to manage codes and API keys.");
+      return;
+    }
+    if (!me.admin && typeof me.adminExpiresAt === "number") {
+      Portal.renderSignIn($("signIn"), "/admin", "Admin sign-in expired", "Admin rights last a few hours after signing in. Sign in again to continue.");
       return;
     }
     if (!me.admin) {

@@ -2,8 +2,8 @@ import { SELF, env, runInDurableObject } from "cloudflare:test";
 import DashKeys from "dashkeys";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migrateAccounts } from "../../src/accounts";
-import { b64url } from "../../src/auth";
-import { TREASURY_ID } from "../../src/treasury";
+import { b64url, seal } from "../../src/auth";
+import { TREASURY_ID, type Treasury } from "../../src/treasury";
 import { FakeChain } from "./fakechain";
 import { RECIPIENT } from "../fixtures";
 
@@ -153,6 +153,20 @@ async function call(cookie: string, method: string, path: string, body?: unknown
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, any> };
+}
+
+const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const SESSION_SECRET = "test-session-secret-0123456789abcdef";
+
+/** A session cookie sealed directly, to set its sign-in time. */
+function sessionCookie(fields: Record<string, unknown>): string {
+  const session = {
+    id: "google:g-admin", provider: "google", email: "admin@dash.org", name: "Admin", sid: "forged-sid",
+    exp: Date.now() + 12 * HOUR,
+    ...fields,
+  };
+  return `__Host-faucet_session=${seal(SESSION_SECRET, "session", session)}`;
 }
 
 const dashOrg = (email = "dev@dash.org", sub = "g-1") => ({ sub, email, email_verified: true, hd: "dash.org", name: "Dev" });
@@ -310,7 +324,7 @@ describe("self-serve keys", () => {
          VALUES (?, ?, 'old', 'trusted', NULL, 0, 'google:1', ?)`,
         "d".repeat(64), "d".repeat(12), Date.now() - 1000,
       );
-      migrateAccounts(sql, { selfServeKeysExpire: false });
+      migrateAccounts(sql, { selfServeKeysExpire: false, adminKeyTtlMs: DAY * 90 });
       return sql
         .exec<{ id: string; expires_at: number | null }>(`SELECT id, expires_at FROM api_keys ORDER BY id`)
         .toArray();
@@ -607,6 +621,104 @@ describe("admin", () => {
     ]) {
       expect((await call(admin, "POST", "/api/admin/codes", body)).status).toBe(400);
     }
+  });
+
+  it("mints keys that expire after ADMIN_KEY_TTL_DAYS, by session or token", async () => {
+    const admin = await adminCookie();
+    const before = Date.now();
+    const bySession = await call(admin, "POST", "/api/admin/keys", { label: "svc", tier: "trusted" });
+    const byToken = await SELF.fetch(`${ORIGIN}/api/admin/keys`, {
+      method: "POST",
+      headers: { Authorization: "Bearer test-admin-token", "content-type": "application/json" },
+      body: JSON.stringify({ label: "svc2", tier: "mn" }),
+    });
+    const after = Date.now();
+    for (const key of [bySession.body.key, ((await byToken.json()) as any).key]) {
+      expect(key.expiresAt).toBeGreaterThanOrEqual(before + 90 * DAY);
+      expect(key.expiresAt).toBeLessThanOrEqual(after + 90 * DAY);
+    }
+
+    // The Treasury itself never stores an owner-less key past the cap.
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const treasury = stub as unknown as Pick<Treasury, "createApiKey">;
+    const direct = [
+      (await treasury.createApiKey({ label: "bare", tier: "trusted" })).key.expiresAt,
+      (await treasury.createApiKey({ label: "far", tier: "trusted", expiresAt: Date.now() + 999 * DAY })).key.expiresAt,
+    ];
+    for (const expiresAt of direct) expect(expiresAt).toBeLessThanOrEqual(Date.now() + 90 * DAY);
+
+    // Past its expiry the key stops paying.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE api_keys SET expires_at = ? WHERE id = ?`, Date.now() - 1, bySession.body.key.id);
+    });
+    const pay = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bySession.body.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ address: RECIPIENT.testnet.address }),
+    });
+    expect(pay.status).toBe(401);
+  });
+
+  it("lapses ADMIN_SESSION_TTL_HOURS after sign-in, and never for an old cookie", async () => {
+    const now = Date.now();
+    const freshCookie = sessionCookie({ iat: now - HOUR });
+    expect((await me(freshCookie)).admin).toBe(true);
+    expect((await call(freshCookie, "GET", "/api/admin/codes")).status).toBe(200);
+
+    const stale = sessionCookie({ iat: now - 9 * HOUR, exp: now + 3 * HOUR });
+    const staleMe = await me(stale);
+    expect(staleMe).toMatchObject({ authenticated: true, admin: false, adminExpiresAt: now - HOUR });
+    expect((await call(stale, "GET", "/api/admin/codes")).status).toBe(401);
+    expect((await call(stale, "POST", "/api/admin/keys", { label: "x", tier: "mn" })).status).toBe(401);
+    // Still signed in: their own keys keep working.
+    expect((await call(stale, "GET", "/api/me/keys")).status).toBe(200);
+
+    // Sealed before sign-in times existed: no admin rights at all.
+    const legacy = sessionCookie({});
+    expect(await me(legacy)).toMatchObject({ admin: false, adminExpiresAt: 0 });
+    expect((await call(legacy, "GET", "/api/admin/keys")).status).toBe(401);
+
+    // Not an admin identity: nothing to expire.
+    const dev = sessionCookie({ id: "google:g-1", email: "dev@dash.org", iat: now });
+    expect(await me(dev)).toMatchObject({ admin: false, adminExpiresAt: null });
+  });
+
+  it("caps live admin keys at the admin lifetime on migration", async () => {
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const now = Date.now();
+    const rows = await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const insert = (tag: string, owner: string | null, expires: number | null, revoked: number | null) =>
+        sql.exec(
+          `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at, revoked_at)
+           VALUES (?, ?, ?, 'trusted', NULL, 0, ?, ?, ?)`,
+          tag.repeat(64), tag.repeat(12), tag, owner, expires, revoked,
+        );
+      insert("a", null, null, null);
+      insert("b", null, now + 365 * DAY, null);
+      insert("c", null, now + DAY, null);
+      insert("d", null, null, 5);
+      insert("e", "google:1", null, null);
+      migrateAccounts(sql, { selfServeKeysExpire: false, adminKeyTtlMs: 30 * DAY, now });
+      const first = sql
+        .exec<{ label: string; expires_at: number | null }>(`SELECT label, expires_at FROM api_keys ORDER BY label`)
+        .toArray();
+      // A start a day later must not push anything out.
+      migrateAccounts(sql, { selfServeKeysExpire: false, adminKeyTtlMs: 30 * DAY, now: now + DAY });
+      const second = sql
+        .exec<{ label: string; expires_at: number | null }>(`SELECT label, expires_at FROM api_keys ORDER BY label`)
+        .toArray();
+      return { first, second };
+    });
+    const by = Object.fromEntries(rows.first.map((r) => [r.label, r.expires_at]));
+    // No expiry and too-late expiry both land at now + 30 days.
+    expect(by.a).toBe(now + 30 * DAY);
+    expect(by.b).toBe(now + 30 * DAY);
+    expect(by.c).toBe(now + DAY);
+    // Revoked admin keys and self-serve keys are not admin-key business.
+    expect(by.d).toBeNull();
+    expect(by.e).toBeNull();
+    expect(rows.second).toEqual(rows.first);
   });
 
   it("still accepts the operator's bearer token", async () => {

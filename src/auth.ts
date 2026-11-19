@@ -29,6 +29,8 @@ const PROVIDERS: readonly Provider[] = ["google", "github"];
 export interface Session extends Identity {
   /** Random per login; the CSRF token is derived from it. */
   sid: string;
+  /** Sign-in time; admin rights lapse `adminSessionTtlMs` after it. */
+  iat: number;
   exp: number;
 }
 
@@ -135,12 +137,32 @@ export function adminHandle(session: Session): string {
   return session.provider === "google" ? `google:${session.email.toLowerCase()}` : session.id;
 }
 
-export function isAdminSession(session: Session, cfg: AuthConfig): boolean {
+/** Whether `AUTH_ADMINS` names this identity, however old the session. */
+export function isAdminIdentity(session: Session, cfg: AuthConfig): boolean {
   if (cfg.admins.has(adminHandle(session))) return true;
   // `google:@dash.org`: every Google account in that Workspace. The address
   // was checked against the verified ID token's `hd` at login.
   const at = session.email.lastIndexOf("@");
   return session.provider === "google" && at > 0 && cfg.admins.has(`google:${session.email.slice(at).toLowerCase()}`);
+}
+
+/**
+ * When this session's admin rights end, or null if it never had any. A
+ * session sealed before sign-in times were recorded has no `iat` and is
+ * treated as already lapsed.
+ */
+export function adminExpiresAt(session: Session, cfg: AuthConfig): number | null {
+  if (!isAdminIdentity(session, cfg)) return null;
+  if (typeof session.iat !== "number") return 0;
+  return Math.min(session.iat + cfg.adminSessionTtlMs, session.exp);
+}
+
+/** Slack for a login and the next request landing on machines whose clocks differ. */
+const CLOCK_SKEW_MS = 60_000;
+
+export function isAdminSession(session: Session, cfg: AuthConfig, now = Date.now()): boolean {
+  const until = adminExpiresAt(session, cfg);
+  return until !== null && session.iat <= now + CLOCK_SKEW_MS && now < until;
 }
 
 /** The browser says this request comes from our own pages. */
@@ -279,10 +301,12 @@ export function loginResponse(outcome: LoginOutcome, cfg: AuthConfig): Response 
   if (!outcome.ok) {
     return redirect(`${outcome.returnTo}?error=${encodeURIComponent(outcome.error)}`, [clearState]);
   }
+  const now = Date.now();
   const session: Session = {
     ...outcome.identity,
     sid: randomToken(16),
-    exp: Date.now() + SESSION_TTL_MS,
+    iat: now,
+    exp: now + SESSION_TTL_MS,
   };
   return redirect(outcome.returnTo, [
     clearState,
