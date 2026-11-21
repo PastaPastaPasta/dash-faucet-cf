@@ -57,6 +57,7 @@
         /** `{ email, csrf }` when signed in on this host; such requests skip the captcha. */
         let session = null;
         let signInUrl = "";
+        let canSignIn = false;
         /** Set once the server refused proof of work for this amount. */
         let needTurnstile = false;
 
@@ -152,7 +153,7 @@
                 const ceiling = amountLimits.publicMax > defaultAmount
                     ? `Up to ${formatAmount(amountLimits.publicMax)} ${coinName} per request`
                     : `${formatAmount(defaultAmount)} ${coinName} per request`;
-                setAmountHint(`${ceiling}; more with a dash.org sign-in or a code.`);
+                setAmountHint(`${ceiling}; more with ${canSignIn ? "a dash.org sign-in or " : ""}a code.`);
             }
         }
 
@@ -897,11 +898,11 @@
                     amountLimits = data.amountLimits || null;
                     const publicMax = amountLimits?.publicMax;
                     const choosesAmount = publicMax > data.coreFaucetAmount;
-                    $("coreFaucetAmountDisplay").textContent = choosesAmount ? `up to ${publicMax}` : data.coreFaucetAmount;
                     $("amountInput").placeholder = String(data.coreFaucetAmount);
                     // Where a captcha buys only the standard payout and nobody can
                     // sign in (mainnet), there is nothing to choose.
-                    const showAmount = !!(data.accountUrl || choosesAmount);
+                    canSignIn = !!data.accountUrl;
+                    const showAmount = canSignIn || choosesAmount;
                     $("amountRow").hidden = !showAmount;
                     // A `?amount=` link must not send a value nobody can see.
                     if (!showAmount) $("amountInput").value = "";
