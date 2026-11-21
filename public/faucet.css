@@ -160,3 +160,5 @@ body > main { width: 100%; }
 .sign-in-box { margin-top: 12px; }
 .sent-amount { overflow-wrap: anywhere; margin-bottom: 0; }
 @media(max-width:480px) { .send-row > .amount-field { flex: 1 1 100%; } }
+/* iOS zooms into inputs with text under 16px. */
+@media(max-width:640px) { #coreFaucetCard .dh-input { font-size: 16px; } }
