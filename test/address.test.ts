@@ -12,4 +12,10 @@ describe('browser receiving address checks', () => {
     expect(await addressError('yNotARealAddress', 'testnet')).toContain('34 characters');
     expect(await addressError('', 'testnet')).toContain('Testnet');
   });
+  it('accepts pay-to-public-key-hash only, as the Worker pays', async () => {
+    expect(await addressError('XbKzysY6LYGbsGwNG8B7K1BRoA1ffLodAT', 'mainnet')).toBe('');
+    expect(await addressError('8eWmb1WDYYfnviGcfaTBZjftxGpCwriip5', 'testnet')).toContain('starting with y');
+    expect(await addressError('93m4hAxmCcGXMfnjVPfNhWSjb69sBgdWN2', 'testnet')).toContain('starting with y');
+    expect(await addressError('7SVxdgcMR1HAUQrMbKTE7MrY4m3NmuyV5U', 'mainnet')).toContain('starting with X');
+  });
 });

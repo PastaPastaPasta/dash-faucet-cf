@@ -147,6 +147,9 @@
           el("td", { class: "mono" }, el("a", { href: EXPLORER + r.txid, target: "_blank", rel: "noopener noreferrer" }, `${r.txid.slice(0, 12)}…`)),
         ),
       );
+      for (const row of rows) [...row.children].forEach((cell, i) => {
+        cell.dataset.label = ["When", "Address", "Amount", "Transaction"][i];
+      });
       fill($("detailRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 4, class: "dh-empty dh-empty--inline" }, "Nobody has used this code yet.")));
       $("detailDialog").showModal();
     });

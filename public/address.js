@@ -1,10 +1,10 @@
 const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const P2PKH = { mainnet: { label: 'Mainnet', prefix: 'X', version: 76 }, testnet: { label: 'Testnet', prefix: 'y', version: 140 } };
 
 export async function addressError(address, network) {
-    const label = network === 'mainnet' ? 'Mainnet' : 'Testnet';
-    const prefix = network === 'mainnet' ? /^[X7]/ : /^[y8]/;
-    if (!prefix.test(address) || !/^[1-9A-HJ-NP-Za-km-z]{34}$/.test(address)) {
-        return `Use a ${label} Core address starting with ${network === 'mainnet' ? 'X or 7' : 'y or 8'} (34 characters).`;
+    const { label, prefix, version } = P2PKH[network === 'mainnet' ? 'mainnet' : 'testnet'];
+    if (!address.startsWith(prefix) || !/^[1-9A-HJ-NP-Za-km-z]{34}$/.test(address)) {
+        return `Use a ${label} Core address starting with ${prefix} (34 characters).`;
     }
     let number = 0n;
     for (const char of address) number = number * 58n + BigInt(alphabet.indexOf(char));
@@ -13,8 +13,7 @@ export async function addressError(address, network) {
         bytes[i] = Number(number & 255n);
         number >>= 8n;
     }
-    const versions = network === 'mainnet' ? [76, 16] : [140, 19];
-    if (number !== 0n || !versions.includes(bytes[0])) return `Use an address from ${label}.`;
+    if (number !== 0n || bytes[0] !== version) return `Use a ${label} address starting with ${prefix}.`;
     const first = await crypto.subtle.digest('SHA-256', bytes.slice(0, 21));
     const checksum = new Uint8Array(await crypto.subtle.digest('SHA-256', first));
     return bytes.slice(21).every((byte, i) => byte === checksum[i])

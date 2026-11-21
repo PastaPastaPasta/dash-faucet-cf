@@ -12,7 +12,7 @@ async function fillCode(page, code) {
 
 // Exercise the shipped page with deterministic CAPTCHA providers and payouts.
 // Worker tests separately solve and verify real CAP challenges and rate tiers.
-async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "", reserve = {}, statusCode = 200, amountLimits, me, headers = [] } = {}) {
+async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "", reserve = {}, statusCode = 200, amountLimits, me, meResponse, headers = [], invitationResponse, blockShell = false } = {}) {
   const requests = [];
   const startsUnavailable = statusResponses.length > 0;
   await page.route(`${origin}/**`, async (route) => {
@@ -32,6 +32,7 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
       } });
     }
     if (path === "/api/me") {
+      if (meResponse) return meResponse(route);
       return route.fulfill({ json: me || { authenticated: false, providers: ["google"], loginOrigin: "https://login.test" } });
     }
     if (path === "/api/core-faucet") {
@@ -39,6 +40,8 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
       headers.push(route.request().headers());
       return route.fulfill(responses.shift() || { json: { txid: "a".repeat(64), amount: 1 } });
     }
+    if (path === "/api/invitation-faucet" && invitationResponse) return route.fulfill(invitationResponse());
+    if (blockShell && path === "/dashhq/dashhq-shell.js") return route.abort();
     return route.fulfill({
       contentType: /\.m?js$/.test(path) ? "text/javascript" : path.endsWith(".css") ? "text/css" : path.endsWith(".woff2") ? "font/woff2" : "text/html",
       body: await readFile(new URL(`../../public${path === "/" ? "/index.html" : path === "/invitations" ? "/invitations.html" : path}`, import.meta.url)),
@@ -264,6 +267,10 @@ test("keeps validation quiet until blur and rejects off-origin returns", async (
   await page.locator('#addressInput').blur();
   await expect(page.locator('#addressValidation')).toContainText('Testnet Core address');
   await expect(page.locator('#bridgeReturn')).toBeHidden();
+  await page.locator('#addressInput').fill(ADDRESS);
+  await page.locator('#coreFaucetBtn').click();
+  await expect(page.locator('#coreFaucetCard')).toHaveClass(/success/);
+  await expect(page.locator('#bridgeReturn')).toBeHidden();
 });
 
 
@@ -296,8 +303,8 @@ test("shows an amber request action, invitation stock and both reserves before i
   expect(requests).toEqual([]);
 });
 
-test("submitting with unknown availability gives a recovery message without requesting funds", async ({ page }) => {
-  const requests = await openFaucet(page, { statusResponses: [{ status: 503, json: {} }] });
+test("submitting with unknown availability rechecks status and refuses only if it still fails", async ({ page }) => {
+  const requests = await openFaucet(page, { statusResponses: [{ status: 503, json: {} }, { status: 503, json: {} }] });
   await expect(page.locator('#statusBar')).toContainText('Availability unknown');
   await page.locator('#addressInput').fill('yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs');
   await expect(page.locator('#coreFaucetBtn')).toBeEnabled();
@@ -306,13 +313,23 @@ test("submitting with unknown availability gives a recovery message without requ
   expect(requests).toEqual([]);
 });
 
+test("submitting after a failed status check sends once a recheck succeeds", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", statusResponses: [{ status: 503, json: {} }] });
+  await expect(page.locator('#statusBar')).toContainText('Availability unknown');
+  await page.locator('#addressInput').fill(ADDRESS);
+  await page.locator('#coreFaucetBtn').click();
+  await expect(page.locator('#coreFaucetCard')).toHaveClass(/success/);
+  await expect(page.locator('#statusBar')).toContainText('Faucet online');
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token" }]);
+});
+
 for (const [balance, expectedState] of [[1000, "good"], [999.99999999, "warn"], [0, "warn"]]) {
   test(`reserve coverage uses the daily budget at balance ${balance}`, async ({ page }) => {
     await openFaucet(page, { reserve: { balance, dailyBudgetSats: 100_000_000_000 } });
     await expect(page.locator("#coreReserve")).toHaveAttribute("data-state", expectedState);
     await expect(page.locator("#coreReserveCoverage")).toContainText("1,000 tDASH/day");
-    await expect(page.locator("#invitationReserve")).toHaveAttribute("data-state", "unknown");
-    await expect(page.locator("#invitationReserveCoverage")).toHaveText("Daily payout budget unavailable");
+    await expect(page.locator("#invitationReserve")).toHaveAttribute("data-state", "good");
+    await expect(page.locator("#invitationReserveCoverage")).toHaveText("1 invitation ready now");
   });
 }
 
@@ -506,4 +523,158 @@ test("Enter in the code field submits the request", async ({ page }) => {
   await page.locator("#codeInput").press("Enter");
   await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
   expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", code: "dashcon-26" }]);
+});
+
+test("the browser check accepts only pay-to-public-key-hash addresses", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success" });
+  await expect(page.locator("#addressHint")).toHaveText("A testnet address starts with y.");
+  for (const address of ["8eWmb1WDYYfnviGcfaTBZjftxGpCwriip5", "93m4hAxmCcGXMfnjVPfNhWSjb69sBgdWN2"]) {
+    await page.locator("#addressInput").fill(address);
+    await page.locator("#coreFaucetBtn").click();
+    await expect(page.locator("#addressValidation")).toContainText("starting with y");
+  }
+  expect(requests).toEqual([]);
+});
+
+test("amounts with more than 8 decimals are refused before the label or the captcha", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("1.123456789");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get tDASH");
+  await expect(page.locator("#amountHint")).toContainText("8 decimal places");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("8 decimal places");
+  await page.locator("#amountInput").fill("1.12345678");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 1.12345678 tDASH");
+  expect(requests).toEqual([]);
+});
+
+test("the sent transaction links to an Insight host that exists", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success" });
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  await expect(page.locator("#coreTxid dashhq-hash")).toHaveAttribute("href", `https://insight.testnet.networks.dash.org/insight/tx/${"a".repeat(64)}`);
+});
+
+test("mainnet sends link to mainnet Insight and the status bar names Mainnet", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success", network: "mainnet", reserve: { status: "low_balance" }, statusCode: 503 });
+  await expect(page.locator("#statusBar")).toContainText("Mainnet faucet low balance");
+  await expect(page.locator("#statusBar")).toContainText("Mainnet block: 100");
+  await expect(page.locator("#statusBar")).not.toContainText("Testnet");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  await expect(page.locator("#coreTxid dashhq-hash")).toHaveAttribute("href", `https://insight.dash.org/insight/tx/${"a".repeat(64)}`);
+});
+
+test("the proof-of-work widget never sends the page URL off-site", async ({ page }) => {
+  await openFaucet(page, { query: "?code=voucher-1" });
+  expect(await page.evaluate(() => window.CAP_DISABLE_WIDGET_REF)).toBe(true);
+});
+
+test("a proof of work pays the request it was started for", async ({ page }) => {
+  const requests = await openFaucet(page, { responses: [
+    { status: 429, json: { error: "Rate limit exceeded", requiresHardCaptcha: true } },
+  ] });
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#capTitle")).toHaveText("Hourly limit reached");
+  await page.locator("#addressInput").evaluate((input) => { input.value = "yfJZVF5WhFsVXCvqiR4JqAM3TmEf3LpPfw"; });
+  await page.locator("cap-widget button").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests.map((request) => request.address)).toEqual([ADDRESS, ADDRESS]);
+});
+
+test("editing the payout cancels a pending proof of work", async ({ page }) => {
+  const requests = await openFaucet(page, { responses: [
+    { status: 429, json: { error: "Rate limit exceeded", requiresHardCaptcha: true } },
+  ] });
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#capTitle")).toHaveText("Hourly limit reached");
+  await expect(page.locator("cap-widget")).toHaveCount(1);
+  await page.locator("#addressInput").fill("yfJZVF5WhFsVXCvqiR4JqAM3TmEf3LpPfw");
+  await expect(page.locator("cap-widget")).toHaveCount(0);
+  await expect(page.locator("#hardCapBox")).not.toHaveClass(/visible/);
+  await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
+  expect(requests).toHaveLength(1);
+});
+
+test("editing the payout during the captcha check stops the request", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "stall" });
+  await page.clock.install();
+  await page.locator("#coreFaucetBtn").click();
+  await page.locator("#addressInput").fill("yfJZVF5WhFsVXCvqiR4JqAM3TmEf3LpPfw");
+  await page.clock.fastForward(8100);
+  await expect(page.locator("#coreErrorBox")).toContainText("request changed");
+  await expect(page.locator("cap-widget")).toHaveCount(0);
+  expect(requests).toEqual([]);
+});
+
+test("a pending session check settles before the captcha is chosen", async ({ page }) => {
+  const headers = [];
+  let releaseMe;
+  const meReady = new Promise((resolve) => { releaseMe = resolve; });
+  const requests = await openFaucet(page, {
+    turnstile: "error-callback",
+    amountLimits: LIMITS,
+    headers,
+    meResponse: async (route) => {
+      await meReady;
+      return route.fulfill({ json: { authenticated: true, user: { email: "dev@dash.org" }, csrf: "csrf-1", providers: ["google"], loginOrigin: origin } });
+    },
+  });
+  await page.locator("#coreFaucetBtn").click();
+  releaseMe();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS }]);
+  expect(headers[0]["x-csrf-token"]).toBe("csrf-1");
+  expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+test("a failed session check still allows a public request", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS, meResponse: (route) => route.abort() });
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token" }]);
+});
+
+test("a replay still offers the way back to Bridge for the matching address", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success", query: `?from=bridge&journey=start&address=${ADDRESS}`, responses: [
+    { json: { txid: "b".repeat(64), amount: 1, replay: true } },
+  ] });
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("already received");
+  await expect(page.locator("#bridgeReturn")).toBeVisible();
+});
+
+test("the form still works when the shared shell script does not load", async ({ page }) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  const requests = await openFaucet(page, { turnstile: "success", blockShell: true });
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token" }]);
+  expect(errors).toEqual([]);
+});
+
+test("/invitations offers a retry after a failed status read", async ({ page }) => {
+  await openFaucet(page, { invitation: true, statusResponses: [{ status: 503, json: {} }] });
+  await expect(page.locator("#statusBar")).toContainText("Availability unknown");
+  await page.locator("#retryStatusBtn").click();
+  await expect(page.locator("#statusBar")).toContainText("Mainnet invitations");
+  await expect(page.locator("#invitationCard")).toBeVisible();
+  await expect(page.locator("#retryStatusBtn")).toBeHidden();
+});
+
+test("an expired invitation can no longer be opened or scanned", async ({ page }) => {
+  await page.clock.install();
+  await openFaucet(page, { invitation: true, turnstile: "success", invitationResponse: () => ({ json: {
+    invitation: "dashwallet://invite?code=test", txid: "c".repeat(64), expiresAt: Date.now() + 5000,
+  } }) });
+  await page.locator("#invitationBtn").click();
+  const link = page.locator("#invitationList a");
+  await expect(link).toHaveAttribute("href", "dashwallet://invite?code=test");
+  await expect(page.locator("#invitationList .invitation-qr")).toBeVisible();
+  await page.clock.fastForward(6000);
+  await expect(page.locator("#invitationExpiry")).toContainText("Reservation expired");
+  await expect(link).not.toHaveAttribute("href");
+  await expect(link).toHaveAttribute("aria-disabled", "true");
+  await expect(page.locator("#invitationList .invitation-qr")).toBeHidden();
 });

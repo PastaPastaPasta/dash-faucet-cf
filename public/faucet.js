@@ -11,15 +11,16 @@
                 coin: "tDASH",
                 sent: "tDASH sent",
                 placeholder: "y… address",
-                bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'testnet'}),
             },
             mainnet: {
                 coin: "DASH",
                 sent: "DASH sent",
                 placeholder: "X… address",
-                bridge: dashhq.href('bridge', '/?mode=create&journey=start', {network: 'mainnet'}),
             },
         };
+        const BRIDGE_START = window.dashhq?.href
+            ? dashhq.href("bridge", "/?mode=create&journey=start", { network: "testnet" })
+            : "https://bridge.thepasta.org/?mode=create&journey=start&network=testnet";
 
         /**
          * @cap.js/widget, pinned by exact version and subresource integrity.
@@ -32,6 +33,7 @@
          */
         window.CAP_CUSTOM_WASM_URL = new URL("/vendor/cap_wasm_bg.wasm", location.href).href;
         window.CAP_PAKO_URL = "/vendor/pako_inflate.min.js";
+        window.CAP_DISABLE_WIDGET_REF = true;
         const CAP_WIDGET_SRC = "/vendor/cap.min.js";
         const CAP_WIDGET_SRI =
             "sha384-jRVyBEwWeNAitIjhGT4Es7NBrYJS0WspXxvwUaxOve885Bj6sLTieyvmS85d9WF0";
@@ -49,6 +51,10 @@
         let coreRequestPending = false;
         let statusReady = false;
         let statusFailed = false;
+        let statusPromise = null;
+        let sessionPromise = null;
+        /** The address, amount and code as submitted; an edit clears it. */
+        let pendingRequest = null;
         let lastStatusSuccess;
         let invitationExpiryTimer = null;
         /** From /api/status: `{ turnstileAbove, publicMax, signedInMax }` in DASH. */
@@ -63,7 +69,7 @@
 
         const invitationPage = /\/invitations(?:\.html)?\/?$/.test(location.pathname);
         const entryParams = new URLSearchParams(location.search);
-        const returnUrl = bridgeReturnUrl(entryParams, NETWORK_COPY.testnet.bridge);
+        const returnUrl = bridgeReturnUrl(entryParams, BRIDGE_START);
         let addressTouched = false;
 
         const $ = (id) => document.getElementById(id);
@@ -91,7 +97,8 @@
             const text = input.value.trim();
             if (!text) return null;
             const amount = Number(text);
-            return Number.isFinite(amount) && amount >= 0.001 ? amount : NaN;
+            const sats = amount * 1e8;
+            return Number.isFinite(amount) && amount >= 0.001 && Math.abs(sats - Math.round(sats)) <= 1e-3 ? amount : NaN;
         }
 
         function formatAmount(value) {
@@ -131,7 +138,7 @@
             updateSendLabel();
             $("amountInput").setAttribute("aria-invalid", String(Number.isNaN(amount)));
             if (Number.isNaN(amount)) {
-                setAmountHint("Enter at least 0.001.", "bad");
+                setAmountHint("Enter at least 0.001, with at most 8 decimal places.", "bad");
                 return;
             }
             if (session && !code) {
@@ -249,7 +256,8 @@
             await loadCapWidgetScript();
             await customElements.whenDefined("cap-widget");
 
-            capWidget = document.createElement("cap-widget");
+            const widget = document.createElement("cap-widget");
+            capWidget = widget;
             capWidget.setAttribute("data-cap-api-endpoint", tier === "hard" ? hardCapEndpoint : capEndpoint);
             // Leave one core free so the page stays responsive mid-solve.
             capWidget.setAttribute(
@@ -278,6 +286,7 @@
                 );
             });
             capWidget.addEventListener("solve", (event) => {
+                if (capWidget !== widget) return;
                 capSolving = false;
                 progress.textContent = "Solved — sending…";
                 requestCoreFaucet({ capToken: event.detail.token }, tier);
@@ -381,10 +390,11 @@
             expiry.classList.add("expired");
             const list = $("invitationList");
             list.classList.add("expired");
-            for (const link of list.querySelectorAll("a.btn")) {
+            for (const link of list.querySelectorAll("a")) {
                 link.setAttribute("aria-disabled", "true");
                 link.removeAttribute("href");
             }
+            for (const qr of list.querySelectorAll(".invitation-qr")) qr.hidden = true;
             for (const button of list.querySelectorAll("button")) {
                 button.disabled = true;
             }
@@ -543,27 +553,35 @@
             // stray click or Enter must not discard it and fall back to a fresh
             // Turnstile attempt. The widget's own solve callback is exempt.
             if (coreRequestPending || (capSolving && !proof)) return;
+            if (proof && !pendingRequest) return;
 
-            const address = addressInput.value.trim();
-            addressTouched = true;
-            if (!await validateAddressInput()) {
-                addressInput.focus();
-                return;
+            if (!proof) {
+                if (!statusReady) {
+                    await (statusFailed ? loadStatus() : statusPromise);
+                    if (!statusReady) {
+                        showError("Faucet availability is unknown. Retry faucet status before requesting funds.");
+                        return;
+                    }
+                }
+                addressTouched = true;
+                if (!await validateAddressInput()) {
+                    addressInput.focus();
+                    return;
+                }
+                await sessionPromise;
+                if (coreRequestPending || capSolving) return;
             }
-            if (!statusReady) {
-                showError(statusFailed
-                    ? "Faucet availability is unknown. Retry faucet status before requesting funds."
-                    : "Checking faucet availability. Please try again once the status is ready.");
-                return;
-            }
-            if (coreRequestPending || (capSolving && !proof)) return;
-            const amount = requestedAmount();
+            const { address, amount, code } = proof ? pendingRequest : {
+                address: addressInput.value.trim(),
+                amount: requestedAmount(),
+                code: $("codeInput").value.trim(),
+            };
             if (Number.isNaN(amount)) {
-                showError("Enter an amount of at least 0.001");
+                showError("Enter an amount of at least 0.001, with at most 8 decimal places");
                 $("amountInput").focus();
                 return;
             }
-            const code = $("codeInput").value.trim();
+            if (!proof) pendingRequest = { address, amount, code };
             if (!session && !code && amount !== null && amountLimits && amount > amountLimits.publicMax) {
                 showSignIn(true);
                 showError(`Amounts above ${formatAmount(amountLimits.publicMax)} ${coinName} need a dash.org sign-in or a code.`);
@@ -580,6 +598,8 @@
             btn.disabled = true;
             coreRequestPending = true;
             $("coreErrorBox").classList.remove("visible");
+            $("bridgeReturn").hidden = true;
+            const returnsToBridge = Boolean(returnUrl) && address === entryParams.get("address");
 
             try {
                 let body;
@@ -598,6 +618,7 @@
                     body = { address };
                     try {
                         const turnstileToken = await solveTurnstile("core", strict);
+                        assertUnchanged();
                         if (turnstileToken) body.turnstileToken = turnstileToken;
                         else if (capEndpoint) throw new Error("Using proof of work");
                     } catch (error) {
@@ -606,6 +627,7 @@
                         }
                         if (!capEndpoint) throw error;
                         clearTurnstile("core");
+                        assertUnchanged();
                         await showPowCaptcha("soft", true);
                         return;
                     }
@@ -639,6 +661,7 @@
                     }
                     if (!proof && !strict && capEndpoint && data.requiresProofOfWork) {
                         clearTurnstile("core");
+                        assertUnchanged();
                         await showPowCaptcha("soft", true);
                         return;
                     }
@@ -652,6 +675,7 @@
                         hardCapEndpoint &&
                         (data.requiresHardCaptcha || data.detail?.requiresHardCaptcha);
                     if (escalate) {
+                        assertUnchanged();
                         await showPowCaptcha();
                         return;
                     }
@@ -671,6 +695,7 @@
                 // would be a lie the user can only catch by watching a balance
                 // that never changes.
                 if (data.replay) {
+                    $("bridgeReturn").hidden = !returnsToBridge;
                     throw new Error(
                         `That address already received ${data.amount} ${coinName} today ` +
                             `(tx ${data.txid.slice(0, 12)}\u2026). Use a different address, ` +
@@ -685,7 +710,7 @@
                 const tx = document.createElement("dashhq-hash");
                 tx.setAttribute("value", data.txid);
                 tx.textContent = data.txid;
-                tx.setAttribute("href", `https://${faucetNetwork === "testnet" ? "testnet-insight" : "insight"}.dashevo.org/insight/tx/${encodeURIComponent(data.txid)}`);
+                tx.setAttribute("href", `${faucetNetwork === "testnet" ? "https://insight.testnet.networks.dash.org" : "https://insight.dash.org"}/insight/tx/${encodeURIComponent(data.txid)}`);
                 $("coreTxid").replaceChildren(tx);
                 card.classList.remove("show-config");
                 card.classList.add("show-results", "success");
@@ -693,7 +718,8 @@
                 $("codeInput").value = "";
                 $("amountInput").value = "";
                 updateAmountHint();
-                $("bridgeReturn").hidden = !returnUrl || address !== entryParams.get("address");
+                pendingRequest = null;
+                $("bridgeReturn").hidden = !returnsToBridge;
                 $("sentHeading").scrollIntoView({ block: "center" });
             } catch (error) {
                 showError(error.message);
@@ -701,7 +727,7 @@
                 // empty, so offer a fresh challenge rather than a dead panel.
                 // Dispose again here: a request that threw before reaching the
                 // response never got to burn its widget above.
-                if (proof && !needTurnstile) {
+                if (proof && !needTurnstile && pendingRequest) {
                     disposeCapWidget();
                     await showPowCaptcha(proofTier).catch((err) => showError(err.message));
                 }
@@ -795,6 +821,20 @@
             }
         }
 
+        /** An edit changes the payout, so a check started for the old one stops. */
+        function cancelPendingProof() {
+            if (!pendingRequest) return;
+            pendingRequest = null;
+            if (!capWidget) return;
+            disposeCapWidget();
+            hideHardCaptcha();
+            void validateAddressInput();
+        }
+
+        function assertUnchanged() {
+            if (!pendingRequest) throw new Error("The request changed while it was being checked. Press the button again to send it.");
+        }
+
         function showCoreFaucetConfig() {
             $("coreFaucetCard").classList.add("show-config");
             void validateAddressInput();
@@ -810,6 +850,7 @@
             $("coreErrorBox").classList.remove("visible");
             hideHardCaptcha();
             disposeCapWidget();
+            pendingRequest = null;
             needTurnstile = false;
             updateAmountHint();
             showCoreFaucetConfig();
@@ -824,7 +865,7 @@
             $("pageTitle").textContent = network === "mainnet" ? "Get DASH" : "Get testnet DASH";
             $("pageSubtitle").textContent = network === "mainnet" ? "Mainnet · real DASH. Get DASH to fund an identity on Dash Platform."
                 : "Practice funds with no monetary value.";
-            $("addressHint").textContent = network === "testnet" ? "A testnet address starts with y or 8." : "A mainnet address starts with X or 7.";
+            $("addressHint").textContent = network === "testnet" ? "A testnet address starts with y." : "A mainnet address starts with X.";
             $("configHeading").textContent = "Request funds";
             $("sentHeading").textContent = copy.sent;
             $("addressInput").placeholder = copy.placeholder;
@@ -850,13 +891,18 @@
             $("statusSource").textContent = minutes < 1 ? "Just now" : `${minutes} min ago`;
         }, 30000);
 
-        async function loadStatus() {
+        function loadStatus() {
+            statusPromise = readStatus();
+            return statusPromise;
+        }
+
+        async function readStatus() {
             try {
+                $("retryStatusBtn").hidden = true;
                 if (!invitationPage) {
                     statusReady = false;
                     statusFailed = false;
                     void validateAddressInput();
-                    $("retryStatusBtn").hidden = true;
                 }
                 $("statusBar").textContent = "Checking faucet availability…";
                 const response = await fetch("/api/status", { signal: AbortSignal.timeout(12000) });
@@ -881,12 +927,12 @@
                     const balance = parseFloat(data.balance);
                     // Quote the default tier; fallback PoW uses the soft allowance.
                     const limit = data.rateLimits?.turnstile ?? data.rateLimitPerHour;
+                    const networkName = data.network === "mainnet" ? "Mainnet" : "Testnet";
                     const parts = [
-                        "Faucet online",
+                        data.status === "low_balance" ? `${networkName} faucet low balance` : "Faucet online",
                         `Core rate limit: ${limit}/hour`,
-                        `Testnet block: ${Number(data.blockHeight).toLocaleString()}`,
+                        `${networkName} block: ${Number(data.blockHeight).toLocaleString()}`,
                     ];
-                    if (data.status === "low_balance") parts[0] = "Testnet faucet low balance";
                     $("statusBar").replaceChildren(...metaItems(parts));
 
                     if (data.depositAddress) {
@@ -906,12 +952,12 @@
                     $("amountRow").hidden = !showAmount;
                     // A `?amount=` link must not send a value nobody can see.
                     if (!showAmount) $("amountInput").value = "";
-                    if (data.accountUrl) void loadSession();
-                    else updateAmountHint();
+                    sessionPromise = data.accountUrl ? loadSession() : null;
+                    if (!sessionPromise) updateAmountHint();
                     const corePresentation = applyNetworkPresentation("core", data.network);
                     $("coreTreasuryBalance").textContent = Number.isFinite(balance)
                         ? `≈ ${balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "Unavailable";
-                    $("coreReserveLabel").textContent = `${data.network === "mainnet" ? "Mainnet" : "Testnet"} faucet`;
+                    $("coreReserveLabel").textContent = `${networkName} faucet`;
                     $("coreReserveBalance").textContent = $("coreTreasuryBalance").textContent;
                     $("coreReserveCurrency").textContent = corePresentation.currency;
                     const coreCoverage = reserveCoverage(balance, data.dailyBudgetSats, corePresentation.currency);
@@ -924,9 +970,9 @@
                         $("invitationReserveLabel").textContent = `${invitationNetwork === "mainnet" ? "Mainnet" : "Testnet"} invitations`;
                         $("invitationReserveBalance").textContent = data.invitationError ? "Unavailable" : formatBalance(data.invitationBalance);
                         $("invitationReserveCurrency").textContent = presentation.currency;
-                        const invitationCoverage = reserveCoverage(data.invitationError ? NaN : data.invitationBalance, undefined, presentation.currency);
-                        $("invitationReserve").dataset.state = invitationCoverage.state;
-                        $("invitationReserveCoverage").textContent = invitationCoverage.label;
+                        $("invitationReserve").dataset.state = data.invitationError ? "unknown"
+                            : Number(data.invitationInventory?.available) > 0 ? "good" : "warn";
+                        $("invitationReserveCoverage").textContent = invitationAvailability(data);
                         $("invitationEntryAmount").textContent = data.invitationAmount ?? "Unavailable";
                         $("invitationEntryCurrency").textContent = presentation.currency;
                         const kicker = $("invitationEntry").querySelector(".network-kicker");
@@ -1009,13 +1055,13 @@
                         $(`${prefix}ReserveCoverage`).textContent = "Last known balance · refresh failed";
                     }
                 }
-                $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + "Your address is unchanged. Retry to check before requesting funds.";
-                if (!invitationPage) $("retryStatusBtn").hidden = false;
+                $("statusBar").textContent = "Availability unknown: the status check failed at " + statusTime(new Date()) + ". This does not confirm the faucet is down. " + (lastStatusSuccess ? "Last successful check: " + statusTime(lastStatusSuccess) + ". " : "No successful check in this tab. ") + (invitationPage ? "Retry to check again." : "Your address is unchanged. Retry to check before requesting funds.");
+                $("retryStatusBtn").hidden = false;
             }
         }
 
+        $("retryStatusBtn").addEventListener("click", () => { void loadStatus(); });
         if (!invitationPage) {
-            $("retryStatusBtn").addEventListener("click", loadStatus);
             const receivingAddress = new URLSearchParams(location.search).get("address");
             if (receivingAddress) {
                 $("addressInput").value = receivingAddress;
@@ -1035,6 +1081,7 @@
             }
             for (const id of ["amountInput", "codeInput"]) {
                 $(id).addEventListener("input", () => {
+                    cancelPendingProof();
                     needTurnstile = false;
                     updateAmountHint();
                 });
@@ -1058,7 +1105,10 @@
                 addressTouched = true;
                 void validateAddressInput();
             });
-            $("addressInput").addEventListener("input", () => { void validateAddressInput(); });
+            $("addressInput").addEventListener("input", () => {
+                cancelPendingProof();
+                void validateAddressInput();
+            });
             $("sendMoreBtn").addEventListener("click", resetCoreFaucetCard);
             // Wrapped, not passed directly: the click event would arrive as `proof`.
             $("coreFaucetBtn").addEventListener("click", () => requestCoreFaucet());
