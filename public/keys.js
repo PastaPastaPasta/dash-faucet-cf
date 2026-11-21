@@ -23,10 +23,12 @@
     $("newKeyValue").textContent = token;
     $("newKeyUsage").textContent = usage(token);
     $("newKey").hidden = false;
+    $("createForm").querySelector("button").classList.remove("dh-btn--primary");
     $("copyKey").onclick = () => Portal.copy(token, $("copyKey"));
     $("copySnippet").onclick = () => Portal.copy(usage(token), $("copySnippet"));
     $("hideKey").onclick = () => {
       $("newKey").hidden = true;
+      $("createForm").querySelector("button").classList.add("dh-btn--primary");
       $("newKeyValue").textContent = "";
       $("newKeyUsage").textContent = "";
     };
@@ -48,8 +50,8 @@
       el("div", { class: "key-side" },
         live
           ? [
-              el("button", { class: "ghost small", onclick: () => rotate(key), title: "Replace with a new value" }, "Rotate"),
-              el("button", { class: "danger small", onclick: () => revoke(key) }, "Revoke"),
+              el("button", { class: "dh-btn dh-btn--sm", onclick: () => rotate(key), title: "Replace with a new value" }, "Rotate"),
+              el("button", { class: "dh-btn dh-btn--destructive dh-btn--sm", onclick: () => revoke(key) }, "Revoke"),
             ]
           : pill(state, "off"),
       ),
@@ -62,7 +64,7 @@
       const newest = keys.slice().reverse();
       const live = newest.filter((k) => keyState(k) === "active");
       const past = newest.filter((k) => keyState(k) !== "active");
-      fill($("keyRows"), live.length ? live.map(row) : el("li", { class: "empty" }, "No active keys. Create one above."));
+      fill($("keyRows"), live.length ? live.map(row) : el("li", { class: "dh-empty dh-empty--inline" }, "No active keys. Create one above."));
       $("keyCount").textContent = `${live.length} of ${maxKeys} allowed`;
       $("pastKeys").hidden = past.length === 0;
       $("pastSummary").textContent = `${past.length} revoked or expired key${past.length === 1 ? "" : "s"}`;
@@ -117,6 +119,6 @@
   }
 
   main().catch((error) => {
-    document.querySelector(".shell").append(el("div", { class: "error", role: "alert" }, `Couldn't load this page: ${error.message}`));
+    document.querySelector(".shell").append(el("div", { class: "dh-error", role: "alert" }, `Couldn't load this page: ${error.message}`));
   });
 })();

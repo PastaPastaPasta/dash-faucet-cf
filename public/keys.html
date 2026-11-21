@@ -4,45 +4,47 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="referrer" content="no-referrer">
-  <title>API keys · Dash Faucet</title>
+  <title>API keys · Faucet · dashhq</title>
+    <script src="/dashhq/dashhq-shell.js" integrity="sha384-gVqXpIH/RxyKN4vM39lOUg2PrRWU5VwK/tOmEgKsHXYfJS7nMVBo31Dqh+Bq+/12" crossorigin="anonymous"></script>
+    <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/dashhq/dashhq-tokens.css" integrity="sha384-aEDxWOFu571LPbq5M5OqOZeoqZC5g7eEYa8Aq2UHHSF/2Dok40FPXpmpuKs2CP5A" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-shell.css" integrity="sha384-0P5g+pwCDTh+ABri/UTPUK3J1p9qQF0X1ANuCkcZ3mNU0RpHlMb5uLaAk0A1LA3M" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css" integrity="sha384-DgXOzWbU7zTv8EK6Ouw229bo6mddlAq086klLvX2qiv5iYWbsVus9zbb9VyQYQC4" crossorigin="anonymous">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/portal.css">
 </head>
-<body class="page-keys">
-  <div class="shell">
-    <nav class="topbar">
-      <a class="brand" href="/">Dash Faucet</a>
-      <span class="crumb">API keys</span>
-      <div class="who" id="who"></div>
-    </nav>
+<body class="dh-fill page-keys">
+  <dashhq-bar product="faucet" network="testnet" sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"><nav slot="nav" aria-label="Faucet"><a href="/">Get DASH</a><a href="/keys">API keys</a></nav><div slot="actions" class="who" id="who"></div></dashhq-bar>
+  <main class="shell dh-container dh-page"><div class="dh-narrow">
+
 
     <section class="signin" id="signIn" hidden></section>
 
-    <main id="account" hidden>
-      <header class="intro">
-        <h1>Your API keys</h1>
-        <p class="lede">A key lets your scripts, CI jobs and agents request testnet DASH without a captcha or rate limits. Keep each one secret, and revoke it here when you no longer need it.</p>
+    <div id="account" hidden>
+      <header class="dh-page-header">
+        <h1 class="dh-page-header__title">Your API keys</h1>
+        <p class="dh-page-header__lede">A key lets your scripts, CI jobs and agents request testnet DASH without a captcha or rate limits. Keep each one secret, and revoke it here when you no longer need it.</p>
       </header>
 
-      <section class="slip" id="newKey" hidden aria-live="polite">
-        <p class="slip-title">Your new key. Copy it now; it won't be shown again.</p>
+      <section class="slip dh-notice dh-notice--success" id="newKey" hidden aria-live="polite">
+        <p class="dh-notice__title">Your new key. Copy it now; it won't be shown again.</p>
         <div class="slip-key" id="newKeyValue"></div>
         <div class="form-actions">
-          <button id="copyKey" class="primary">Copy key</button>
-          <button id="hideKey" class="ghost">I've saved it</button>
+          <button id="copyKey" class="dh-btn dh-btn--primary">Copy key</button>
+          <button id="hideKey" class="dh-btn">I've saved it</button>
         </div>
         <div class="snippet">
-          <div class="snippet-head"><span>Try it</span><button id="copySnippet" class="ghost small">Copy command</button></div>
+          <div class="snippet-head"><span>Try it</span><button id="copySnippet" class="dh-btn dh-btn--sm">Copy command</button></div>
           <pre id="newKeyUsage"></pre>
         </div>
       </section>
 
       <section class="section">
         <form class="create" id="createForm">
-          <input id="keyLabel" maxlength="100" placeholder="Name this key (optional), e.g. laptop or CI" aria-label="Key name">
-          <button type="submit" class="primary">Create key</button>
+          <input id="keyLabel" maxlength="100" placeholder="Name this key (optional), e.g. laptop or CI" aria-label="Key name" class="dh-input">
+          <button type="submit" class="dh-btn dh-btn--primary">Create key</button>
         </form>
-        <div class="error" id="keysError" role="alert" hidden></div>
+        <div class="error dh-error" id="keysError" role="alert" hidden></div>
       </section>
 
       <section class="section">
@@ -51,7 +53,7 @@
           <span class="muted fine" id="keyCount"></span>
         </div>
         <ul class="key-list" id="keyRows"></ul>
-        <details class="past" id="pastKeys" hidden>
+        <details class="past dh-disclosure" id="pastKeys" hidden>
           <summary id="pastSummary"></summary>
           <ul class="key-list" id="pastRows"></ul>
         </details>
@@ -59,11 +61,12 @@
 
       <section class="section">
         <h2>Using a key</h2>
-        <p class="lede">Send it as a bearer token to <span class="mono">POST /api/core-faucet</span>. <span class="mono">amount</span> is optional, in tDASH: 1 if you leave it out, at most <span id="maxAmount">5000</span> per request.</p>
+        <p class="dh-page-header__lede">Send it as a bearer token to <span class="mono">POST /api/core-faucet</span>. <span class="mono">amount</span> is optional, in tDASH: 1 if you leave it out, at most <span id="maxAmount">5000</span> per request.</p>
         <pre id="usageExample"></pre>
       </section>
-    </main>
-  </div>
+    </div>
+  </div></div></main>
+  <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"></dashhq-footer>
   <script src="/portal.js"></script>
   <script src="/keys.js"></script>
 </body>

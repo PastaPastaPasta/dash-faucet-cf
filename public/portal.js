@@ -79,7 +79,7 @@ const Portal = (() => {
   }
 
   function pill(text, tone) {
-    return el("span", { class: `pill pill-${tone}` }, text);
+    return el("span", { class: `dh-badge dh-badge--${({ ok: "good", off: "bad" })[tone] || tone}` }, text);
   }
 
   function showError(box, error) {
@@ -102,10 +102,10 @@ const Portal = (() => {
     await navigator.clipboard.writeText(text);
     const label = button.textContent;
     button.textContent = "Copied";
-    button.classList.add("is-done");
+    button.classList.add("dh-badge--good");
     setTimeout(() => {
       button.textContent = label;
-      button.classList.remove("is-done");
+      button.classList.remove("dh-badge--good");
     }, 1600);
   }
 
@@ -136,7 +136,7 @@ const Portal = (() => {
       typeof me.adminExpiresAt === "number" && here !== "/admin" ? el("a", { href: "/admin" }, "Admin") : null,
       here !== "/keys" ? el("a", { href: "/keys" }, "My keys") : null,
       el("button", {
-        class: "ghost small",
+        class: "dh-btn dh-btn--sm",
         onclick: async () => {
           await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
           location.href = "/keys";
@@ -154,14 +154,13 @@ const Portal = (() => {
       : LOGIN_ERRORS[code];
     fill(
       container,
-      el("h1", {}, heading),
-      el("p", { class: "lede" }, lede),
-      error ? el("div", { class: "error", role: "alert" }, error) : null,
+      el("header", { class: "dh-page-header" }, el("h1", { class: "dh-page-header__title" }, heading), el("p", { class: "dh-page-header__lede" }, lede)),
+      error ? el("div", { class: "dh-error", role: "alert" }, error) : null,
       me.providers.length === 0
         ? el("p", { class: "muted" }, "Sign-in isn't set up on this server yet.")
         : el("div", { class: "providers" },
             me.providers.map((p) =>
-              el("a", { class: "button primary large", href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
+              el("a", { class: "dh-btn dh-btn--secondary", href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
       el("p", { class: "muted fine" }, `Open to anyone with ${eligibility() || "an eligible account"}.`),
     );
     container.hidden = false;

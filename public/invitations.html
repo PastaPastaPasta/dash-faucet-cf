@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mainnet invitations · Faucet · dashhq</title>
+    <script src="/dashhq/dashhq-shell.js" integrity="sha384-gVqXpIH/RxyKN4vM39lOUg2PrRWU5VwK/tOmEgKsHXYfJS7nMVBo31Dqh+Bq+/12" crossorigin="anonymous"></script>
+    <link rel="preload" href="/dashhq/fonts/archivo-latin-var.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="stylesheet" href="/dashhq/dashhq-tokens.css" integrity="sha384-aEDxWOFu571LPbq5M5OqOZeoqZC5g7eEYa8Aq2UHHSF/2Dok40FPXpmpuKs2CP5A" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-shell.css" integrity="sha384-0P5g+pwCDTh+ABri/UTPUK3J1p9qQF0X1ANuCkcZ3mNU0RpHlMb5uLaAk0A1LA3M" crossorigin="anonymous">
+    <link rel="stylesheet" href="/dashhq/dashhq-components.css" integrity="sha384-DgXOzWbU7zTv8EK6Ouw229bo6mddlAq086klLvX2qiv5iYWbsVus9zbb9VyQYQC4" crossorigin="anonymous">
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <link rel="stylesheet" href="/faucet.css">
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+</head>
+<body class="dh-fill page-invitations">
+    <dashhq-bar product="faucet" network="mainnet" sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
+    <main class="dh-container dh-page"><div class="dh-narrow">
+        <header class="dh-page-header">
+            <h1 class="dh-page-header__title" id="pageTitle">Mainnet identity invitations</h1>
+            <p class="dh-page-header__lede" id="pageSubtitle">Mainnet · real DASH. Get an invitation for an identity and username in Dash Wallet.</p>
+        </header>
+
+        <p id="networkChoice" class="dh-field__help"><a href="/">Practice on Testnet with the Bridge and Faucet →</a></p>
+        <div class="feature-grid" id="featureGrid">
+        <!-- Platform invitation faucet (enabled by server configuration). -->
+        <div class="feature-card dh-card" id="invitationCard" hidden>
+            <div class="initial-view">
+                <div class="network-kicker mainnet" id="invitationNetworkKicker"><span class="network-dot"></span><span id="invitationNetworkLabel">Mainnet · real DASH</span></div>
+                <h2 class="dh-h2">Mainnet identity invitation</h2>
+                <p class="description">
+                    Get an invitation with <span id="invitationAmountDisplay">0.03</span>
+                    DASH for one identity and non-contested name. You will choose
+                    the name in Dash Wallet.
+                </p>
+                <button class="btn dh-btn dh-btn--primary" id="invitationBtn">
+
+                    <span class="btn-text">Get invitation</span>
+                </button>
+                <label class="invitation-count" id="invitationCountRow" hidden>
+                    How many?
+                    <select class="dh-select" id="invitationCount" aria-label="Number of invitations"></select>
+                </label>
+                <p class="availability-line" id="invitationAvailability">Checking availability…</p>
+                <div class="turnstile-holder" id="invitationTurnstileHolder"></div>
+                <div role="alert" class="error dh-error" id="invitationErrorBox"></div>
+            </div>
+
+            <div class="results-view">
+                <h2 class="dh-h2" id="invitationResultTitle">Invitation ready</h2>
+                <p class="description" id="invitationResultHint">Open this in Dash Wallet, then choose your username.</p>
+                <p class="expiry" id="invitationExpiry"></p>
+                <div class="invitation-list" id="invitationList"></div>
+                <div class="action-buttons">
+                    <button class="btn-secondary dh-btn" id="moreInvitationsBtn">Get more</button>
+                </div>
+            </div>
+        </div>
+        </div>
+
+        <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>
+            <summary>Fund the faucet</summary>
+            <div class="treasury-heading">
+                <div>
+                    <h2 class="dh-h2">Faucet reserves</h2>
+                    <p>Fund only the network shown for this service.</p>
+                </div>
+                <span class="live-pill dh-badge dh-badge--good">Live</span>
+            </div>
+            <div class="treasury-grid">
+
+                <article class="treasury-card treasury-card-mainnet" id="invitationTreasuryCard" hidden>
+                    <div class="treasury-card-top">
+                        <div class="treasury-card-title">
+                            <h3 class="dh-h3">Identity invitations</h3>
+                            <span class="network-badge dh-badge dh-badge--info mainnet" id="invitationNetworkBadge">Mainnet · real DASH</span>
+                        </div>
+                        <div class="treasury-balance"><strong id="invitationTreasuryBalance">—</strong> <span id="invitationTreasuryCurrency">DASH</span></div>
+                        <p class="treasury-detail">Spendable balance; locked invitations are counted below.</p>
+                        <div class="inventory-row" id="invitationInventory">
+                            <span class="inventory-item"><strong id="invitationAvailable">—</strong> ready</span>
+                            <span class="inventory-item"><strong id="invitationPreparing">—</strong> preparing</span>
+                            <span class="inventory-item"><strong id="invitationIssued">—</strong> reserved</span>
+                        </div>
+                    </div>
+                    <div class="funding-address">
+                        <div class="funding-address-header">
+                            <span class="funding-address-label">Funding address</span>
+                            <button class="copy-btn dh-btn dh-btn--sm" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
+                        </div>
+                        <dashhq-hash full no-copy id="invitationDepositAddress" value="—">—</dashhq-hash>
+                        <p class="network-warning">Send <strong id="invitationNetworkWarning">real mainnet DASH only</strong> to this address.</p>
+                    </div>
+                </article>
+            </div>
+        </details>
+
+        <button type="button" id="retryStatusBtn" class="dh-btn" hidden>Retry faucet status</button>
+        <p class="footer-status" id="statusBar" role="status">Loading faucet status…</p>
+        <p class="dh-sources"><span id="statusSource">Sources: no Faucet status read yet.</span> <a href="/api/status">Faucet status API</a> · Invitation size, reserve balance and inventory counts.</p>
+
+    </div></main>
+
+    <dashhq-footer product="faucet" source="https://github.com/PastaPastaPasta/dash-faucet-cf"><a href="/keys">API keys for developers</a></dashhq-footer>
+    <script type="module" src="/faucet.js"></script>
+</body>
+</html>

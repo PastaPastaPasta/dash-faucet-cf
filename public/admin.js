@@ -67,7 +67,7 @@
     const count = `${code.redemptions} of ${code.maxRedemptions}`;
     return [
       code.redemptions
-        ? el("button", { class: "linklike", onclick: () => details(code), title: "Who redeemed it" }, count)
+        ? el("button", { class: "dh-btn dh-btn--link", onclick: () => details(code), title: "Who redeemed it" }, count)
         : count,
       code.maxRedemptions > 1 ? bar : null,
     ];
@@ -87,16 +87,22 @@
         el("td", {}, code.expiresAt ? date(code.expiresAt) : "never"),
         el("td", {}, codeStatus(code)),
         el("td", { class: "actions" },
-          el("button", { class: "ghost small", onclick: (e) => Portal.copy(shareLink(code.code), e.currentTarget) }, "Copy link"),
-          el("button", { class: "ghost small", onclick: () => edit(code) }, "Edit"),
+          el("button", { class: "dh-btn dh-btn--sm", onclick: (e) => Portal.copy(shareLink(code.code), e.currentTarget) }, "Copy link"),
+          el("button", { class: "dh-btn dh-btn--sm", onclick: () => edit(code) }, "Edit"),
           el("button", {
-            class: code.disabled ? "ghost small" : "danger small",
+            class: `dh-btn dh-btn--sm${code.disabled ? "" : " dh-btn--destructive"}`,
             onclick: () => patch(code, { disabled: !code.disabled }),
           }, code.disabled ? "Enable" : "Disable"),
         ),
       ),
     );
-    fill($("codeRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 6, class: "empty" }, "No codes yet. Create one above.")));
+    for (const row of rows) {
+      [...row.children].forEach((cell, i) => {
+        cell.dataset.label = ["Code", "Amount", "Used", "Expires", "Status", "Actions"][i];
+        if ([0, 3, 4, 5].includes(i)) cell.classList.add(({ 0: "dh-rc-title", 3: "dh-rc-hide", 4: "dh-rc-end", 5: "dh-rc-actions" })[i]);
+      });
+    }
+    fill($("codeRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 6, class: "dh-empty dh-empty--inline" }, "No codes yet. Create one above.")));
   }
 
   function patch(code, changes) {
@@ -141,7 +147,10 @@
           el("td", { class: "mono" }, el("a", { href: EXPLORER + r.txid, target: "_blank", rel: "noopener noreferrer" }, `${r.txid.slice(0, 12)}…`)),
         ),
       );
-      fill($("detailRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 4, class: "empty" }, "Nobody has used this code yet.")));
+      for (const row of rows) [...row.children].forEach((cell, i) => {
+        cell.dataset.label = ["When", "Address", "Amount", "Transaction"][i];
+      });
+      fill($("detailRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 4, class: "dh-empty dh-empty--inline" }, "Nobody has used this code yet.")));
       $("detailDialog").showModal();
     });
   }
@@ -172,6 +181,7 @@
         $("newVoucherTitle").textContent = `${codes.length} voucher${codes.length === 1 ? "" : "s"} for ${dash(codes[0].amountSats)} each. They stay listed below.`;
         $("newVoucherList").textContent = text;
         $("newVouchers").hidden = false;
+        $("codeSubmit").classList.remove("dh-btn--primary");
         $("copyVouchers").onclick = () => Portal.copy(text, $("copyVouchers"));
         $("newVouchers").scrollIntoView({ behavior: "smooth", block: "center" });
       }
@@ -202,7 +212,7 @@
             : null),
         el("td", { class: "actions" }, state === "active"
           ? el("button", {
-              class: "danger small",
+              class: "dh-btn dh-btn--destructive dh-btn--sm",
               onclick: () => {
                 if (!confirm(`Revoke "${key.label}"${key.ownerEmail ? ` (${key.ownerEmail})` : ""}? It stops working right away.`)) return;
                 return run(async () => {
@@ -214,7 +224,10 @@
           : null),
       );
     });
-    fill($("allKeyRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 7, class: "empty" }, "No active keys.")));
+    for (const row of rows) [...row.children].forEach((cell, i) => {
+      cell.dataset.label = ["Key", "Owner", "Type", "Last used", "Paid out", "Status", "Actions"][i];
+    });
+    fill($("allKeyRows"), rows.length ? rows : el("tr", {}, el("td", { colspan: 7, class: "dh-empty dh-empty--inline" }, "No active keys.")));
   }
 
   // --- wiring --------------------------------------------------------------------
@@ -249,8 +262,8 @@
     $("kindVoucher").onclick = () => setKind("voucher");
     $("editCancel").onclick = () => $("editDialog").close();
     $("detailClose").onclick = () => $("detailDialog").close();
-    $("hideVouchers").onclick = () => { $("newVouchers").hidden = true; };
-    $("hideMinted").onclick = () => { $("mintedKey").hidden = true; $("mintedValue").textContent = ""; };
+    $("hideVouchers").onclick = () => { $("newVouchers").hidden = true; $("codeSubmit").classList.add("dh-btn--primary"); };
+    $("hideMinted").onclick = () => { $("mintedKey").hidden = true; $("mintForm").querySelector("button").classList.add("dh-btn--primary"); $("mintedValue").textContent = ""; };
     $("showRevoked").onchange = (e) => { showRevoked = e.target.checked; run(loadKeys); };
     $("codeForm").addEventListener("submit", createCode);
 
@@ -265,6 +278,7 @@
         });
         $("mintedValue").textContent = created.token;
         $("mintedKey").hidden = false;
+        $("mintForm").querySelector("button").classList.remove("dh-btn--primary");
         $("copyMinted").onclick = () => Portal.copy(created.token, $("copyMinted"));
         $("mintForm").reset();
         $("mintedKey").scrollIntoView({ behavior: "smooth", block: "center" });
@@ -277,6 +291,6 @@
   }
 
   main().catch((error) => {
-    document.querySelector(".shell").append(el("div", { class: "error", role: "alert" }, `Couldn't load this page: ${error.message}`));
+    document.querySelector(".shell").append(el("div", { class: "dh-error", role: "alert" }, `Couldn't load this page: ${error.message}`));
   });
 })();
