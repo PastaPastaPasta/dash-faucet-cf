@@ -65,7 +65,11 @@ export interface Redemption {
   createdAt: number;
 }
 
-export function migrateAccounts(sql: SqlStorage, opts: { selfServeKeysExpire: boolean }): void {
+export function migrateAccounts(
+  sql: SqlStorage,
+  opts: { selfServeKeysExpire: boolean; adminKeyTtlMs: number; now?: number },
+): void {
+  const now = opts.now ?? Date.now();
   sql.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id            TEXT    PRIMARY KEY,
@@ -110,7 +114,7 @@ export function migrateAccounts(sql: SqlStorage, opts: { selfServeKeysExpire: bo
       .toArray()
       .map((row) => row.name),
   );
-  // Keys minted before login existed have no owner and never expire.
+  // Keys minted before login existed have no owner; they are admin keys.
   if (!keyColumns.has("owner")) sql.exec(`ALTER TABLE api_keys ADD COLUMN owner TEXT`);
   if (!keyColumns.has("expires_at")) sql.exec(`ALTER TABLE api_keys ADD COLUMN expires_at INTEGER`);
   // Who minted or revoked a key: an owner (self-serve) or an admin identity.
@@ -131,9 +135,19 @@ export function migrateAccounts(sql: SqlStorage, opts: { selfServeKeysExpire: bo
     sql.exec(
       `UPDATE api_keys SET expires_at = NULL
         WHERE owner IS NOT NULL AND expires_at > ? AND revoked_at IS NULL`,
-      Date.now(),
+      now,
     );
   }
+  // Admin-minted keys (no owner) never outlive the admin key lifetime: a key
+  // with no expiry, or a later one than the current setting allows, gets
+  // `now + ADMIN_KEY_TTL_DAYS`. Re-running it moves nothing already inside.
+  const adminCap = now + opts.adminKeyTtlMs;
+  sql.exec(
+    `UPDATE api_keys SET expires_at = ?
+      WHERE owner IS NULL AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)`,
+    adminCap,
+    adminCap,
+  );
 }
 
 export function upsertUser(sql: SqlStorage, who: Identity, now: number): void {

@@ -198,4 +198,19 @@ describe("login config", () => {
     expect(resolveConfig(env()).auth.keyTtlMs).toBe(0);
     expect(resolveConfig(env({ SELF_SERVE_KEY_TTL_DAYS: "90" })).auth.keyTtlMs).toBe(90 * 86_400_000);
   });
+
+  it("always expires admin keys and admin sessions, 90 days and 8 hours unless set", () => {
+    const auth = resolveConfig(env()).auth;
+    expect(auth.adminKeyTtlMs).toBe(90 * 86_400_000);
+    expect(auth.adminSessionTtlMs).toBe(8 * 3_600_000);
+    const set = resolveConfig(env({ ADMIN_KEY_TTL_DAYS: "7", ADMIN_SESSION_TTL_HOURS: "1" })).auth;
+    expect(set.adminKeyTtlMs).toBe(7 * 86_400_000);
+    expect(set.adminSessionTtlMs).toBe(3_600_000);
+    // There is no "never" for admin rights.
+    for (const name of ["ADMIN_KEY_TTL_DAYS", "ADMIN_SESSION_TTL_HOURS"] as const) {
+      for (const bad of ["0", "-1", "1.5", "forever"]) {
+        expect(() => resolveConfig(env({ [name]: bad }))).toThrow(new RegExp(name));
+      }
+    }
+  });
 });

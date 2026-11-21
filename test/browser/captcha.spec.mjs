@@ -2,10 +2,17 @@ import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
 
 const origin = "https://faucet.test";
+const ADDRESS = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
+
+async function fillCode(page, code) {
+  const disclosure = page.locator("details.code-row");
+  if (!(await disclosure.evaluate((el) => el.open))) await disclosure.locator("summary").click();
+  await page.locator("#codeInput").fill(code);
+}
 
 // Exercise the shipped page with deterministic CAPTCHA providers and payouts.
 // Worker tests separately solve and verify real CAP challenges and rate tiers.
-async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "", reserve = {}, statusCode = 200 } = {}) {
+async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "", reserve = {}, statusCode = 200, amountLimits, me, headers = [] } = {}) {
   const requests = [];
   const startsUnavailable = statusResponses.length > 0;
   await page.route(`${origin}/**`, async (route) => {
@@ -20,11 +27,16 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
         invitationsEnabled: true, invitationNetwork: "mainnet",
         invitationAmount: 0.03, invitationBalance: 0.0078, invitationMaxPerRequest: 1,
         invitationInventory: { available: 1 },
+        ...(amountLimits ? { amountLimits, accountUrl: `${origin}/keys` } : {}),
         ...reserve,
       } });
     }
+    if (path === "/api/me") {
+      return route.fulfill({ json: me || { authenticated: false, providers: ["google"], loginOrigin: "https://login.test" } });
+    }
     if (path === "/api/core-faucet") {
       requests.push(route.request().postDataJSON());
+      headers.push(route.request().headers());
       return route.fulfill(responses.shift() || { json: { txid: "a".repeat(64), amount: 1 } });
     }
     return route.fulfill({
@@ -341,4 +353,157 @@ test("home hides invitation funding when status does not provide an address", as
   await page.locator("#treasuryPanel summary").click();
   await expect(page.locator("#invitationHomeTreasuryCard")).toBeHidden();
   expect(requests).toEqual([]);
+});
+
+const LIMITS = { turnstileAbove: 10, publicMax: 100, signedInMax: 5000, perIpDaily: 100 };
+
+test("small amounts keep the proof-of-work fallback", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "error-callback", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("5");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, capToken: "pow-1", amount: 5 }]);
+});
+
+test("amounts above the Turnstile threshold never fall back to proof of work", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "error-callback", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("50");
+  await expect(page.locator("#amountHint")).toContainText("full captcha check");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("need this check");
+  expect(requests).toEqual([]);
+  expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+test("amounts above the Turnstile threshold pay with Turnstile", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("50");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", amount: 50 }]);
+});
+
+test("amounts above the public maximum ask for a sign-in or a code", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#signInBox")).toBeVisible();
+  await expect(page.locator("#signInLink")).toHaveAttribute("href", "https://login.test/auth/google/login?return=/");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("dash.org sign-in or a code");
+  expect(requests).toEqual([]);
+
+  await page.locator("#signInCodeBtn").click();
+  await expect(page.locator("#codeInput")).toBeFocused();
+  await page.locator("#codeInput").fill("masternode");
+  await expect(page.locator("#signInBox")).toBeHidden();
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 500 tDASH");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", amount: 500, code: "masternode" }]);
+});
+
+test("a signed-in request skips the captcha and sends the CSRF token", async ({ page }) => {
+  const headers = [];
+  const requests = await openFaucet(page, {
+    turnstile: "error-callback",
+    amountLimits: LIMITS,
+    headers,
+    me: { authenticated: true, user: { email: "dev@dash.org" }, csrf: "csrf-1", providers: ["google"], loginOrigin: origin },
+  });
+  await page.locator("#amountInput").fill("1500");
+  await expect(page.locator("#amountHint")).toContainText("Signed in as dev@dash.org");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, amount: 1500 }]);
+  expect(headers[0]["x-csrf-token"]).toBe("csrf-1");
+  expect(await page.evaluate(() => window.powSolves)).toEqual([]);
+});
+
+test("a code refused for proof of work retries with Turnstile only", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "error-callback", amountLimits: LIMITS, responses: [
+    { status: 400, json: { error: "Large amounts need the Turnstile captcha; proof of work is not enough", requiresTurnstile: true } },
+  ] });
+  await fillCode(page, "masternode");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Redeem code");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("needs the full captcha check");
+  await expect(page.locator("#hardCapBox")).toBeHidden();
+  expect(requests).toEqual([{ address: ADDRESS, capToken: "pow-1", code: "masternode" }]);
+
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("need this check");
+  expect(requests).toHaveLength(1);
+  expect(await page.evaluate(() => window.powSolves)).toHaveLength(1);
+});
+
+test("a signed-in user redeeming a code goes through the captcha", async ({ page }) => {
+  const headers = [];
+  const requests = await openFaucet(page, {
+    turnstile: "success",
+    amountLimits: LIMITS,
+    headers,
+    me: { authenticated: true, user: { email: "dev@dash.org" }, csrf: "csrf-1", providers: ["google"], loginOrigin: origin },
+  });
+  await fillCode(page, "masternode");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Redeem code");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", code: "masternode" }]);
+  expect(headers[0]["x-csrf-token"]).toBeUndefined();
+});
+
+test("an unparseable amount is refused rather than sent as the default", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").pressSequentially("1e");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreErrorBox")).toContainText("at least 0.001");
+  expect(requests).toEqual([]);
+});
+
+test("a sign-in panel without a login URL hides its link", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success", amountLimits: LIMITS, me: { authenticated: false, providers: [] } });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#signInBox")).toBeVisible();
+  await expect(page.locator("#signInLink")).toBeHidden();
+  await expect(page.locator("#signInDescription")).toHaveText("Use a voucher or event code.");
+});
+
+test("a hidden amount field never sends a prefilled amount", async ({ page }) => {
+  const requests = await openFaucet(page, {
+    turnstile: "success",
+    network: "mainnet",
+    query: "?amount=5",
+    reserve: { coreFaucetAmount: 0.001, amountLimits: { turnstileAbove: 0.001, publicMax: 0.001, signedInMax: null } },
+  });
+  await expect(page.locator("#amountRow")).toBeHidden();
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 0.001 DASH");
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: "Xp3oTrxmd5JL6qA1MKFDjkUeqgGXuRfGjv", turnstileToken: "web-token" }]);
+});
+
+test("the amount field labels the button, shows its tier and submits on Enter", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS, responses: [
+    { json: { txid: "a".repeat(64), amount: 25, address: ADDRESS } },
+  ] });
+  await expect(page.locator("#amountRow")).toBeVisible();
+  await expect(page.locator("#amountHint")).toHaveText("Up to 100 tDASH per request; more with a dash.org sign-in or a code.");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 1 tDASH");
+  await page.locator("#amountInput").fill("25");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 25 tDASH");
+  await page.locator("#amountInput").press("Enter");
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  await expect(page.locator("#coreSentAmount")).toHaveText(`25 tDASH to ${ADDRESS}`);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", amount: 25 }]);
+  await page.locator("#sendMoreBtn").click();
+  await expect(page.locator("#amountInput")).toHaveValue("");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 1 tDASH");
+});
+
+test("Enter in the code field submits the request", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await fillCode(page, "dashcon-26");
+  await page.locator("#codeInput").press("Enter");
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", code: "dashcon-26" }]);
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { codeKey } from "../src/accounts";
 import { digestEquals as safeEqual } from "../src/apikeys";
-import { type Session, b64url, isAdminSession, seal, unseal, verifyGoogleIdToken } from "../src/auth";
+import { type Session, adminExpiresAt, b64url, isAdminSession, seal, unseal, verifyGoogleIdToken } from "../src/auth";
 import type { AuthConfig } from "../src/config";
 
 const SECRET = "unit-test-session-secret-0123456789";
@@ -111,19 +111,43 @@ describe("Google ID token verification", () => {
 });
 
 describe("admin identities", () => {
-  const cfg = (admins: string[]) => ({ admins: new Set(admins) }) as AuthConfig;
+  const HOUR = 3_600_000;
+  const NOW = 1_700_000_000_000;
+  const cfg = (admins: string[]) => ({ admins: new Set(admins), adminSessionTtlMs: 8 * HOUR }) as AuthConfig;
+  const fresh = { sid: "s", iat: NOW - 1000, exp: NOW + 12 * HOUR };
   const google = (email: string): Session =>
-    ({ id: "google:1", provider: "google", email, name: email, sid: "s", exp: 0 });
+    ({ id: "google:1", provider: "google", email, name: email, ...fresh });
   const github = (id: number): Session =>
-    ({ id: `github:${id}`, provider: "github", email: "x@dash.org", name: "x", login: "x", sid: "s", exp: 0 });
+    ({ id: `github:${id}`, provider: "github", email: "x@dash.org", name: "x", login: "x", ...fresh });
 
   it("matches a Google address, a whole Workspace domain, or a GitHub id", () => {
-    expect(isAdminSession(google("pasta@dash.org"), cfg(["google:pasta@dash.org"]))).toBe(true);
-    expect(isAdminSession(google("dev@dash.org"), cfg(["google:pasta@dash.org"]))).toBe(false);
-    expect(isAdminSession(google("Dev@Dash.org"), cfg(["google:@dash.org"]))).toBe(true);
-    expect(isAdminSession(google("dev@notdash.org"), cfg(["google:@dash.org"]))).toBe(false);
-    expect(isAdminSession(github(6443210), cfg(["github:6443210"]))).toBe(true);
+    expect(isAdminSession(google("pasta@dash.org"), cfg(["google:pasta@dash.org"]), NOW)).toBe(true);
+    expect(isAdminSession(google("dev@dash.org"), cfg(["google:pasta@dash.org"]), NOW)).toBe(false);
+    expect(isAdminSession(google("Dev@Dash.org"), cfg(["google:@dash.org"]), NOW)).toBe(true);
+    expect(isAdminSession(google("dev@notdash.org"), cfg(["google:@dash.org"]), NOW)).toBe(false);
+    expect(isAdminSession(github(6443210), cfg(["github:6443210"]), NOW)).toBe(true);
     // A GitHub session never qualifies through a Google domain rule, whatever its email.
-    expect(isAdminSession(github(7), cfg(["google:@dash.org"]))).toBe(false);
+    expect(isAdminSession(github(7), cfg(["google:@dash.org"]), NOW)).toBe(false);
+  });
+
+  it("lapse ADMIN_SESSION_TTL_HOURS after sign-in, within the session's own life", () => {
+    const admins = cfg(["google:@dash.org"]);
+    const at = (iat: number, exp = iat + 12 * HOUR): Session => ({ ...google("dev@dash.org"), iat, exp });
+    const s = at(NOW);
+    expect(adminExpiresAt(s, admins)).toBe(NOW + 8 * HOUR);
+    expect(isAdminSession(s, admins, NOW + 8 * HOUR - 1)).toBe(true);
+    expect(isAdminSession(s, admins, NOW + 8 * HOUR)).toBe(false);
+    // A shorter session ends admin rights with it.
+    expect(adminExpiresAt(at(NOW, NOW + HOUR), admins)).toBe(NOW + HOUR);
+    // A minute of clock skew between machines is tolerated, not more.
+    expect(isAdminSession(at(NOW + 30_000), admins, NOW)).toBe(true);
+    expect(isAdminSession(at(NOW + HOUR), admins, NOW)).toBe(false);
+    // A cookie sealed before sign-in times were recorded is never admin.
+    const legacy = { ...s } as Partial<Session>;
+    delete legacy.iat;
+    expect(adminExpiresAt(legacy as Session, admins)).toBe(0);
+    expect(isAdminSession(legacy as Session, admins, NOW)).toBe(false);
+    // Not an admin identity at all.
+    expect(adminExpiresAt(s, cfg(["google:pasta@dash.org"]))).toBeNull();
   });
 });

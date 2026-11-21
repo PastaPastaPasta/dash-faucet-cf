@@ -2,8 +2,8 @@ import { SELF, env, runInDurableObject } from "cloudflare:test";
 import DashKeys from "dashkeys";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { migrateAccounts } from "../../src/accounts";
-import { b64url } from "../../src/auth";
-import { TREASURY_ID } from "../../src/treasury";
+import { b64url, seal } from "../../src/auth";
+import { TREASURY_ID, type Treasury } from "../../src/treasury";
 import { FakeChain } from "./fakechain";
 import { RECIPIENT } from "../fixtures";
 
@@ -84,7 +84,7 @@ async function resetStore(): Promise<void> {
   await runInDurableObject(stub, (_instance, state) => {
     for (const table of [
       "claims", "ip_hits", "spent", "pending", "budget", "used_cap",
-      "api_keys", "key_payouts", "users", "codes", "code_redemptions",
+      "api_keys", "key_payouts", "users", "codes", "code_redemptions", "user_payouts",
     ]) {
       state.storage.sql.exec(`DELETE FROM ${table}`);
     }
@@ -153,6 +153,20 @@ async function call(cookie: string, method: string, path: string, body?: unknown
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: (await res.json().catch(() => ({}))) as Record<string, any> };
+}
+
+const DAY = 86_400_000;
+const HOUR = 3_600_000;
+const SESSION_SECRET = "test-session-secret-0123456789abcdef";
+
+/** A session cookie sealed directly, to set its sign-in time. */
+function sessionCookie(fields: Record<string, unknown>): string {
+  const session = {
+    id: "google:g-admin", provider: "google", email: "admin@dash.org", name: "Admin", sid: "forged-sid",
+    exp: Date.now() + 12 * HOUR,
+    ...fields,
+  };
+  return `__Host-faucet_session=${seal(SESSION_SECRET, "session", session)}`;
 }
 
 const dashOrg = (email = "dev@dash.org", sub = "g-1") => ({ sub, email, email_verified: true, hd: "dash.org", name: "Dev" });
@@ -310,7 +324,7 @@ describe("self-serve keys", () => {
          VALUES (?, ?, 'old', 'trusted', NULL, 0, 'google:1', ?)`,
         "d".repeat(64), "d".repeat(12), Date.now() - 1000,
       );
-      migrateAccounts(sql, { selfServeKeysExpire: false });
+      migrateAccounts(sql, { selfServeKeysExpire: false, adminKeyTtlMs: DAY * 90 });
       return sql
         .exec<{ id: string; expires_at: number | null }>(`SELECT id, expires_at FROM api_keys ORDER BY id`)
         .toArray();
@@ -371,6 +385,84 @@ describe("self-serve keys", () => {
     const out = await SELF.fetch(`${ORIGIN}/auth/logout`, { method: "POST", headers: { Cookie: cookie!, Origin: ORIGIN } });
     expect(out.status).toBe(204);
     expect(out.headers.getSetCookie()[0]).toMatch(/^__Host-faucet_session=;.*Max-Age=0/);
+  });
+});
+
+describe("signed-in payouts", () => {
+  async function pay(cookie: string | undefined, body: Record<string, unknown>, headers: Record<string, string> = {}) {
+    const res = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        Origin: ORIGIN,
+        ...(cookie ? { Cookie: cookie } : {}),
+        ...headers,
+      },
+      body: JSON.stringify(body),
+    });
+    return { status: res.status, body: (await res.json()) as Record<string, any> };
+  }
+
+  it("pay any amount up to the key cap with no captcha, and log who asked", async () => {
+    googleClaims = dashOrg();
+    const { cookie } = await login("google");
+    const { csrf } = await me(cookie);
+    const verified = chain.siteverifyTokens.length;
+
+    const big = await pay(cookie, { address: RECIPIENT.testnet.address, amount: 1500 }, { "X-CSRF-Token": csrf });
+    expect(big.status).toBe(200);
+    expect(big.body.amount).toBe(1500);
+    // No public limits: the same address again the same day is a new payout.
+    const again = await pay(cookie, { address: RECIPIENT.testnet.address, amount: 2 }, { "X-CSRF-Token": csrf });
+    expect(again.status).toBe(200);
+    expect(again.body.replay).toBe(false);
+    expect(chain.siteverifyTokens).toHaveLength(verified);
+
+    const over = await pay(cookie, { address: RECIPIENT.testnet.address, amount: 2001 }, { "X-CSRF-Token": csrf });
+    expect(over.status).toBe(400);
+
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const logged = await runInDurableObject(stub, (_i, state) =>
+      state.storage.sql.exec(`SELECT user_id, email, satoshis FROM user_payouts ORDER BY created_at`).toArray(),
+    );
+    expect(logged).toEqual([
+      { user_id: "google:g-1", email: "dev@dash.org", satoshis: 1500 * 100_000_000 },
+      { user_id: "google:g-1", email: "dev@dash.org", satoshis: 2 * 100_000_000 },
+    ]);
+  });
+
+  it("ignore the cookie without the CSRF token, and refuse a bad one or another origin", async () => {
+    googleClaims = dashOrg();
+    const { cookie } = await login("google");
+    const { csrf } = await me(cookie);
+    const address = RECIPIENT.testnet.address;
+
+    const noToken = await pay(cookie, { address, amount: 500 });
+    expect(noToken.status).toBe(403);
+    expect(noToken.body.requiresSignIn).toBe(true);
+
+    const forged = await pay(cookie, { address, amount: 500 }, { "X-CSRF-Token": "forged" });
+    expect(forged.status).toBe(403);
+    const crossSite = await pay(cookie, { address, amount: 500 }, { "X-CSRF-Token": csrf, Origin: "https://evil.test" });
+    expect(crossSite.status).toBe(403);
+    const signedOut = await pay(undefined, { address, amount: 500 }, { "X-CSRF-Token": csrf });
+    expect(signedOut.status).toBe(403);
+    expect(signedOut.body.requiresSignIn).toBe(true);
+
+    expect(chain.broadcastAttempts).toHaveLength(0);
+  });
+
+  it("can return to the faucet page after login", async () => {
+    const start = await SELF.fetch(`${ORIGIN}/auth/google/login?return=/`, { redirect: "manual" });
+    expect(start.status).toBe(302);
+    googleClaims = dashOrg();
+    const authorize = new URL(start.headers.get("Location")!);
+    lastNonce = authorize.searchParams.get("nonce") ?? "";
+    const callback = await SELF.fetch(
+      `${ORIGIN}/auth/google/callback?code=good-code&state=${authorize.searchParams.get("state")}`,
+      { redirect: "manual", headers: { Cookie: cookiesFrom(start) } },
+    );
+    expect(callback.headers.get("Location")).toBe("/");
   });
 });
 
@@ -475,6 +567,36 @@ describe("admin", () => {
     expect((await redeem("DASHCON-24", third, "203.0.113.84")).status).toBe(200);
   });
 
+  it("treats a code's amount as a ceiling, above the public maximum", async () => {
+    const admin = await adminCookie();
+    await call(admin, "POST", "/api/admin/codes", {
+      kind: "event", code: "MASTERNODE", label: "MN operators", amount: 1000, maxRedemptions: 10,
+    });
+    const redeem = async (n: number, extra: Record<string, unknown>) => {
+      const res = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "CF-Connecting-IP": `203.0.113.${90 + n}` },
+        body: JSON.stringify({
+          address: await DashKeys.pkhToAddr(new Uint8Array(20).fill(40 + n), { version: "testnet" }),
+          code: "masternode",
+          ...extra,
+        }),
+      });
+      return { status: res.status, body: (await res.json()) as Record<string, any> };
+    };
+
+    // Far above PUBLIC_MAX_SATS (0.4), and less than the code allows.
+    const some = await redeem(1, { turnstileToken: "ok", amount: 250 });
+    expect(some.status).toBe(200);
+    expect(some.body.amount).toBe(250);
+    const full = await redeem(2, { turnstileToken: "ok" });
+    expect(full.body.amount).toBe(1000);
+
+    const over = await redeem(3, { turnstileToken: "ok", amount: 1001 });
+    expect(over.status).toBe(400);
+    expect(over.body.error).toMatch(/at most 1000/);
+  });
+
   it("issues single-use vouchers in a batch", async () => {
     const admin = await adminCookie();
     const batch = await call(admin, "POST", "/api/admin/codes", { kind: "voucher", count: 3, label: "meetup", amount: 10 });
@@ -499,6 +621,104 @@ describe("admin", () => {
     ]) {
       expect((await call(admin, "POST", "/api/admin/codes", body)).status).toBe(400);
     }
+  });
+
+  it("mints keys that expire after ADMIN_KEY_TTL_DAYS, by session or token", async () => {
+    const admin = await adminCookie();
+    const before = Date.now();
+    const bySession = await call(admin, "POST", "/api/admin/keys", { label: "svc", tier: "trusted" });
+    const byToken = await SELF.fetch(`${ORIGIN}/api/admin/keys`, {
+      method: "POST",
+      headers: { Authorization: "Bearer test-admin-token", "content-type": "application/json" },
+      body: JSON.stringify({ label: "svc2", tier: "mn" }),
+    });
+    const after = Date.now();
+    for (const key of [bySession.body.key, ((await byToken.json()) as any).key]) {
+      expect(key.expiresAt).toBeGreaterThanOrEqual(before + 90 * DAY);
+      expect(key.expiresAt).toBeLessThanOrEqual(after + 90 * DAY);
+    }
+
+    // The Treasury itself never stores an owner-less key past the cap.
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const treasury = stub as unknown as Pick<Treasury, "createApiKey">;
+    const direct = [
+      (await treasury.createApiKey({ label: "bare", tier: "trusted" })).key.expiresAt,
+      (await treasury.createApiKey({ label: "far", tier: "trusted", expiresAt: Date.now() + 999 * DAY })).key.expiresAt,
+    ];
+    for (const expiresAt of direct) expect(expiresAt).toBeLessThanOrEqual(Date.now() + 90 * DAY);
+
+    // Past its expiry the key stops paying.
+    await runInDurableObject(stub, (_instance, state) => {
+      state.storage.sql.exec(`UPDATE api_keys SET expires_at = ? WHERE id = ?`, Date.now() - 1, bySession.body.key.id);
+    });
+    const pay = await SELF.fetch(`${ORIGIN}/api/core-faucet`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${bySession.body.token}`, "content-type": "application/json" },
+      body: JSON.stringify({ address: RECIPIENT.testnet.address }),
+    });
+    expect(pay.status).toBe(401);
+  });
+
+  it("lapses ADMIN_SESSION_TTL_HOURS after sign-in, and never for an old cookie", async () => {
+    const now = Date.now();
+    const freshCookie = sessionCookie({ iat: now - HOUR });
+    expect((await me(freshCookie)).admin).toBe(true);
+    expect((await call(freshCookie, "GET", "/api/admin/codes")).status).toBe(200);
+
+    const stale = sessionCookie({ iat: now - 9 * HOUR, exp: now + 3 * HOUR });
+    const staleMe = await me(stale);
+    expect(staleMe).toMatchObject({ authenticated: true, admin: false, adminExpiresAt: now - HOUR });
+    expect((await call(stale, "GET", "/api/admin/codes")).status).toBe(401);
+    expect((await call(stale, "POST", "/api/admin/keys", { label: "x", tier: "mn" })).status).toBe(401);
+    // Still signed in: their own keys keep working.
+    expect((await call(stale, "GET", "/api/me/keys")).status).toBe(200);
+
+    // Sealed before sign-in times existed: no admin rights at all.
+    const legacy = sessionCookie({});
+    expect(await me(legacy)).toMatchObject({ admin: false, adminExpiresAt: 0 });
+    expect((await call(legacy, "GET", "/api/admin/keys")).status).toBe(401);
+
+    // Not an admin identity: nothing to expire.
+    const dev = sessionCookie({ id: "google:g-1", email: "dev@dash.org", iat: now });
+    expect(await me(dev)).toMatchObject({ admin: false, adminExpiresAt: null });
+  });
+
+  it("caps live admin keys at the admin lifetime on migration", async () => {
+    const stub = env.TREASURY.get(env.TREASURY.idFromName(TREASURY_ID));
+    const now = Date.now();
+    const rows = await runInDurableObject(stub, (_instance, state) => {
+      const sql = state.storage.sql;
+      const insert = (tag: string, owner: string | null, expires: number | null, revoked: number | null) =>
+        sql.exec(
+          `INSERT INTO api_keys (hash, id, label, tier, per_day, created_at, owner, expires_at, revoked_at)
+           VALUES (?, ?, ?, 'trusted', NULL, 0, ?, ?, ?)`,
+          tag.repeat(64), tag.repeat(12), tag, owner, expires, revoked,
+        );
+      insert("a", null, null, null);
+      insert("b", null, now + 365 * DAY, null);
+      insert("c", null, now + DAY, null);
+      insert("d", null, null, 5);
+      insert("e", "google:1", null, null);
+      migrateAccounts(sql, { selfServeKeysExpire: false, adminKeyTtlMs: 30 * DAY, now });
+      const first = sql
+        .exec<{ label: string; expires_at: number | null }>(`SELECT label, expires_at FROM api_keys ORDER BY label`)
+        .toArray();
+      // A start a day later must not push anything out.
+      migrateAccounts(sql, { selfServeKeysExpire: false, adminKeyTtlMs: 30 * DAY, now: now + DAY });
+      const second = sql
+        .exec<{ label: string; expires_at: number | null }>(`SELECT label, expires_at FROM api_keys ORDER BY label`)
+        .toArray();
+      return { first, second };
+    });
+    const by = Object.fromEntries(rows.first.map((r) => [r.label, r.expires_at]));
+    // No expiry and too-late expiry both land at now + 30 days.
+    expect(by.a).toBe(now + 30 * DAY);
+    expect(by.b).toBe(now + 30 * DAY);
+    expect(by.c).toBe(now + DAY);
+    // Revoked admin keys and self-serve keys are not admin-key business.
+    expect(by.d).toBeNull();
+    expect(by.e).toBeNull();
+    expect(rows.second).toEqual(rows.first);
   });
 
   it("still accepts the operator's bearer token", async () => {

@@ -146,3 +146,17 @@ body > main { width: 100%; }
   .reserve-figures { grid-template-columns: 1fr; }
   .reserve-stat { padding: 14px; }
 }
+
+.send-row { margin-top: 8px; }
+#addressValidation, #addressValidation:empty { display: block; min-height: 20px; margin-top: 4px; }
+.send-row > .amount-field { flex: 0 1 220px; }
+.amount-field .dh-input { -moz-appearance: textfield; appearance: textfield; font-variant-numeric: tabular-nums; }
+.amount-field .dh-input::-webkit-outer-spin-button, .amount-field .dh-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.amount-hint { margin-top: 8px; text-wrap: pretty; }
+.amount-hint:empty { display: none; }
+.amount-hint[data-tone="bad"] { color: var(--dh-bad); }
+.amount-hint[data-tone="good"] { color: var(--dh-good); }
+.amount-hint[data-tone="good"]::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.sign-in-box { margin-top: 12px; }
+.sent-amount { overflow-wrap: anywhere; margin-bottom: 0; }
+@media(max-width:480px) { .send-row > .amount-field { flex: 1 1 100%; } }

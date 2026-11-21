@@ -37,19 +37,32 @@
         <div class="feature-card dh-card show-config" id="coreFaucetCard">
             <!-- Config View -->
             <div class="config-view">
-
-
                 <h2 class="dh-h2" id="configHeading" hidden>Request funds</h2>
                 <label class="dh-field__label" for="addressInput">Receiving address</label>
                 <p id="addressHint" class="dh-field__help">A testnet address starts with y or 8.</p>
-                <div class="dh-inline-form">
-                    <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="y… address" autocomplete="off" spellcheck="false">
+                <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="y… address" autocomplete="off" spellcheck="false">
+                <p id="addressValidation" class="dh-field__help" aria-live="polite"></p>
+                <div class="dh-inline-form send-row">
+                    <div class="dh-field amount-field" id="amountRow" hidden>
+                        <label class="dh-field__label" for="amountInput">Amount</label>
+                        <div class="dh-input-group">
+                            <input type="number" id="amountInput" class="dh-input" min="0.001" step="any" inputmode="decimal" placeholder="1" autocomplete="off" aria-describedby="amountHint">
+                            <span class="dh-input-group__addon coin-name" aria-hidden="true">tDASH</span>
+                        </div>
+                    </div>
                     <button class="btn dh-btn dh-btn--primary" id="coreFaucetBtn">
-
                         <span class="btn-text">Get 1 tDASH</span>
                     </button>
                 </div>
-                <p id="addressValidation" class="dh-field__help" aria-live="polite"></p>
+                <p class="dh-field__help amount-hint" id="amountHint" aria-live="polite"></p>
+                <div class="dh-notice dh-notice--info sign-in-box" id="signInBox" hidden>
+                    <p class="dh-notice__title" id="signInTitle">Larger amounts need a dash.org sign-in or a code.</p>
+                    <p id="signInDescription">Sign in with your dash.org account, or use a voucher or event code.</p>
+                    <div class="dh-notice__actions">
+                        <a class="dh-btn" id="signInLink" href="/keys">Sign in with dash.org</a>
+                        <button type="button" class="dh-btn dh-btn--quiet" id="signInCodeBtn">Enter a code</button>
+                    </div>
+                </div>
                 <details class="code-row dh-disclosure">
                     <summary><span>Use a voucher or event code</span></summary>
                     <label class="dh-field__label" for="codeInput">Code (optional)</label>
@@ -71,6 +84,7 @@
             <!-- Results View -->
             <div class="results-view">
                 <h2 class="dh-h2" id="sentHeading">tDASH sent</h2>
+                <p class="description sent-amount" id="coreSentAmount"></p>
                 <div class="stat-item">
                     <div class="stat-label">Transaction ID</div>
                     <div class="stat-value" id="coreTxid"></div>

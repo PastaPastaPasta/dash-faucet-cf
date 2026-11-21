@@ -37,6 +37,13 @@ export default defineConfig({
                 RATE_LIMIT_TURNSTILE_PER_HOUR: "3",
                 RATE_LIMIT_HARD_PER_HOUR: "4",
                 DAILY_BUDGET_SATS: "45000000",
+                // Scaled to the 0.1 payout: any captcha up to 0.2, Turnstile
+                // up to 0.4, a code or sign-in above; 0.6 per IP per day, 0.4 a day for
+                // asks above 0.2.
+                TURNSTILE_ABOVE_SATS: "20000000",
+                PUBLIC_MAX_SATS: "40000000",
+                IP_DAILY_SATS: "60000000",
+                LARGE_DAILY_BUDGET_SATS: "40000000",
                 MIN_BALANCE_SATS: "0",
                 POOL_MIN: "2",
                 POOL_TARGET: "4",

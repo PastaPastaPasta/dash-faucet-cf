@@ -135,18 +135,18 @@ describe("cap.js endpoints", () => {
     expect(body.txid).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("pays the standard amount when an unkeyed client asks for it (or less) explicitly", async () => {
+  it("pays the amount an unkeyed client asks for, up to the any-captcha threshold", async () => {
     // The bridge and older clients send `amount` equal to the standard payout.
-    for (const amount of [0.1, 0.05]) {
+    for (const [n, amount] of [[41, 0.1], [42, 0.05], [43, 0.2]] as const) {
       const capToken = await mintCapToken();
       const { status, body } = await post(
         "/api/core-faucet",
-        { address: await address(amount === 0.1 ? 41 : 42), capToken, amount },
-        amount === 0.1 ? "203.0.113.41" : "203.0.113.42",
+        { address: await address(n), capToken, amount },
+        `203.0.113.${n}`,
       );
       expect(status).toBe(200);
       expect(body.txid).toMatch(/^[0-9a-f]{64}$/);
-      expect(body.amount).toBe(0.1);
+      expect(body.amount).toBe(amount);
     }
   });
 

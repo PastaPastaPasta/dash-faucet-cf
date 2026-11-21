@@ -165,6 +165,27 @@ curl -X POST https://faucet.example/api/core-faucet \
 { "txid": "...", "amount": 1.0, "address": "y...", "network": "testnet", "replay": false }
 ```
 
+`amount` (in DASH) is optional and defaults to `PAYOUT_SATS`. What a request
+may ask for depends on what backs it:
+
+| Amount | Needs |
+|---|---|
+| up to `TURNSTILE_ABOVE_SATS` | any captcha (Turnstile or proof of work) |
+| up to `PUBLIC_MAX_SATS` | Turnstile; proof of work gets `400` with `requiresTurnstile` |
+| above that | a code worth at least that much, a dash.org sign-in, or an API key; otherwise `403` with `requiresSignIn` |
+
+Captcha-path payouts also count against `IP_DAILY_SATS` per IP over a rolling
+24 h (`429`, not escalatable) and against `DAILY_BUDGET_SATS`. Asks above
+`TURNSTILE_ABOVE_SATS` together may use only `LARGE_DAILY_BUDGET_SATS` of that
+budget, so they cannot crowd out ordinary requests. The address
+replay rule is unchanged: a second request for the same address on the same
+UTC day returns the first transaction, whatever amount it asks for.
+
+A signed-in request comes from the faucet page on `AUTH_ORIGIN`: it carries
+the session cookie and the session's CSRF token in `X-CSRF-Token`, and pays up
+to `KEY_MAX_PER_REQUEST_SATS` with no captcha, like a trusted key. Without the
+header the cookie is ignored. Payouts are logged in `user_payouts`.
+
 Errors carry both a flat shape and FastAPI's nested `detail`, so old and new
 clients both work:
 
@@ -327,19 +348,35 @@ so a renamed account cannot inherit access. At `/admin` they manage codes, list 
 `mn` or service keys. The admin bearer token still works for every
 `/api/admin/*` route.
 
+Admin rights expire. A session carries admin rights for
+`ADMIN_SESSION_TTL_HOURS` (8) after sign-in, then the person signs in again;
+a session sealed before sign-in times were recorded has no admin rights at
+all. Every key an admin mints (at `/admin` or with the admin token) expires
+after `ADMIN_KEY_TTL_DAYS` (90). On each start the Treasury caps live admin
+keys at that lifetime: a key with no expiry, or a later one than the setting
+allows, gets `now + ADMIN_KEY_TTL_DAYS`. Lowering the setting therefore
+shortens only keys with more time left than the new lifetime, counted from
+that start; a key closer to its expiry keeps it. Revoke a key to end it
+sooner; mint a new one to extend it.
+
 ### Codes
 
 `POST /api/core-faucet` accepts `"code"` (or `"promoCode"`, the Python
 faucet's name). The captcha is still required, but the code replaces the
 public per-IP, per-address and daily-budget limits with its own:
 
-- **event codes:** typeable (`DASHCON-26`), with an amount, a redemption cap
+- **event codes:** typeable (`DASHCON-26`, `MASTERNODE`), with an amount, a redemption cap
   and an optional expiry. Each address may redeem one once. There is
   deliberately no per-IP rule, since a whole venue shares one NAT address. A
   guess costs only a captcha, so anything valuable should use a code nobody
   could guess.
 - **vouchers:** generated `XXXX-XXXX-XXXX` codes, single-use, created up to
   200 at a time. `/?code=…` links open the faucet with the code filled in.
+
+A code's amount is the most it pays: a request may name a smaller `amount`
+(and then gets only that, using up the address's redemption), and without one
+gets the full amount. Above `TURNSTILE_ABOVE_SATS` the captcha must be
+Turnstile, code or not, so proof-of-work clients cannot redeem large codes.
 
 Matching ignores case, spaces and dashes. Unknown, disabled, expired and
 fully redeemed codes all get the same `400`, so the endpoint does not reveal
@@ -524,7 +561,11 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `RATE_LIMIT_PER_HOUR` | Durable per-IP limit for the soft proof-of-work tier (IPv6 bucketed to /48) |
 | `RATE_LIMIT_TURNSTILE_PER_HOUR` | Same limit for a request backed by Turnstile |
 | `RATE_LIMIT_HARD_PER_HOUR` | Same limit for a request backed by the hard proof of work |
-| `DAILY_BUDGET_SATS` | Hard ceiling on total payouts per UTC day |
+| `DAILY_BUDGET_SATS` | Hard ceiling on total captcha-path payouts per UTC day |
+| `PUBLIC_MAX_SATS` | Largest `amount` a captcha alone may ask for (testnet only; default `PAYOUT_SATS`) |
+| `TURNSTILE_ABOVE_SATS` | Amounts above this need Turnstile, not proof of work (default `PUBLIC_MAX_SATS`) |
+| `IP_DAILY_SATS` | Captcha-path DASH one IP may receive per rolling 24 h (default 0: no limit; otherwise at least `PUBLIC_MAX_SATS`) |
+| `LARGE_DAILY_BUDGET_SATS` | Part of `DAILY_BUDGET_SATS` asks above `TURNSTILE_ABOVE_SATS` may use per UTC day (default: all of it) |
 | `MIN_BALANCE_SATS` | Below this, status reports `low_balance` |
 | `POOL_MIN` / `POOL_TARGET` / `POOL_UTXO_SATS` | Pool maintenance thresholds |
 | `TURNSTILE_SITE_KEY` | Public key, served to the UI |
@@ -547,6 +588,8 @@ Per-environment vars live in `wrangler.jsonc`; secrets are set with
 | `AUTH_EMAIL_DOMAIN` / `AUTH_GITHUB_ORG` | Who may sign in (default `dash.org` / `dashpay`) |
 | `AUTH_ADMINS` | Comma-separated admins: `google:<email>`, `google:@<domain>`, `github:<numeric id>` |
 | `SELF_SERVE_KEY_TTL_DAYS` / `MAX_KEYS_PER_USER` | Self-serve key lifetime in days (0, never expire) and per-person cap (5) |
+| `ADMIN_KEY_TTL_DAYS` | Lifetime of admin-minted keys in days (default 90, at least 1); also caps existing admin keys |
+| `ADMIN_SESSION_TTL_HOURS` | Hours after sign-in that a session keeps admin rights (default 8, at least 1) |
 | `SESSION_SECRET` | **secret**, ≥32 characters. Signs session and OAuth-state cookies; rotating it signs everyone out |
 | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | **secrets**. Google OAuth web client; redirect URI `AUTH_ORIGIN/auth/google/callback` |
 | `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | **secrets**. GitHub OAuth app; callback `AUTH_ORIGIN/auth/github/callback` |
