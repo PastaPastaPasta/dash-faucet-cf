@@ -167,7 +167,7 @@
         /** Who is signed in here, and where to sign in otherwise. Cookies are host-only. */
         async function loadSession() {
             try {
-                const response = await fetch("/api/me", { credentials: "same-origin" });
+                const response = await fetch("/api/me", { credentials: "same-origin", signal: AbortSignal.timeout(8000) });
                 const me = await response.json();
                 if (me.authenticated && me.csrf) {
                     session = { email: me.user.email, csrf: me.csrf };
@@ -252,9 +252,14 @@
                 : "A short proof-of-work challenge replaces the CAPTCHA. " +
                     (autoStart ? "It runs automatically; leave this tab open." : "Click the challenge below to try again.");
 
+            const request = pendingRequest;
             progress.textContent = "Loading challenge…";
             await loadCapWidgetScript();
             await customElements.whenDefined("cap-widget");
+            if (!request || pendingRequest !== request || capWidget) {
+                if (!capWidget) hideHardCaptcha();
+                return;
+            }
 
             const widget = document.createElement("cap-widget");
             capWidget = widget;
@@ -568,8 +573,10 @@
                     addressInput.focus();
                     return;
                 }
+                const submitted = [addressInput.value, $("amountInput").value, $("codeInput").value].join("\n");
                 await sessionPromise;
                 if (coreRequestPending || capSolving) return;
+                if ([addressInput.value, $("amountInput").value, $("codeInput").value].join("\n") !== submitted) return;
             }
             const { address, amount, code } = proof ? pendingRequest : {
                 address: addressInput.value.trim(),
