@@ -128,3 +128,7 @@ dialog h2 { margin-bottom: 14px; }
 .dh-tabs, .dh-seg { margin-bottom: 18px; }
 
 body > main { width: 100%; }
+.signin .keys-preview { margin: 40px 0 0; max-width: 72ch; }
+.keys-preview h2 { margin-bottom: 8px; }
+.keys-preview pre { margin-top: 14px; }
+.keys-preview .mono { font-size: .88em; white-space: nowrap; }

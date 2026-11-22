@@ -5,8 +5,6 @@ const origin = "https://faucet.test";
 const ADDRESS = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
 
 async function fillCode(page, code) {
-  const disclosure = page.locator("details.code-row");
-  if (!(await disclosure.evaluate((el) => el.open))) await disclosure.locator("summary").click();
   await page.locator("#codeInput").fill(code);
 }
 
@@ -281,7 +279,8 @@ test("shows an amber request action, invitation stock and both reserves before i
   await expect(page.locator('#coreFaucetBtn')).toHaveClass(/dh-btn--primary/);
   await expect(page.locator('#invitationEntry')).toBeVisible();
   await expect(page.locator('#invitationEntryAvailability')).toHaveText('1 invitation ready now');
-  await expect(page.locator('#invitationEntry .description')).toHaveText('Get an invitation with 0.03 DASH for one identity and a non-contested name. Open it in Dash Wallet, then choose your name.');
+  await expect(page.locator('#invitationEntry .description')).toHaveText('Get an invitation with 0.03 DASH for one identity and a non-contested name.');
+  await expect(page.locator('#invitationEntry .invitation-steps li')).toHaveText(['Get an invitation here.', 'Open it in Dash Wallet.', 'Choose your name. The invitation pays for it.']);
   await expect(page.locator('#networkChoice')).toHaveClass('dh-btn');
   const request = await page.locator('.faucet-request').boundingBox();
   const invitation = await page.locator('#invitationEntry').boundingBox();
@@ -295,7 +294,9 @@ test("shows an amber request action, invitation stock and both reserves before i
   await expect(page.locator('#invitationReserveLabel')).toHaveText('Mainnet invitations');
   await expect(page.locator('#invitationReserveBalance')).toHaveText('0.0078');
   await expect(page.locator('#invitationReserveCurrency')).toHaveText('DASH');
-  await expect(page.locator('#treasuryPanel')).not.toHaveAttribute('open');
+  await expect(page.locator('#codeInput')).toBeVisible();
+  await expect(page.locator('#coreFunding')).toBeVisible();
+  await expect(page.locator('#coreNetworkWarning')).toHaveText('testnet DASH only');
   await page.locator('#coreFaucetBtn').click();
   await expect(page.locator('#addressValidation')).toHaveText('Enter a receiving address.');
   await expect(page.locator('#addressInput')).toBeFocused();
@@ -329,7 +330,7 @@ for (const [balance, expectedState] of [[1000, "good"], [999.99999999, "warn"], 
     await expect(page.locator("#coreReserve")).toHaveAttribute("data-state", expectedState);
     await expect(page.locator("#coreReserveCoverage")).toContainText("1,000 tDASH/day");
     await expect(page.locator("#invitationReserve")).toHaveAttribute("data-state", "good");
-    await expect(page.locator("#invitationReserveCoverage")).toHaveText("1 invitation ready now");
+    await expect(page.locator("#invitationReserveCoverage")).toHaveText("1 invitation ready now · 0 preparing · 0 reserved");
   });
 }
 
@@ -349,9 +350,7 @@ test("home restores the separate mainnet invitation funding address and Copy", a
   });
   const reserve = { invitationDepositAddress: address };
   const requests = await openFaucet(page, { reserve });
-  await page.locator("#treasuryPanel summary").click();
   await expect(page.locator("#invitationHomeTreasuryCard")).toBeVisible();
-  await expect(page.locator("#invitationNetworkBadge")).toHaveText("Mainnet · real DASH");
   await expect(page.locator("#invitationHomeTreasuryCard .network-warning")).toHaveText("Send real mainnet DASH only to this address.");
   await expect(page.locator("#invitationDepositAddress")).toHaveAttribute("value", address);
   expect(await page.locator("#invitationDepositAddress").evaluate(element => element.textContent)).toBe(address);
@@ -367,7 +366,7 @@ test("home restores the separate mainnet invitation funding address and Copy", a
 
 test("home hides invitation funding when status does not provide an address", async ({ page }) => {
   const requests = await openFaucet(page);
-  await page.locator("#treasuryPanel summary").click();
+  await expect(page.locator("#invitationReserve")).toBeVisible();
   await expect(page.locator("#invitationHomeTreasuryCard")).toBeHidden();
   expect(requests).toEqual([]);
 });
@@ -405,9 +404,16 @@ test("amounts above the public maximum ask for a sign-in or a code", async ({ pa
   await page.locator("#amountInput").fill("500");
   await expect(page.locator("#signInBox")).toBeVisible();
   await expect(page.locator("#signInLink")).toHaveAttribute("href", "https://login.test/auth/google/login?return=/");
-  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Sign in or add a code for 500 tDASH");
+  await page.locator("#amountInput").press("Enter");
   await expect(page.locator("#coreErrorBox")).toContainText("dash.org sign-in or a code");
   expect(requests).toEqual([]);
+  await page.locator("#amountInput").fill("100");
+  await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 100 tDASH");
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
 
   await page.locator("#signInCodeBtn").click();
   await expect(page.locator("#codeInput")).toBeFocused();
@@ -429,6 +435,9 @@ test("a signed-in request skips the captcha and sends the CSRF token", async ({ 
   });
   await page.locator("#amountInput").fill("1500");
   await expect(page.locator("#amountHint")).toContainText("Signed in as dev@dash.org");
+  await expect(page.locator("#signInBox")).toBeHidden();
+  await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 1,500 tDASH");
   await page.locator("#coreFaucetBtn").click();
   await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
   expect(requests).toEqual([{ address: ADDRESS, amount: 1500 }]);
@@ -677,4 +686,78 @@ test("an expired invitation can no longer be opened or scanned", async ({ page }
   await expect(link).not.toHaveAttribute("href");
   await expect(link).toHaveAttribute("aria-disabled", "true");
   await expect(page.locator("#invitationList .invitation-qr")).toBeHidden();
+});
+
+test("the code field is visible before any click and a shared code fills it", async ({ page }) => {
+  await openFaucet(page, { turnstile: "success", amountLimits: LIMITS, query: "?code=dashcon-26" });
+  await expect(page.locator("#codeInput")).toBeVisible();
+  await expect(page.locator("#codeInput")).toHaveValue("dashcon-26");
+  await expect(page.locator("label[for=codeInput]")).toHaveText("Code optional");
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Redeem code");
+});
+
+test("both funding addresses show up front with their own Copy buttons", async ({ page }) => {
+  const core = "yPrynRN6ViX2rCcRL5SoSi8ntcWgdHSEaS";
+  const invitation = "Xm77DBJzsf6aMBSb25BAzTNxcjgvUECEeB";
+  await page.addInitScript(() => {
+    window.copiedFunding = [];
+    Object.defineProperty(navigator, "clipboard", { value: { writeText: async text => window.copiedFunding.push(text) } });
+  });
+  const requests = await openFaucet(page, { reserve: { depositAddress: core, invitationDepositAddress: invitation, invitationInventory: { available: 3, preparing: 2, issued: 1 } } });
+  await expect(page.locator("details")).toHaveCount(0);
+  await expect(page.locator("#reserveSummary .reserve-intro")).toHaveText("Two networks, two separate treasuries. Fund the address for the service you want to support.");
+  await expect(page.locator("#coreFunding .network-warning")).toHaveText("Send testnet DASH only to this address.");
+  await expect(page.locator("#invitationHomeTreasuryCard .network-warning")).toHaveText("Send real mainnet DASH only to this address.");
+  await expect(page.locator("#coreReserveNote")).toHaveText("1 tDASH per request");
+  await expect(page.locator("#invitationReserveNote")).toHaveText("Spendable balance, separate from coins locked in invitations.");
+  await expect(page.locator("#invitationReserveCoverage")).toHaveText("3 invitations ready now · 2 preparing · 1 reserved");
+  await expect(page.locator("#invitationEntryAvailability")).toHaveText("3 invitations ready now");
+  await page.locator("#coreFundingCopy").click();
+  await expect(page.locator("#coreFundingCopy")).toHaveText("Copied");
+  await page.locator("#invitationFundingCopy").click();
+  await expect(page.locator("#invitationFundingCopy")).toHaveText("Copied");
+  expect(await page.evaluate(() => window.copiedFunding)).toEqual([core, invitation]);
+  expect(requests).toEqual([]);
+});
+
+test("a large amount waits for the session check before the button is ready", async ({ page }) => {
+  let releaseMe;
+  const meReady = new Promise((resolve) => { releaseMe = resolve; });
+  await openFaucet(page, {
+    turnstile: "success",
+    amountLimits: LIMITS,
+    meResponse: async (route) => {
+      await meReady;
+      return route.fulfill({ json: { authenticated: true, user: { email: "dev@dash.org" }, csrf: "csrf-1", providers: ["google"], loginOrigin: origin } });
+    },
+  });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+  releaseMe();
+  await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
+  await expect(page.locator("#coreFaucetBtn")).toHaveText("Get 500 tDASH");
+});
+
+test("Enter a code focuses the visible code field and unlocks the request", async ({ page }) => {
+  const requests = await openFaucet(page, { turnstile: "success", amountLimits: LIMITS });
+  await page.locator("#amountInput").fill("500");
+  await expect(page.locator("#coreFaucetBtn")).toBeDisabled();
+  await page.locator("#signInCodeBtn").click();
+  await expect(page.locator("#codeInput")).toBeFocused();
+  await page.keyboard.type("masternode");
+  await expect(page.locator("#coreFaucetBtn")).toBeEnabled();
+  await page.locator("#coreFaucetBtn").click();
+  await expect(page.locator("#coreFaucetCard")).toHaveClass(/success/);
+  expect(requests).toEqual([{ address: ADDRESS, turnstileToken: "web-token", amount: 500, code: "masternode" }]);
+});
+
+test("the API key card shows only when keys and sign-in are available", async ({ page }) => {
+  await openFaucet(page, { amountLimits: LIMITS, reserve: { apiKeysEnabled: true } });
+  await expect(page.locator("#devEntry")).toBeVisible();
+  await expect(page.locator("#devEntry a")).toHaveAttribute("href", "/keys");
+});
+
+test("the API key card stays hidden without sign-in", async ({ page }) => {
+  await openFaucet(page, { reserve: { apiKeysEnabled: true } });
+  await expect(page.locator("#devEntry")).toBeHidden();
 });

@@ -99,6 +99,12 @@
         "Get a faucet API key",
         "Sign in to create keys that request testnet DASH for your scripts, CI and agents, with no captcha and no rate limits.",
       );
+      $("signIn").append(el("section", { class: "section keys-preview" },
+        el("h2", {}, "Using a key"),
+        el("p", { class: "dh-page-header__lede" },
+          "Send it as a bearer token to ", el("span", { class: "mono" }, "POST /api/core-faucet"),
+          ". Each request pays one testnet address; ", el("span", { class: "mono" }, "amount"), " is optional, in tDASH."),
+        el("pre", {}, usage("dfk_…"))));
       return;
     }
     maxKeys = me.maxKeys;

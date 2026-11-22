@@ -154,13 +154,18 @@ const Portal = (() => {
       : LOGIN_ERRORS[code];
     fill(
       container,
-      el("header", { class: "dh-page-header" }, el("h1", { class: "dh-page-header__title" }, heading), el("p", { class: "dh-page-header__lede" }, lede)),
+      el("header", { class: "dh-page-header" },
+        el("nav", { class: "dh-crumbs", "aria-label": "Breadcrumb" },
+          el("a", { href: "/" }, "Faucet"),
+          el("span", { "aria-current": "page" }, returnTo === "/admin" ? "Admin" : "API keys")),
+        el("h1", { class: "dh-page-header__title" }, heading),
+        el("p", { class: "dh-page-header__lede" }, lede)),
       error ? el("div", { class: "dh-error", role: "alert" }, error) : null,
       me.providers.length === 0
         ? el("p", { class: "muted" }, "Sign-in isn't set up on this server yet.")
         : el("div", { class: "providers" },
-            me.providers.map((p) =>
-              el("a", { class: "dh-btn dh-btn--secondary", href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
+            me.providers.map((p, i) =>
+              el("a", { class: `dh-btn ${i === 0 ? "dh-btn--primary" : "dh-btn--secondary"}`, href: `/auth/${p}/login?return=${returnTo}` }, PROVIDER_NAMES[p] || p))),
       el("p", { class: "muted fine" }, `Open to anyone with ${eligibility() || "an eligible account"}.`),
     );
     container.hidden = false;
