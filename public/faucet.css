@@ -18,14 +18,11 @@ h2.dh-h2 { margin-bottom: 12px; }
 .show-config .initial-view,.show-results .initial-view,.show-results .config-view { display: none; }
 .show-config .config-view,.show-results .results-view { display: block; }
 .show-results h2 { color: var(--dh-good); }
-.code-row { margin-top: 12px; }
-.code-row input { width: 100%; font-size: 14px; }
 .error.visible { display: block; }
 .stat-item { margin: 16px 0; }
 .stat-label { font-size: 13px; color: var(--dh-ink-2); margin-bottom: 6px; }
 .stat-value { overflow-wrap: anywhere; }
 .action-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
-.treasury-panel { margin: 32px 0 16px; }
 summary { font-weight: 620; cursor: pointer; }
 .treasury-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin: 20px 0; }
 .treasury-heading p,.treasury-detail,.network-warning { color: var(--dh-ink-2); font-size: 13px; }
@@ -67,8 +64,6 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #coreFaucetCard .description { margin-bottom: 16px; }
 #bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
-.code-row label { margin-top: 12px; }
-.code-row input { font-size: 16px; }
 .error:not(.visible) { display: none; }
 #coreFaucetCard { padding: 0; background: none; border: 0; }
 #addressIntro { margin-block: 0; }
@@ -85,12 +80,11 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 .reserve-figures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .reserve-figures dt { font-size: 13px; color: var(--dh-ink-2); margin-bottom: 4px; }
 .reserve-figures dd { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
-.reserve-figures strong { font-size: 26px; font-weight: 660; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.reserve-figures dd > strong { font-size: 26px; font-weight: 660; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .reserve-figures dd span { font-size: 13px; color: var(--dh-ink-2); }
 @media(max-width:720px) { .treasury-grid { grid-template-columns: 1fr; } .treasury-heading { flex-wrap: wrap; } .action-buttons > * { flex: 1 1 100%; } }
 @media(max-width:640px) {
   body:has(#coreFaucetCard) .dh-page-header { gap: 8px; margin-bottom: 20px; }
-  body:has(#coreFaucetCard) .code-row { margin-top: 12px; }
   .faucet-offers { gap: var(--dh-3); }
   .invitation-entry h2 { margin-bottom: 8px; }
   .invitation-entry .description { margin-bottom: 12px; }
@@ -105,23 +99,20 @@ body > main { width: 100%; }
 .faucet-source { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 32px; max-width: none; }
 .faucet-source > p { margin: 0; }
 .treasury-panel { border: 0; background: none; padding: 0; margin: 0; }
-.code-row { margin-top: 20px; }
 
 @media(min-width:721px) {
   body:has(#coreFaucetCard) > main.dh-page { padding-block: 32px 64px; }
   .faucet-home { display: flex; flex-direction: column; min-height: min(560px, calc(100vh - 260px)); }
   #addressIntro { margin-top: 12px; }
-  body:has(#coreFaucetCard) .treasury-panel { margin-top: 24px; }
   .faucet-source { margin-top: auto; padding-top: 24px; }
-  .treasury-panel[open] ~ .faucet-source { margin-top: 32px; }
 }
 
 @media(min-width:900px) {
   .faucet-home:has(#invitationEntry:not([hidden])) { max-width: none; }
   .faucet-home:has(#invitationEntry:not([hidden])) .reserve-figures { column-gap: var(--dh-5); }
-  .faucet-offers:has(> #invitationEntry:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .faucet-offers:has(> #invitationEntry:not([hidden])) > * { padding: var(--dh-5); }
-  .faucet-offers:has(> #invitationEntry:not([hidden])) > .faucet-request { background: var(--dh-surface); border: 1px solid var(--dh-line); border-radius: var(--dh-r3); }
+  .faucet-offers:has(#invitationEntry:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-request, .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-side > .dh-card { padding: var(--dh-5); }
+  .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-request { background: var(--dh-surface); border: 1px solid var(--dh-line); border-radius: var(--dh-r3); }
 }
 
 :root { --start-platform: #25B8A6; --start-platform-ink: #0A2A3D; --start-platform-soft: #DCF4F1; }
@@ -138,7 +129,7 @@ body > main { width: 100%; }
 .reserve-stat { --reserve-tone: var(--dh-line-2); min-width: 0; padding: 18px; border: 1px solid var(--dh-line); border-top: 3px solid var(--reserve-tone); border-radius: var(--dh-r3); background: var(--dh-surface); }
 .reserve-stat[data-state="good"] { --reserve-tone: var(--dh-good); }
 .reserve-stat[data-state="warn"] { --reserve-tone: var(--dh-warn); }
-.reserve-stat[data-state="good"] strong, .reserve-stat[data-state="warn"] strong { color: var(--reserve-tone); }
+.reserve-stat[data-state="good"] dd > strong, .reserve-stat[data-state="warn"] dd > strong { color: var(--reserve-tone); }
 .reserve-figures .reserve-coverage { display: block; color: var(--dh-ink-2); font-size: 13px; margin-top: 8px; }
 @media(max-width:640px) {
   .family-steps { font-size: 12px; }
@@ -147,9 +138,12 @@ body > main { width: 100%; }
   .reserve-stat { padding: 14px; }
 }
 
-.send-row { margin-top: 8px; }
 #addressValidation, #addressValidation:empty { display: block; min-height: 20px; margin-top: 4px; }
-.send-row > .amount-field { flex: 0 1 220px; }
+.request-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px 16px; margin-top: 8px; }
+.request-fields .dh-field { min-width: 0; }
+.code-field .dh-input { width: 100%; }
+.send-row { margin-top: 16px; }
+.send-row > .dh-btn { min-width: 200px; }
 .amount-field .dh-input { -moz-appearance: textfield; appearance: textfield; font-variant-numeric: tabular-nums; }
 .amount-field .dh-input::-webkit-outer-spin-button, .amount-field .dh-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 .amount-hint { margin-top: 8px; text-wrap: pretty; }
@@ -159,6 +153,29 @@ body > main { width: 100%; }
 .amount-hint[data-tone="good"]::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 8px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
 .sign-in-box { margin-top: 12px; }
 .sent-amount { overflow-wrap: anywhere; margin-bottom: 0; }
-@media(max-width:480px) { .send-row > .amount-field { flex: 1 1 100%; } }
+@media(max-width:480px) { .send-row > .dh-btn { width: 100%; } }
 /* iOS zooms into inputs with text under 16px. */
 @media(max-width:640px) { #coreFaucetCard .dh-input { font-size: 16px; } }
+
+.reserve-intro { color: var(--dh-ink-2); font-size: 14px; margin-bottom: 12px; text-wrap: pretty; }
+.reserve-stat { display: flex; flex-direction: column; }
+.reserve-figures .reserve-note { display: block; color: var(--dh-ink-2); font-size: 13px; margin-top: 4px; }
+.reserve-figures .reserve-coverage { margin-bottom: 14px; }
+.reserve-figures .funding-address { display: block; margin-top: auto; padding: 10px 12px; }
+.funding-address-header { margin-bottom: 4px; }
+.funding-address-label { font-weight: 560; }
+.funding-address dashhq-hash { display: block; overflow-wrap: anywhere; font-size: 13px; }
+.network-warning { margin-top: 6px; }
+.network-warning strong { color: var(--dh-ink); font-weight: 620; }
+
+.invitation-steps { display: grid; gap: 6px; margin: 0 0 20px; padding: 0; list-style: none; counter-reset: step; color: var(--dh-ink-2); }
+.invitation-steps li { display: flex; align-items: baseline; gap: 10px; counter-increment: step; }
+.invitation-steps li::before { content: counter(step); flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--start-platform-soft); color: var(--dh-ink); font-size: 12px; font-weight: 660; }
+.faucet-side { display: grid; gap: var(--dh-5); align-content: start; min-width: 0; }
+.faucet-side:not(:has(> :not([hidden]))) { display: none; }
+.dev-entry h2 { margin-bottom: 6px; }
+.dev-entry .description { margin-bottom: 10px; }
+@media(max-width:640px) { .faucet-side { gap: var(--dh-3); } }
+@media(max-width:899px) { .dev-entry { display: none; } .faucet-side:not(:has(> :not([hidden]):not(.dev-entry))) { display: none; } }
+@media(max-width:380px) { #coreFaucetCard #addressInput { padding-inline: 8px; letter-spacing: -0.04em; } }
+.reserve-summary { border-bottom: 0; padding-bottom: 0; }

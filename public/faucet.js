@@ -62,6 +62,7 @@
         let defaultAmount = 1;
         /** `{ email, csrf }` when signed in on this host; such requests skip the captcha. */
         let session = null;
+        let sessionChecking = false;
         let signInUrl = "";
         let canSignIn = false;
         /** Set once the server refused proof of work for this amount. */
@@ -85,7 +86,7 @@
             input.setAttribute("aria-invalid", String(Boolean(error && addressTouched)));
             $("addressValidation").textContent = addressTouched && error ? (value ? error : "Enter a receiving address.") : "";
             $("addressValidation").toggleAttribute("data-invalid", Boolean(error && addressTouched));
-            $("coreFaucetBtn").disabled = coreRequestPending || capSolving;
+            updateButtonState();
             return !error;
         }
 
@@ -105,14 +106,28 @@
             return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
         }
 
+        /** True while the amount is above the public maximum with no sign-in and no code. */
+        function signInRequired() {
+            const amount = requestedAmount();
+            return !session && !$("codeInput").value.trim() && !!amountLimits && !$("amountRow").hidden &&
+                amount !== null && amount > amountLimits.publicMax;
+        }
+
+        function updateButtonState() {
+            $("coreFaucetBtn").disabled = coreRequestPending || capSolving || signInRequired();
+        }
+
         function updateSendLabel() {
             const amount = requestedAmount();
             const code = $("codeInput").value.trim();
             let label = `Get ${coinName}`;
-            if (code && amount === null) label = "Redeem code";
+            if (sessionChecking && signInRequired()) label = "Checking sign-in…";
+            else if (signInRequired()) label = `Sign in or add a code for ${formatAmount(amount)} ${coinName}`;
+            else if (code && amount === null) label = "Redeem code";
             else if (amount === null && defaultAmount > 0) label = `Get ${formatAmount(defaultAmount)} ${coinName}`;
             else if (amount > 0) label = `Get ${formatAmount(amount)} ${coinName}`;
             $("coreFaucetBtn").querySelector(".btn-text").textContent = label;
+            updateButtonState();
         }
 
         function showSignIn(visible) {
@@ -152,8 +167,8 @@
             } else if (amount !== null && amount > amountLimits.publicMax) {
                 const limit = `Amounts above ${formatAmount(amountLimits.publicMax)} ${coinName} need a dash.org sign-in or a code`;
                 $("signInTitle").textContent = `${limit}.`;
-                setAmountHint(code ? `${limit}. Your code sets the most it pays.` : "");
-                showSignIn(!code);
+                setAmountHint(code ? `${limit}. Your code sets the most it pays.` : sessionChecking ? "Checking your dash.org sign-in…" : "");
+                showSignIn(!code && !sessionChecking);
             } else if (amount !== null && amount > amountLimits.turnstileAbove) {
                 setAmountHint(`Amounts above ${formatAmount(amountLimits.turnstileAbove)} ${coinName} need a full captcha check.`);
             } else {
@@ -166,6 +181,8 @@
 
         /** Who is signed in here, and where to sign in otherwise. Cookies are host-only. */
         async function loadSession() {
+            sessionChecking = true;
+            updateAmountHint();
             try {
                 const response = await fetch("/api/me", { credentials: "same-origin", signal: AbortSignal.timeout(8000) });
                 const me = await response.json();
@@ -181,6 +198,7 @@
             } catch {
                 session = null;
             }
+            sessionChecking = false;
             updateAmountHint();
         }
 
@@ -782,6 +800,19 @@
             return Number(data.invitationBalance) > 0 ? "Inventory is refilling" : "Inventory empty · funding required";
         }
 
+        /** Ready stock first, then what is still locked in preparing or reserved invitations. */
+        function invitationStock(data) {
+            const availability = invitationAvailability(data);
+            if (data.invitationError) return availability;
+            const inventory = data.invitationInventory || {};
+            const preparing = Number(inventory.preparing) || 0;
+            const reserved = Number(inventory.issued) || 0;
+            const parts = [availability];
+            if (!/preparing$/.test(availability)) parts.push(`${preparing.toLocaleString()} preparing`);
+            parts.push(`${reserved.toLocaleString()} reserved`);
+            return parts.join(" · ");
+        }
+
         function networkPresentation(network) {
             return network === "mainnet"
                 ? {
@@ -823,8 +854,17 @@
                     btn.textContent = original;
                     btn.classList.remove("copied");
                 }, 2000);
-            } catch (err) {
-                console.error("Failed to copy:", err);
+            } catch {
+                const target = btn.closest("dd, .funding-address")?.querySelector("dashhq-hash");
+                if (target) {
+                    const range = document.createRange();
+                    range.selectNodeContents(target);
+                    const sel = getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+                btn.textContent = "Select and copy";
+                setTimeout(() => { btn.textContent = original; }, 2000);
             }
         }
 
@@ -945,9 +985,9 @@
                     if (data.depositAddress) {
                         $("depositAddress").textContent = data.depositAddress;
                         $("depositAddress").setAttribute("value", data.depositAddress);
-                    } else {
-                        $("coreFundingCopy").disabled = true;
                     }
+                    $("coreFunding").hidden = !data.depositAddress;
+                    $("coreFundingCopy").disabled = !data.depositAddress;
                     amountLimits = data.amountLimits || null;
                     const publicMax = amountLimits?.publicMax;
                     const choosesAmount = publicMax > data.coreFaucetAmount;
@@ -961,11 +1001,14 @@
                     if (!showAmount) $("amountInput").value = "";
                     sessionPromise = data.accountUrl ? loadSession() : null;
                     if (!sessionPromise) updateAmountHint();
-                    const corePresentation = applyNetworkPresentation("core", data.network);
-                    $("coreTreasuryBalance").textContent = Number.isFinite(balance)
-                        ? `≈ ${balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "Unavailable";
+                    const corePresentation = networkPresentation(data.network);
+                    $("coreNetworkWarning").textContent = corePresentation.warning;
                     $("coreReserveLabel").textContent = `${networkName} faucet`;
-                    $("coreReserveBalance").textContent = $("coreTreasuryBalance").textContent;
+                    $("coreReserveBalance").textContent = Number.isFinite(balance)
+                        ? `≈ ${balance.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : "Unavailable";
+                    $("coreReserveNote").textContent = choosesAmount
+                        ? `Up to ${formatAmount(publicMax)} ${corePresentation.currency} per request`
+                        : `${formatAmount(Number(data.coreFaucetAmount))} ${corePresentation.currency} per request`;
                     $("coreReserveCurrency").textContent = corePresentation.currency;
                     const coreCoverage = reserveCoverage(balance, data.dailyBudgetSats, corePresentation.currency);
                     $("coreReserve").dataset.state = coreCoverage.state;
@@ -979,7 +1022,7 @@
                         $("invitationReserveCurrency").textContent = presentation.currency;
                         $("invitationReserve").dataset.state = data.invitationError ? "unknown"
                             : Number(data.invitationInventory?.available) > 0 ? "good" : "warn";
-                        $("invitationReserveCoverage").textContent = invitationAvailability(data);
+                        $("invitationReserveCoverage").textContent = invitationStock(data);
                         $("invitationEntryAmount").textContent = data.invitationAmount ?? "Unavailable";
                         $("invitationEntryCurrency").textContent = presentation.currency;
                         const kicker = $("invitationEntry").querySelector(".network-kicker");
@@ -991,19 +1034,9 @@
                     $("invitationDepositAddress").textContent = invitationAddress || "—";
                     $("invitationDepositAddress").setAttribute("value", invitationAddress || "—");
                     $("invitationFundingCopy").disabled = !invitationAddress;
-                    const invitationPresentation = networkPresentation(data.invitationNetwork || data.network);
-                    $("invitationNetworkBadge").textContent = invitationPresentation.badge;
-                    $("invitationNetworkWarning").textContent = invitationPresentation.warning;
+                    $("invitationNetworkWarning").textContent = networkPresentation(data.invitationNetwork || data.network).warning;
                     $("reserveStatus").textContent = "Live";
                     $("reserveSummary").hidden = false;
-                    $("coreTreasuryExact").textContent = `Exact balance: ${formatBalance(balance)} ${corePresentation.currency}`;
-                    $("coreTreasuryDetail").replaceChildren(...metaItems([
-                        choosesAmount
-                            ? `Up to ${publicMax} ${corePresentation.currency} per request`
-                            : `${data.coreFaucetAmount} ${corePresentation.currency} per request`,
-                        ...(Number.isFinite(Number(data.availableUtxos)) ? [`${Number(data.availableUtxos).toLocaleString()} spendable outputs`] : []),
-                    ]));
-                    $("treasuryPanel").hidden = false;
                 }
                 if (data.turnstileSiteKey) {
                     turnstileSiteKey = data.turnstileSiteKey;
@@ -1016,6 +1049,7 @@
                 if (!invitationPage) {
                     $("invitationEntry").hidden = Boolean(returnUrl) || !data.invitationsEnabled;
                     $("invitationEntryAvailability").textContent = invitationAvailability(data);
+                    $("devEntry").hidden = Boolean(returnUrl) || !data.apiKeysEnabled || !data.accountUrl;
                 }
                 if (data.invitationsEnabled && invitationPage) {
                     $("statusBar").textContent = "Mainnet invitations";
@@ -1078,7 +1112,6 @@
             const sharedCode = new URLSearchParams(location.search).get("code");
             if (sharedCode) {
                 $("codeInput").value = sharedCode.slice(0, 64);
-                $("codeInput").closest("details").open = true;
                 showCoreFaucetConfig();
             }
             const sharedAmount = Number(entryParams.get("amount"));
@@ -1096,10 +1129,7 @@
                     if (e.key === "Enter") requestCoreFaucet();
                 });
             }
-            $("signInCodeBtn").addEventListener("click", () => {
-                $("codeInput").closest("details").open = true;
-                $("codeInput").focus();
-            });
+            $("signInCodeBtn").addEventListener("click", () => $("codeInput").focus());
             if (returnUrl) {
                 $("returnBridgeBtn").href = returnUrl;
                 $("addressIntro").hidden = true;

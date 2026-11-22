@@ -42,7 +42,7 @@
                 <p id="addressHint" class="dh-field__help">A testnet address starts with y.</p>
                 <input type="text" inputmode="text" aria-describedby="addressHint addressValidation" id="addressInput" class="dh-input dh-input--mono" placeholder="y… address" autocomplete="off" spellcheck="false">
                 <p id="addressValidation" class="dh-field__help" aria-live="polite"></p>
-                <div class="dh-inline-form send-row">
+                <div class="request-fields">
                     <div class="dh-field amount-field" id="amountRow" hidden>
                         <label class="dh-field__label" for="amountInput">Amount</label>
                         <div class="dh-input-group">
@@ -50,25 +50,26 @@
                             <span class="dh-input-group__addon coin-name" aria-hidden="true">tDASH</span>
                         </div>
                     </div>
-                    <button class="btn dh-btn dh-btn--primary" id="coreFaucetBtn">
-                        <span class="btn-text">Get 1 tDASH</span>
-                    </button>
+                    <div class="dh-field code-field">
+                        <label class="dh-field__label" for="codeInput">Code <span class="dh-field__optional">optional</span></label>
+                        <input type="text" id="codeInput" placeholder="If you have one" autocomplete="off" spellcheck="false" maxlength="64" class="dh-input" aria-describedby="codeHint">
+                        <span class="dh-sr" id="codeHint">A voucher or event code. Leave it blank for a standard request.</span>
+                    </div>
                 </div>
                 <p class="dh-field__help amount-hint" id="amountHint" aria-live="polite"></p>
                 <div class="dh-notice dh-notice--info sign-in-box" id="signInBox" hidden>
-                    <p class="dh-notice__title" id="signInTitle">Larger amounts need a dash.org sign-in or a code.</p>
+                    <p class="dh-notice__title" id="signInTitle" role="status">Larger amounts need a dash.org sign-in or a code.</p>
                     <p id="signInDescription">Sign in with your dash.org account, or use a voucher or event code.</p>
                     <div class="dh-notice__actions">
                         <a class="dh-btn" id="signInLink" href="/keys">Sign in with dash.org</a>
                         <button type="button" class="dh-btn dh-btn--quiet" id="signInCodeBtn">Enter a code</button>
                     </div>
                 </div>
-                <details class="code-row dh-disclosure">
-                    <summary><span>Use a voucher or event code</span></summary>
-                    <label class="dh-field__label" for="codeInput">Code (optional)</label>
-                    <input type="text" id="codeInput" placeholder="Enter your code" autocomplete="off" spellcheck="false" maxlength="64" class="dh-input">
-                    <p class="dh-field__help">Only needed if an event organiser gave you a code. Leave it blank for a standard request.</p>
-                </details>
+                <div class="send-row">
+                    <button class="btn dh-btn dh-btn--primary" id="coreFaucetBtn">
+                        <span class="btn-text">Get 1 tDASH</span>
+                    </button>
+                </div>
                 <div class="turnstile-holder" id="turnstileHolder"></div>
                 <div class="hard-cap" id="hardCapBox">
                     <strong id="capTitle">Hourly limit reached</strong>
@@ -102,16 +103,28 @@
         <p id="addressIntro"><a data-family="bridge" data-path="/?mode=create&amp;journey=start" data-network="testnet" href="https://bridge.thepasta.org/?mode=create&amp;journey=start&amp;network=testnet">No address yet? Start on Testnet</a></p>
         </div>
 
+        <div class="faucet-side">
         <section class="dh-card invitation-entry" id="invitationEntry" aria-labelledby="invitationEntryHeading">
             <span class="offer-tile" aria-hidden="true">ID</span>
             <p class="network-kicker mainnet">Mainnet · real DASH</p>
             <h2 class="dh-h2" id="invitationEntryHeading">Create a Dash Identity</h2>
-            <p class="description">Get an invitation with <span id="invitationEntryAmount">…</span> <span id="invitationEntryCurrency">DASH</span> for one identity and a non-contested name. Open it in Dash Wallet, then choose your name.</p>
+            <p class="description">Get an invitation with <span id="invitationEntryAmount">…</span> <span id="invitationEntryCurrency">DASH</span> for one identity and a non-contested name.</p>
+            <ol class="invitation-steps" aria-label="How it works">
+                <li>Get an invitation here.</li>
+                <li>Open it in Dash Wallet.</li>
+                <li>Choose your name. The invitation pays for it.</li>
+            </ol>
             <div class="dh-actions">
                 <a class="dh-btn" id="networkChoice" href="/invitations">Get invitation</a>
                 <p class="dh-actions__note" id="invitationEntryAvailability" role="status">Checking invitation availability…</p>
             </div>
         </section>
+        <section class="dh-card dev-entry" id="devEntry" aria-labelledby="devEntryHeading" hidden>
+            <h2 class="dh-h3" id="devEntryHeading">Testnet DASH for scripts and CI</h2>
+            <p class="description">An API key requests tDASH without a captcha. Sign in with dash.org to create one.</p>
+            <a class="dh-link--go" href="/keys">Get an API key</a>
+        </section>
+        </div>
         </div>
 
         <section class="reserve-summary" id="reserveSummary" aria-labelledby="reserveHeading" hidden>
@@ -119,67 +132,39 @@
                 <h2 class="dh-h3" id="reserveHeading">Faucet reserves</h2>
                 <span class="dh-meta" id="reserveStatus">Live</span>
             </div>
+            <p class="reserve-intro">Two networks, two separate treasuries. Fund the address for the service you want to support.</p>
             <dl class="reserve-figures">
                 <div class="reserve-stat" id="coreReserve">
                     <dt id="coreReserveLabel">Testnet faucet</dt>
                     <dd><strong id="coreReserveBalance">—</strong> <span id="coreReserveCurrency">tDASH</span></dd>
+                    <dd class="reserve-note" id="coreReserveNote"></dd>
                     <dd class="reserve-coverage" id="coreReserveCoverage"></dd>
-                </div>
-                <div class="reserve-stat" id="invitationReserve" hidden>
-                    <dt id="invitationReserveLabel">Mainnet invitations</dt>
-                    <dd><strong id="invitationReserveBalance">—</strong> <span id="invitationReserveCurrency">DASH</span></dd>
-                    <dd class="reserve-coverage" id="invitationReserveCoverage"></dd>
-                </div>
-            </dl>
-        </section>
-
-        <details class="dh-disclosure treasury-panel" id="treasuryPanel" hidden>
-            <summary><span>Fund the faucet</span></summary>
-            <div class="treasury-heading">
-                <div>
-                    <h2 class="dh-h2">Faucet reserves</h2>
-                    <p>Fund only the network shown for this service.</p>
-                </div>
-                <span class="live-pill dh-badge dh-badge--good">Live</span>
-            </div>
-            <div class="treasury-grid">
-                <article class="treasury-card">
-                    <div class="treasury-card-top">
-                        <div class="treasury-card-title">
-                            <h3 class="dh-h3">Testnet faucet</h3>
-                            <span class="network-badge dh-badge dh-badge--info" id="coreNetworkBadge">Testnet</span>
-                        </div>
-                        <div class="treasury-balance"><strong id="coreTreasuryBalance">—</strong> <span id="coreTreasuryCurrency">tDASH</span></div>
-                        <p class="treasury-detail" id="coreTreasuryExact"></p>
-                        <p class="treasury-detail dh-meta" id="coreTreasuryDetail">Loading payout status…</p>
-                    </div>
-                    <div class="funding-address">
+                    <dd class="funding-address" id="coreFunding" hidden>
                         <div class="funding-address-header">
                             <span class="funding-address-label">Funding address</span>
                             <button class="copy-btn dh-btn dh-btn--sm" id="coreFundingCopy" data-copy="depositAddress">Copy</button>
                         </div>
                         <dashhq-hash full no-copy id="depositAddress" value="—">—</dashhq-hash>
                         <p class="network-warning">Send <strong id="coreNetworkWarning">testnet DASH only</strong> to this address.</p>
-                    </div>
-                </article>
-                <article class="treasury-card" id="invitationHomeTreasuryCard" hidden>
-                    <div class="treasury-card-title">
-                        <h3 class="dh-h3">Identity invitations</h3>
-                        <span class="network-badge dh-badge dh-badge--info" id="invitationNetworkBadge">Mainnet · real DASH</span>
-                    </div>
-                    <div class="funding-address">
+                    </dd>
+                </div>
+                <div class="reserve-stat" id="invitationReserve" hidden>
+                    <dt id="invitationReserveLabel">Mainnet invitations</dt>
+                    <dd><strong id="invitationReserveBalance">—</strong> <span id="invitationReserveCurrency">DASH</span></dd>
+                    <dd class="reserve-note" id="invitationReserveNote">Spendable balance, separate from coins locked in invitations.</dd>
+                    <dd class="reserve-coverage" id="invitationReserveCoverage"></dd>
+                    <dd class="funding-address" id="invitationHomeTreasuryCard" hidden>
                         <div class="funding-address-header">
                             <span class="funding-address-label">Funding address</span>
                             <button class="copy-btn dh-btn dh-btn--sm" id="invitationFundingCopy" data-copy="invitationDepositAddress">Copy</button>
                         </div>
                         <dashhq-hash full no-copy id="invitationDepositAddress" value="—">—</dashhq-hash>
                         <p class="network-warning">Send <strong id="invitationNetworkWarning">real mainnet DASH only</strong> to this address.</p>
-                    </div>
-                </article>
-            </div>
-        </details>
+                    </dd>
+                </div>
+            </dl>
+        </section>
 
-        <span id="coreNetworkLabel" hidden></span><span id="coreNetworkKicker" hidden></span>
         <button type="button" id="retryStatusBtn" class="dh-btn" hidden>Retry faucet status</button>
         <div class="dh-sources faucet-source"><p class="dh-meta" id="statusBar" role="status">Loading faucet status…</p><p class="dh-meta"><span><a href="/api/status">Faucet status API</a></span><time id="statusSource" class="dh-time">No status read yet</time></p></div>
 
