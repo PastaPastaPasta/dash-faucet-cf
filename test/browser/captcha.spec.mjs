@@ -295,7 +295,7 @@ test("shows an amber request action, invitation stock and both reserves before i
   await expect(page.locator('#invitationReserveBalance')).toHaveText('0.0078');
   await expect(page.locator('#invitationReserveCurrency')).toHaveText('DASH');
   await expect(page.locator('#codeInput')).toBeVisible();
-  await expect(page.locator('#coreFunding')).toBeVisible();
+  await expect(page.locator('#coreFunding')).toBeHidden();
   await expect(page.locator('#coreNetworkWarning')).toHaveText('testnet DASH only');
   await page.locator('#coreFaucetBtn').click();
   await expect(page.locator('#addressValidation')).toHaveText('Enter a receiving address.');

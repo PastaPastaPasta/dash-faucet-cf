@@ -58,7 +58,7 @@
                 </div>
                 <p class="dh-field__help amount-hint" id="amountHint" aria-live="polite"></p>
                 <div class="dh-notice dh-notice--info sign-in-box" id="signInBox" hidden>
-                    <p class="dh-notice__title" id="signInTitle">Larger amounts need a dash.org sign-in or a code.</p>
+                    <p class="dh-notice__title" id="signInTitle" role="status">Larger amounts need a dash.org sign-in or a code.</p>
                     <p id="signInDescription">Sign in with your dash.org account, or use a voucher or event code.</p>
                     <div class="dh-notice__actions">
                         <a class="dh-btn" id="signInLink" href="/keys">Sign in with dash.org</a>
@@ -139,7 +139,7 @@
                     <dd><strong id="coreReserveBalance">—</strong> <span id="coreReserveCurrency">tDASH</span></dd>
                     <dd class="reserve-note" id="coreReserveNote"></dd>
                     <dd class="reserve-coverage" id="coreReserveCoverage"></dd>
-                    <dd class="funding-address" id="coreFunding">
+                    <dd class="funding-address" id="coreFunding" hidden>
                         <div class="funding-address-header">
                             <span class="funding-address-label">Funding address</span>
                             <button class="copy-btn dh-btn dh-btn--sm" id="coreFundingCopy" data-copy="depositAddress">Copy</button>

@@ -172,9 +172,10 @@ body > main { width: 100%; }
 .invitation-steps li { display: flex; align-items: baseline; gap: 10px; counter-increment: step; }
 .invitation-steps li::before { content: counter(step); flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--start-platform-soft); color: var(--dh-ink); font-size: 12px; font-weight: 660; }
 .faucet-side { display: grid; gap: var(--dh-5); align-content: start; min-width: 0; }
+.faucet-side:not(:has(> :not([hidden]))) { display: none; }
 .dev-entry h2 { margin-bottom: 6px; }
 .dev-entry .description { margin-bottom: 10px; }
 @media(max-width:640px) { .faucet-side { gap: var(--dh-3); } }
-@media(max-width:899px) { .dev-entry { display: none; } }
+@media(max-width:899px) { .dev-entry { display: none; } .faucet-side:not(:has(> :not([hidden]):not(.dev-entry))) { display: none; } }
 @media(max-width:380px) { #coreFaucetCard #addressInput { padding-inline: 8px; letter-spacing: -0.04em; } }
 .reserve-summary { border-bottom: 0; padding-bottom: 0; }

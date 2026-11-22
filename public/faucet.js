@@ -62,6 +62,7 @@
         let defaultAmount = 1;
         /** `{ email, csrf }` when signed in on this host; such requests skip the captcha. */
         let session = null;
+        let sessionChecking = false;
         let signInUrl = "";
         let canSignIn = false;
         /** Set once the server refused proof of work for this amount. */
@@ -120,12 +121,13 @@
             const amount = requestedAmount();
             const code = $("codeInput").value.trim();
             let label = `Get ${coinName}`;
-            if (signInRequired()) label = `Sign in or add a code for ${formatAmount(amount)} ${coinName}`;
+            if (sessionChecking && signInRequired()) label = "Checking sign-in…";
+            else if (signInRequired()) label = `Sign in or add a code for ${formatAmount(amount)} ${coinName}`;
             else if (code && amount === null) label = "Redeem code";
             else if (amount === null && defaultAmount > 0) label = `Get ${formatAmount(defaultAmount)} ${coinName}`;
             else if (amount > 0) label = `Get ${formatAmount(amount)} ${coinName}`;
             $("coreFaucetBtn").querySelector(".btn-text").textContent = label;
-            if (!coreRequestPending) updateButtonState();
+            updateButtonState();
         }
 
         function showSignIn(visible) {
@@ -165,8 +167,8 @@
             } else if (amount !== null && amount > amountLimits.publicMax) {
                 const limit = `Amounts above ${formatAmount(amountLimits.publicMax)} ${coinName} need a dash.org sign-in or a code`;
                 $("signInTitle").textContent = `${limit}.`;
-                setAmountHint(code ? `${limit}. Your code sets the most it pays.` : "");
-                showSignIn(!code);
+                setAmountHint(code ? `${limit}. Your code sets the most it pays.` : sessionChecking ? "Checking your dash.org sign-in…" : "");
+                showSignIn(!code && !sessionChecking);
             } else if (amount !== null && amount > amountLimits.turnstileAbove) {
                 setAmountHint(`Amounts above ${formatAmount(amountLimits.turnstileAbove)} ${coinName} need a full captcha check.`);
             } else {
@@ -179,6 +181,8 @@
 
         /** Who is signed in here, and where to sign in otherwise. Cookies are host-only. */
         async function loadSession() {
+            sessionChecking = true;
+            updateAmountHint();
             try {
                 const response = await fetch("/api/me", { credentials: "same-origin", signal: AbortSignal.timeout(8000) });
                 const me = await response.json();
@@ -194,6 +198,7 @@
             } catch {
                 session = null;
             }
+            sessionChecking = false;
             updateAmountHint();
         }
 
@@ -849,8 +854,17 @@
                     btn.textContent = original;
                     btn.classList.remove("copied");
                 }, 2000);
-            } catch (err) {
-                console.error("Failed to copy:", err);
+            } catch {
+                const target = btn.closest("dd, .funding-address")?.querySelector("dashhq-hash");
+                if (target) {
+                    const range = document.createRange();
+                    range.selectNodeContents(target);
+                    const sel = getSelection();
+                    sel.removeAllRanges();
+                    sel.addRange(range);
+                }
+                btn.textContent = "Select and copy";
+                setTimeout(() => { btn.textContent = original; }, 2000);
             }
         }
 
@@ -971,9 +985,9 @@
                     if (data.depositAddress) {
                         $("depositAddress").textContent = data.depositAddress;
                         $("depositAddress").setAttribute("value", data.depositAddress);
-                    } else {
-                        $("coreFundingCopy").disabled = true;
                     }
+                    $("coreFunding").hidden = !data.depositAddress;
+                    $("coreFundingCopy").disabled = !data.depositAddress;
                     amountLimits = data.amountLimits || null;
                     const publicMax = amountLimits?.publicMax;
                     const choosesAmount = publicMax > data.coreFaucetAmount;
