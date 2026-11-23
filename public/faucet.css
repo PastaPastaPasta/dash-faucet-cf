@@ -64,7 +64,7 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
 .error:not(.visible) { display: none; }
-#coreFaucetCard { padding: 0; background: none; border: 0; }
+#coreFaucetCard { padding: 0; background: none; border: 0; box-shadow: none; }
 #addressIntro { margin-block: 0; }
 #addressIntro a { display: flex; align-items: center; gap: 8px; padding-block: 10px; font: 560 15px/1.5 var(--dh-font); text-decoration: none; }
 #addressIntro a::before { content: "→"; flex: none; width: 16px; text-align: center; }
