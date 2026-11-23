@@ -17,6 +17,7 @@ import {
   toDash,
 } from "./config";
 import { describeError } from "./errors";
+import { mainnetHomeRedirect } from "./home";
 import { hashInvitationSignal, invitationDevice } from "./invitation";
 import { AddressError, addressToPubKeyHash } from "./keys";
 import {
@@ -606,6 +607,11 @@ async function handleInvitation(request: Request, env: Env): Promise<Response> {
   );
 }
 
+function servesMainnetOnlyAsInvitations(env: Env): boolean {
+  const cfg = resolveConfig(env);
+  return cfg.network !== "mainnet" && cfg.invitations.enabled && cfg.invitations.network === "mainnet";
+}
+
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
 
@@ -614,6 +620,10 @@ async function route(request: Request, env: Env): Promise<Response> {
     (url.pathname.startsWith("/api/") || url.pathname.startsWith("/cap/"))
   ) {
     return preflight();
+  }
+  if (request.method === "GET" || request.method === "HEAD") {
+    const target = mainnetHomeRedirect(url);
+    if (target && servesMainnetOnlyAsInvitations(env)) return Response.redirect(target, 302);
   }
   if (url.pathname === "/health") {
     return json({ status: "healthy" });

@@ -23,11 +23,12 @@
   "env": {
     "testnet": {
       // The portal pages go through the Worker first, so on any host but the
-      // login origin they redirect there (session cookies are host-only).
+      // login origin they redirect there (session cookies are host-only). So
+      // does `/`, so `/?network=mainnet` lands on the mainnet invitations.
       "assets": {
         "directory": "./public",
         "binding": "ASSETS",
-        "run_worker_first": ["/keys", "/keys.html", "/admin", "/admin.html"]
+        "run_worker_first": ["/", "/keys", "/keys.html", "/admin", "/admin.html"]
       },
       "routes": [
         { "pattern": "faucet.dashhq.org", "custom_domain": true },

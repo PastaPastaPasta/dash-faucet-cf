@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { test, expect } from "@playwright/test";
+import { mainnetHomeRedirect } from "../../src/home.ts";
 
 const origin = "https://faucet.test";
 const ADDRESS = "yZgQUp3D4cxQSa5YvAZcmmu17xkuSk1uKs";
@@ -10,7 +11,7 @@ async function fillCode(page, code) {
 
 // Exercise the shipped page with deterministic CAPTCHA providers and payouts.
 // Worker tests separately solve and verify real CAP challenges and rate tiers.
-async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "", reserve = {}, statusCode = 200, amountLimits, me, meResponse, headers = [], invitationResponse, blockShell = false } = {}) {
+async function openFaucet(page, { turnstile = "missing", network = "testnet", responses = [], statusResponses = [], invitation = false, query = "", reserve = {}, statusCode = 200, amountLimits, me, meResponse, headers = [], invitationResponse, blockShell = false, startPath } = {}) {
   const requests = [];
   const startsUnavailable = statusResponses.length > 0;
   await page.route(`${origin}/**`, async (route) => {
@@ -83,7 +84,7 @@ async function openFaucet(page, { turnstile = "missing", network = "testnet", re
       };
     }
   }, { turnstile });
-  await page.goto(origin + (invitation ? "/invitations" : "/") + query);
+  await page.goto(origin + (startPath ?? (invitation ? "/invitations" : "/")) + query);
   if (startsUnavailable) return requests;
   await expect(page.locator("#statusBar")).toContainText(invitation ? "Mainnet invitations" : reserve.status === "low_balance" ? "faucet low balance" : "Faucet online");
   if (!invitation) {
@@ -760,4 +761,34 @@ test("the API key card shows only when keys and sign-in are available", async ({
 test("the API key card stays hidden without sign-in", async ({ page }) => {
   await openFaucet(page, { reserve: { apiKeysEnabled: true } });
   await expect(page.locator("#devEntry")).toBeHidden();
+});
+
+// The Worker's 302 itself is covered in test/worker/home.test.ts; this checks where it sends people.
+test("/?network=mainnet is sent to the Mainnet invitations, keeping other parameters", async ({ page }) => {
+  const target = new URL(mainnetHomeRedirect(new URL(`${origin}/?network=mainnet&code=voucher-1`)));
+  expect(target.pathname + target.search).toBe("/invitations?code=voucher-1");
+  await openFaucet(page, { invitation: true, startPath: target.pathname, query: target.search });
+  await expect(page.locator("h1")).toHaveText("Mainnet identity invitations");
+  await expect(page.locator("dashhq-bar")).toHaveAttribute("network", "mainnet");
+  await expect(page.locator("#addressInput")).toHaveCount(0);
+});
+
+for (const query of ["?network=testnet", ""]) {
+  test(`/${query} stays on the Testnet faucet`, async ({ page }) => {
+    await openFaucet(page, { query });
+    expect(new URL(page.url()).pathname).toBe("/");
+    await expect(page.locator("h1")).toHaveText("Get testnet DASH");
+    await expect(page.locator("dashhq-bar")).toHaveAttribute("network", "testnet");
+  });
+}
+
+test("the invitations status line sits inside its sources block, not above an empty gap", async ({ page }) => {
+  await openFaucet(page, { invitation: true });
+  const block = page.locator(".dh-sources");
+  await expect(block).toHaveCount(1);
+  await expect(block.locator("#statusBar")).toHaveText("Mainnet invitations");
+  await expect(block.locator("#statusSource")).toHaveText("Just now");
+  const [status, source] = await Promise.all([page.locator("#statusBar").boundingBox(), page.locator("#statusSource").boundingBox()]);
+  const gap = source.y >= status.y + status.height ? source.y - (status.y + status.height) : 0;
+  expect(gap).toBeLessThan(16);
 });
