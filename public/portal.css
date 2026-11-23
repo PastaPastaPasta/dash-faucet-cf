@@ -1,6 +1,6 @@
 /* Dash Faucet account pages. Brand navy and Dash blue, like the public faucet;
    monospace only where the content is code (keys, codes, commands). */
-:root { --navy-1: var(--dh-page); --navy-2: var(--dh-page); --surface: var(--dh-surface); --surface-2: var(--dh-sunken); --rule: var(--dh-line); --text: var(--dh-ink); --muted: var(--dh-ink-2); --blue: var(--dh-brand-ink); --blue-hover: var(--dh-brand-ink); --focus: var(--dh-focus); --green: var(--dh-good); --red: var(--dh-bad); --amber: var(--dh-warn); --radius: var(--dh-r3); --mono: var(--dh-mono); }
+:root { --navy-1: var(--dh-page); --navy-2: var(--dh-page); --surface: var(--dh-surface); --surface-2: var(--dh-sunken); --rule: var(--dh-line); --text: var(--dh-ink); --muted: var(--dh-ink-2); --blue: var(--dh-brand-ink); --blue-hover: var(--dh-brand-ink); --focus: var(--dh-focus); --red: var(--dh-bad); --amber: var(--dh-warn); --radius: var(--dh-r3); --mono: var(--dh-mono); }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { background: var(--navy-2); }
@@ -61,7 +61,7 @@ label.field .hint { font-size: 13px; color: var(--dh-ink-2); }
 .slip-key {
   font-family: var(--mono); font-size: 19px; line-height: 1.4; letter-spacing: 0.01em;
   word-break: break-all; padding: 14px 16px; border-radius: var(--radius);
-  background: var(--dh-sunken); border: 1px dashed var(--dh-good); user-select: all;
+  background: var(--dh-sunken); border: 1px dashed var(--dh-brand); user-select: all;
 }
 .slip .form-actions { margin-top: 14px; }
 @media (prefers-reduced-motion: no-preference) {
