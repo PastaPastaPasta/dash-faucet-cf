@@ -15,6 +15,8 @@ function parseNetwork(value: string | null): string | null {
 /**
  * Where a request for `/` that asks for mainnet belongs, or null when it does
  * not ask for mainnet. `?network=` wins over the legacy `?net=`, as in the shell.
+ * Other parameters are kept as they are; testnet-only ones such as `code` or
+ * `amount` mean nothing on `/invitations` and are ignored there.
  */
 export function mainnetHomeRedirect(url: URL): string | null {
   if (url.pathname !== "/") return null;

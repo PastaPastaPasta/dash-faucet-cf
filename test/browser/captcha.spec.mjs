@@ -765,8 +765,8 @@ test("the API key card stays hidden without sign-in", async ({ page }) => {
 
 // The Worker's 302 itself is covered in test/worker/home.test.ts; this checks where it sends people.
 test("/?network=mainnet is sent to the Mainnet invitations, keeping other parameters", async ({ page }) => {
-  const target = new URL(mainnetHomeRedirect(new URL(`${origin}/?network=mainnet&code=voucher-1`)));
-  expect(target.pathname + target.search).toBe("/invitations?code=voucher-1");
+  const target = new URL(mainnetHomeRedirect(new URL(`${origin}/?network=mainnet&from=bridge`)));
+  expect(target.pathname + target.search).toBe("/invitations?from=bridge");
   await openFaucet(page, { invitation: true, startPath: target.pathname, query: target.search });
   await expect(page.locator("h1")).toHaveText("Mainnet identity invitations");
   await expect(page.locator("dashhq-bar")).toHaveAttribute("network", "mainnet");
