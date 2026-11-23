@@ -64,7 +64,7 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 #bridgeReturn, #bridgeReturnActions { margin-top: 20px; }
 #bridgeReturn dashhq-hash { display: block; margin: 8px 0 16px; }
 .error:not(.visible) { display: none; }
-#coreFaucetCard { padding: 0; background: none; border: 0; }
+#coreFaucetCard { padding: 0; background: none; border: 0; box-shadow: none; }
 #addressIntro { margin-block: 0; }
 #addressIntro a { display: flex; align-items: center; gap: 8px; padding-block: 10px; font: 560 15px/1.5 var(--dh-font); text-decoration: none; }
 #addressIntro a::before { content: "→"; flex: none; width: 16px; text-align: center; }
@@ -160,6 +160,17 @@ body > main { width: 100%; }
 .reserve-summary { border-bottom: 0; padding-bottom: 0; }
 
 
+/* Faucet surfaces over the shell 2.0 tokens: the request card is lifted a step above the surface in dark (white in
+   light), and secondary panels sit between surface and page. */
+:root {
+  --faucet-raise: color-mix(in srgb, var(--dh-raised) 50%, var(--dh-surface));
+  --faucet-quiet: color-mix(in srgb, var(--dh-surface) 60%, var(--dh-page));
+  --faucet-shadow: 0 1px 2px rgba(6, 14, 36, .06), 0 12px 28px -16px rgba(6, 14, 36, .32);
+}
+.dh-input-group { border-radius: var(--dh-r2); }
+.dh-input-group:focus-within { outline: var(--dh-ring-w) solid var(--dh-focus); outline-offset: var(--dh-ring-offset); }
+.dh-input-group > .dh-input:focus { outline: none; }
+
 /* Home: the request is one raised card and the page's single task. The identity offer and the API key share a quieter
    side panel; the two reserves follow as matching panels; the status line closes the page. */
 .faucet-home { --panel-r: 12px; }
@@ -168,8 +179,7 @@ body > main { width: 100%; }
 .faucet-home .dh-page-header__lede { font-size: 18px; }
 
 .faucet-offers { gap: 28px; align-items: start; }
-.faucet-request { min-width: 0; padding: 34px 36px 8px; background: var(--faucet-raise); border: 1px solid var(--faucet-raise-line); border-radius: var(--panel-r); box-shadow: var(--faucet-shadow); }
-#coreFaucetCard { padding: 0; background: none; border: 0; }
+.faucet-request { min-width: 0; padding: 34px 36px 8px; background: var(--faucet-raise); border: 1px solid var(--dh-line); border-radius: var(--panel-r); box-shadow: var(--faucet-shadow); }
 .faucet-request .dh-field__label { font-size: 14px; font-weight: 600; color: var(--dh-ink); }
 #addressHint { margin: 2px 0 10px; font-size: 13.5px; }
 .amount-hint, #addressValidation { font-size: 13.5px; }
@@ -178,7 +188,7 @@ body > main { width: 100%; }
 .request-fields { gap: 14px 18px; }
 .send-row { margin-top: 20px; }
 .send-row > .dh-btn--primary { width: 100%; height: 50px; font-size: 16px; border-radius: 8px; }
-#addressIntro { margin: 26px -36px 0; padding: 6px 36px; border-top: 1px solid var(--faucet-raise-line); }
+#addressIntro { margin: 26px -36px 0; padding: 6px 36px; border-top: 1px solid var(--dh-line); }
 #addressIntro a { font-size: 14.5px; }
 #bridgeReturn { margin-top: 16px; }
 
@@ -189,16 +199,16 @@ body > main { width: 100%; }
 #signInBox #signInCodeBtn:hover { background: var(--dh-raised-hover); }
 
 .faucet-side { gap: 0; padding: 0; background: var(--faucet-quiet); border: 0; border-radius: var(--panel-r); box-shadow: 0 0 0 1px var(--dh-line); }
-.faucet-side > .dh-card { padding: 24px; background: none; border: 0; border-radius: 0; }
+.faucet-side > .dh-card { padding: 24px; background: none; border: 0; border-radius: 0; box-shadow: none; }
 .faucet-side > .dh-card + .dh-card:not([hidden]) { border-top: 1px solid var(--dh-line); }
 .network-kicker.mainnet { display: inline-flex; align-items: center; gap: 7px; width: fit-content; margin-bottom: 10px; padding: 3px 9px; border-radius: 999px;
-  background: var(--faucet-real-soft); color: var(--faucet-real); font-size: 12px; font-weight: 640; letter-spacing: .01em; }
+  background: var(--dh-real-soft); color: var(--dh-real); font-size: 13px; font-weight: 640; letter-spacing: .01em; }
 .network-kicker.mainnet::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .invitation-entry h2 { margin-bottom: 6px; font-size: 19px; }
 .invitation-entry .description { margin-bottom: 14px; font-size: 14px; }
 .invitation-steps { gap: 8px; margin: 0 0 18px; font-size: 14px; color: var(--dh-ink); }
 .invitation-steps li { align-items: center; }
-.invitation-steps li::before { width: 22px; height: 22px; background: var(--dh-brand-soft); color: var(--dh-brand-ink); font-size: 12px; }
+.invitation-steps li::before { width: 22px; height: 22px; background: var(--dh-brand-soft); color: var(--dh-brand-ink); font-size: 13px; }
 .invitation-entry .dh-actions { display: grid; gap: 8px; margin: 0; }
 #networkChoice { width: 100%; height: 42px; border-color: var(--dh-brand); background: transparent; color: var(--dh-brand-ink); font-weight: 620; }
 #networkChoice:hover { background: var(--dh-brand-soft); }
@@ -259,7 +269,7 @@ body > main { width: 100%; }
 .page-invitations #networkChoice { margin-bottom: 20px; }
 .page-invitations #networkChoice a { font-size: 14px; font-weight: 560; text-decoration: none; }
 .page-invitations #networkChoice a:hover { text-decoration: underline; }
-.page-invitations #invitationCard { margin: 0; padding: 28px 30px; background: var(--faucet-raise); border-color: var(--faucet-raise-line); border-radius: 12px; box-shadow: var(--faucet-shadow); }
+.page-invitations #invitationCard { margin: 0; padding: 28px 30px; background: var(--faucet-raise); border-color: var(--dh-line); border-radius: 12px; box-shadow: var(--faucet-shadow); }
 .page-invitations #invitationCard .initial-view > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .page-invitations #invitationCard .description { font-size: 15px; }
 .page-invitations #invitationBtn { height: 48px; padding-inline: 28px; font-size: 16px; border-radius: 8px; }
@@ -267,8 +277,10 @@ body > main { width: 100%; }
 .page-invitations .treasury-panel > summary { padding: 14px 18px; }
 .page-invitations .treasury-panel[open] > :not(summary) { padding-inline: 18px; }
 .page-invitations .treasury-panel[open] { padding-bottom: 18px; }
-.page-invitations .footer-status { margin: 28px 0 0; padding-top: 14px; border-top: 1px solid var(--dh-line); font-size: 13.5px; font-weight: 600; color: var(--dh-ink); }
-.page-invitations .dh-sources { max-width: none; margin-top: 4px; padding-top: 0; border-top: 0; font-size: 13px; }
+.page-invitations .faucet-source { display: grid; gap: 4px; margin-top: 28px; padding-top: 14px; font-size: 13px; }
+.page-invitations #statusBar { font-size: 14px; font-weight: 600; color: var(--dh-ink); }
+.page-invitations .faucet-source > p:last-child { display: block; }
+.page-invitations .faucet-source > p:last-child > :not(:last-child)::after { margin-inline: 8px; }
 @media(max-width:640px) {
   .page-invitations .dh-page-header__title { font-size: 27px; }
   .page-invitations .dh-page-header__lede { font-size: 15.5px; }

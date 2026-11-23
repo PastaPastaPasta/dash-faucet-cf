@@ -145,5 +145,10 @@ pre { border-radius: 10px; }
   .dh-page-header__title { font-size: 29px; }
   .dh-page-header__lede { font-size: 15.5px; }
   .providers .dh-btn--primary { width: 100%; }
-  pre { font-size: 12.5px; padding: 12px 14px; }
+  pre { font-size: 13px; padding: 12px 14px; }
 }
+
+/* Input groups focus as one unit (admin's amount field); shell 2.0 still rings only the input. */
+.dh-input-group { border-radius: var(--dh-r2); }
+.dh-input-group:focus-within { outline: var(--dh-ring-w) solid var(--dh-focus); outline-offset: var(--dh-ring-offset); }
+.dh-input-group > .dh-input:focus { outline: none; }
