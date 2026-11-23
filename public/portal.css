@@ -132,3 +132,8 @@ body > main { width: 100%; }
 .keys-preview h2 { margin-bottom: 8px; }
 .keys-preview pre { margin-top: 14px; }
 .keys-preview .mono { font-size: .88em; white-space: nowrap; }
+
+/* The account pages share the home page's focused column and type scale. */
+.page-keys main .dh-narrow, .page-admin .signin { max-width: 680px; margin-inline: auto; }
+.dh-page-header__title { font-size: clamp(32px, 3.6vw, 44px); letter-spacing: -.025em; font-stretch: var(--dh-stretch-display); line-height: 1.04; }
+.providers .dh-btn--primary { height: 48px; padding-inline: 24px; font-size: 16px; }
