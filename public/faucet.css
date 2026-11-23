@@ -8,7 +8,7 @@ h2.dh-h2 { margin-bottom: 12px; }
 #invitationCard .description { max-width: 64ch; }
 .step-label,.network-kicker { font-size: 13px; font-weight: 520; color: var(--dh-brand-ink); margin-bottom: 12px; }
 .network-dot { display: none; }
-.network-kicker.mainnet { color: var(--dh-warn); }
+.network-kicker.mainnet { color: var(--dh-real); }
 .description { color: var(--dh-ink-2); margin-bottom: 20px; }
 .card-bottom { padding-top: 12px; }
 .hint { font-size: 13px; color: var(--dh-ink-2); margin: 12px 0; }
@@ -36,7 +36,7 @@ summary { font-weight: 620; cursor: pointer; }
 .funding-address-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
 .funding-address-label { color: var(--dh-ink-2); font-size: 13px; }
 .network-warning { margin-top: 12px; }
-.footer-status { color: var(--dh-ink-2); font-size: 12px; margin: 20px 0 40px; }
+.footer-status { color: var(--dh-ink-2); font-size: 13px; margin: 20px 0 40px; }
 .turnstile-holder { margin-top: 16px; }
 .turnstile-holder:empty { margin: 0; }
 .hard-cap { display: none; margin-top: 16px; padding: 16px; background: var(--dh-brand-soft); border: 1px solid var(--dh-line); border-radius: var(--dh-r2); font-size: 13px; }
@@ -49,7 +49,7 @@ cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --
 .expiry.expired { color: var(--dh-bad); }
 .invitation-qr { display: flex; align-items: center; flex-direction: column; gap: 8px; margin: 16px auto; }
 .invitation-qr img { background: white; display: block; border-radius: var(--dh-r2); padding: 8px; width: min(100%,250px); height: auto; }
-.invitation-qr figcaption { color: var(--dh-ink-2); font-size: 12px; }
+.invitation-qr figcaption { color: var(--dh-ink-2); font-size: 13px; }
 .invitation-count { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 12px; color: var(--dh-ink-2); }
 .invitation-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); margin-top: 20px; }
 .invitation-item { text-align: center; }
@@ -115,9 +115,7 @@ body > main { width: 100%; }
   .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-request { background: var(--dh-surface); border: 1px solid var(--dh-line); border-radius: var(--dh-r3); }
 }
 
-:root { --start-platform: #25B8A6; --start-platform-ink: #0A2A3D; --start-platform-soft: #DCF4F1; }
-:root[data-theme="dark"] { --start-platform-soft: #103A40; }
-@media(prefers-color-scheme:dark) { :root:not([data-theme="light"]) { --start-platform-soft: #103A40; } }
+:root { --start-platform: var(--dh-tier-platform); --start-platform-ink: var(--dh-tier-platform-ink); --start-platform-soft: var(--dh-tier-platform-soft); }
 .family-platform-band { background: color-mix(in srgb, var(--start-platform-soft) 100%, var(--dh-page)); border-bottom: 1px solid var(--dh-line); }
 .family-platform-band .dh-narrow { min-height: 95px; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding-block: 8px; }
 .family-steps { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin: 0; font-size: 14px; }
@@ -132,7 +130,7 @@ body > main { width: 100%; }
 .reserve-stat[data-state="good"] dd > strong, .reserve-stat[data-state="warn"] dd > strong { color: var(--reserve-tone); }
 .reserve-figures .reserve-coverage { display: block; color: var(--dh-ink-2); font-size: 13px; margin-top: 8px; }
 @media(max-width:640px) {
-  .family-steps { font-size: 12px; }
+  .family-steps { font-size: 13px; }
   .offer-tile { width: 36px; height: 36px; }
   .reserve-figures { grid-template-columns: 1fr; }
   .reserve-stat { padding: 14px; }
@@ -170,7 +168,7 @@ body > main { width: 100%; }
 
 .invitation-steps { display: grid; gap: 6px; margin: 0 0 20px; padding: 0; list-style: none; counter-reset: step; color: var(--dh-ink-2); }
 .invitation-steps li { display: flex; align-items: baseline; gap: 10px; counter-increment: step; }
-.invitation-steps li::before { content: counter(step); flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--start-platform-soft); color: var(--dh-ink); font-size: 12px; font-weight: 660; }
+.invitation-steps li::before { content: counter(step); flex: none; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--start-platform-soft); color: var(--dh-ink); font-size: 13px; font-weight: 660; }
 .faucet-side { display: grid; gap: var(--dh-5); align-content: start; min-width: 0; }
 .faucet-side:not(:has(> :not([hidden]))) { display: none; }
 .dev-entry h2 { margin-bottom: 6px; }
