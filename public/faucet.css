@@ -11,7 +11,7 @@ h2.dh-h2 { margin-bottom: 12px; }
 .network-kicker.mainnet { color: var(--dh-real); }
 .description { color: var(--dh-ink-2); margin-bottom: 20px; }
 .card-bottom { padding-top: 12px; }
-.hint { font-size: 13px; color: var(--dh-ink-2); margin: 12px 0; }
+.hint { font-size: 14px; color: var(--dh-ink-2); margin: 12px 0; }
 .copy-btn.copied { background: var(--dh-good-soft); color: var(--dh-good); }
 :focus-visible { outline: 2px solid var(--dh-focus); outline-offset: 2px; }
 .config-view,.results-view { display: none; }
@@ -25,16 +25,16 @@ h2.dh-h2 { margin-bottom: 12px; }
 .action-buttons { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 summary { font-weight: 620; cursor: pointer; }
 .treasury-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; margin: 20px 0; }
-.treasury-heading p,.treasury-detail,.network-warning { color: var(--dh-ink-2); font-size: 13px; }
+.treasury-heading p,.treasury-detail,.network-warning { color: var(--dh-ink-2); font-size: 14px; }
 .treasury-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 24px; }
 .treasury-card { min-width: 0; }
 .treasury-card-title { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .treasury-balance { margin: 12px 0 6px; font-size: 26px; font-variant-numeric: tabular-nums; }
 .treasury-balance span { font-size: 14px; color: var(--dh-ink-2); }
-.inventory-row { display: flex; flex-wrap: wrap; gap: 12px; color: var(--dh-ink-2); font-size: 13px; margin-top: 8px; }
+.inventory-row { display: flex; flex-wrap: wrap; gap: 12px; color: var(--dh-ink-2); font-size: 14px; margin-top: 8px; }
 .funding-address { background: var(--dh-sunken); border-radius: var(--dh-r2); padding: 12px; margin-top: 16px; }
 .funding-address-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
-.funding-address-label { color: var(--dh-ink-2); font-size: 13px; }
+.funding-address-label { color: var(--dh-ink-2); font-size: 14px; }
 .network-warning { margin-top: 12px; }
 .turnstile-holder { margin-top: 16px; }
 .turnstile-holder:empty { margin: 0; }
@@ -44,12 +44,12 @@ summary { font-weight: 620; cursor: pointer; }
 .hard-cap p { color: var(--dh-ink-2); margin-top: 8px; }
 .hard-cap-holder { margin-top: 12px; }
 cap-widget { --cap-background: var(--dh-surface); --cap-color: var(--dh-ink); --cap-border-color: var(--dh-line-2); --cap-border-radius: 6px; }
-.expiry,.availability-line { color: var(--dh-ink-2); font-size: 13px; margin-top: 12px; }
+.expiry,.availability-line { color: var(--dh-ink-2); font-size: 14px; margin-top: 12px; }
 .expiry.expired { color: var(--dh-bad); }
 .invitation-qr { display: flex; align-items: center; flex-direction: column; gap: 8px; margin: 16px auto; }
 .invitation-qr img { background: white; display: block; border-radius: var(--dh-r2); padding: 8px; width: min(100%,250px); height: auto; }
 .invitation-qr figcaption { color: var(--dh-ink-2); font-size: 13px; }
-.invitation-count { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; margin-top: 12px; color: var(--dh-ink-2); }
+.invitation-count { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; margin-top: 12px; color: var(--dh-ink-2); }
 .invitation-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); margin-top: 20px; }
 .invitation-item { text-align: center; }
 .invitation-item .invitation-qr img { max-width: 190px; }
@@ -95,8 +95,9 @@ body > main { width: 100%; }
 #addressInput::placeholder { font-family: var(--dh-font); }
 #addressValidation:empty { display: none; }
 #addressHint { margin-bottom: 12px; }
-.faucet-source { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 32px; max-width: none; }
-.faucet-source > p { margin: 0; }
+.faucet-source { display: grid; gap: 4px; margin-top: 32px; max-width: none; }
+.faucet-source > p { margin-block: 0; }
+#statusBar { color: var(--dh-ink); }
 .treasury-panel { border: 0; background: none; padding: 0; margin: 0; }
 
 @media(min-width:721px) {
