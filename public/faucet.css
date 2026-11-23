@@ -125,9 +125,12 @@ body > main { width: 100%; }
 .invitation-entry > .offer-tile { margin-bottom: 16px; }
 .reserve-summary-heading { border-left: 4px solid var(--start-platform); padding-left: 12px; }
 .reserve-stat { --reserve-tone: var(--dh-line-2); min-width: 0; padding: 18px; border: 1px solid var(--dh-line); border-top: 3px solid var(--reserve-tone); border-radius: var(--dh-r3); background: var(--dh-surface); }
-.reserve-stat[data-state="good"] { --reserve-tone: var(--dh-good); }
 .reserve-stat[data-state="warn"] { --reserve-tone: var(--dh-warn); }
-.reserve-stat[data-state="good"] dd > strong, .reserve-stat[data-state="warn"] dd > strong { color: var(--reserve-tone); }
+.reserve-stat[data-state="warn"] dd > strong { color: var(--reserve-tone); }
+#invitationReserve:not([data-state="warn"]) { --reserve-tone: var(--dh-real); }
+#invitationReserve dt { display: flex; align-items: center; gap: 6px; color: var(--dh-real); font-weight: 600; }
+#invitationReserve dt::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--dh-real); }
+#invitationReserve .funding-address { background: var(--dh-real-soft); }
 .reserve-figures .reserve-coverage { display: block; color: var(--dh-ink-2); font-size: 13px; margin-top: 8px; }
 @media(max-width:640px) {
   .family-steps { font-size: 13px; }
