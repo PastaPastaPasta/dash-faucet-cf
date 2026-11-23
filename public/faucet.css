@@ -36,7 +36,6 @@ summary { font-weight: 620; cursor: pointer; }
 .funding-address-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
 .funding-address-label { color: var(--dh-ink-2); font-size: 13px; }
 .network-warning { margin-top: 12px; }
-.footer-status { color: var(--dh-ink-2); font-size: 13px; margin: 20px 0 40px; }
 .turnstile-holder { margin-top: 16px; }
 .turnstile-holder:empty { margin: 0; }
 .hard-cap { display: none; margin-top: 16px; padding: 16px; background: var(--dh-brand-soft); border: 1px solid var(--dh-line); border-radius: var(--dh-r2); font-size: 13px; }
