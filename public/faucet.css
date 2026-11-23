@@ -101,7 +101,7 @@ body > main { width: 100%; }
 .treasury-panel { border: 0; background: none; padding: 0; margin: 0; }
 
 @media(min-width:721px) {
-  body:has(#coreFaucetCard) > main.dh-page { padding-block: 32px 64px; }
+  body:has(#coreFaucetCard) > main.dh-page { padding-block: 32px 48px; }
   .faucet-home { display: flex; flex-direction: column; min-height: min(560px, calc(100vh - 260px)); }
   #addressIntro { margin-top: 12px; }
   .faucet-source { margin-top: auto; padding-top: 24px; }
