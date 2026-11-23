@@ -273,7 +273,7 @@ test("keeps validation quiet until blur and rejects off-origin returns", async (
 });
 
 
-test("shows an amber request action, invitation stock and both reserves before input", async ({ page }) => {
+test("shows a primary request action, invitation stock and both reserves before input", async ({ page }) => {
   const requests = await openFaucet(page);
   await page.locator('#addressInput').clear();
   await expect(page.locator('#coreFaucetBtn')).toBeEnabled();
@@ -285,8 +285,7 @@ test("shows an amber request action, invitation stock and both reserves before i
   await expect(page.locator('#networkChoice')).toHaveClass('dh-btn');
   const request = await page.locator('.faucet-request').boundingBox();
   const invitation = await page.locator('#invitationEntry').boundingBox();
-  expect(invitation.y).toBe(request.y);
-  expect(invitation.width).toBe(request.width);
+  expect(invitation.y).toBeGreaterThanOrEqual(request.y + request.height);
   await expect(page.locator('#networkChoice')).toHaveAttribute('href', '/invitations');
   await expect(page.locator('#reserveSummary')).toBeVisible();
   await expect(page.locator('#coreReserveLabel')).toHaveText('Testnet faucet');
