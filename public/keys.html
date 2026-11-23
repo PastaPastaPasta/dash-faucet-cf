@@ -10,6 +10,7 @@
     <link rel="stylesheet" href="/dashhq/dashhq-tokens.css" integrity="sha384-aEDxWOFu571LPbq5M5OqOZeoqZC5g7eEYa8Aq2UHHSF/2Dok40FPXpmpuKs2CP5A" crossorigin="anonymous">
     <link rel="stylesheet" href="/dashhq/dashhq-shell.css" integrity="sha384-ANtq2Txkv83GPDfpAYxQ89mKtRpHhUxFgcpxN8d+8Ibrm3mwfZw1CLoUNTJio+lO" crossorigin="anonymous">
     <link rel="stylesheet" href="/dashhq/dashhq-components.css" integrity="sha384-4R235uv4WDwuLIVnT+ZUBgihgaB2Xh5MneQpD8JdBicpFZLBdLo+8HfmCqnoCkui" crossorigin="anonymous">
+    <link rel="stylesheet" href="/faucet-theme.css">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/portal.css">
 </head>
@@ -26,7 +27,7 @@
         <p class="dh-page-header__lede">A key lets your scripts, CI jobs and agents request testnet DASH without a captcha or rate limits. Keep each one secret, and revoke it here when you no longer need it.</p>
       </header>
 
-      <section class="slip dh-notice dh-notice--success" id="newKey" hidden aria-live="polite">
+      <section class="slip dh-notice dh-notice--info" id="newKey" hidden aria-live="polite">
         <p class="dh-notice__title">Your new key. Copy it now; it won't be shown again.</p>
         <div class="slip-key" id="newKeyValue"></div>
         <div class="form-actions">
