@@ -72,7 +72,7 @@ label.field .hint { font-size: 13px; color: var(--dh-ink-2); }
 .snippet { margin-top: 18px; }
 .snippet-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--muted); font-size: 13px; }
 pre {
-  font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-all;
+  font-family: var(--mono); font-size: 13px; line-height: 1.6; white-space: pre; overflow-x: auto; overscroll-behavior-x: contain;
   background: var(--dh-sunken); border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px 16px;
 }
 
@@ -133,7 +133,17 @@ body > main { width: 100%; }
 .keys-preview pre { margin-top: 14px; }
 .keys-preview .mono { font-size: .88em; white-space: nowrap; }
 
-/* The account pages share the home page's focused column and type scale. */
-.page-keys main .dh-narrow, .page-admin .signin { max-width: 680px; margin-inline: auto; }
-.dh-page-header__title { font-size: clamp(32px, 3.6vw, 44px); letter-spacing: -.025em; font-stretch: var(--dh-stretch-display); line-height: 1.04; }
-.providers .dh-btn--primary { height: 48px; padding-inline: 24px; font-size: 16px; }
+/* The account pages share the home page's centred column, type scale and panel shapes. */
+.page-keys main .dh-narrow, .page-admin .signin { max-width: 720px; margin-inline: auto; }
+.dh-page-header__title { font-size: 40px; letter-spacing: -.022em; font-stretch: var(--dh-stretch-display); line-height: 1.06; }
+.dh-page-header__lede { font-size: 17px; }
+.providers .dh-btn--primary { height: 46px; padding-inline: 24px; font-size: 15.5px; border-radius: 8px; }
+.keys-preview h2, .section h2 { font-size: 18px; font-weight: 640; }
+pre { border-radius: 10px; }
+.slip-key, .dh-card, .panel.dh-card { border-radius: 12px; }
+@media (max-width: 640px) {
+  .dh-page-header__title { font-size: 29px; }
+  .dh-page-header__lede { font-size: 15.5px; }
+  .providers .dh-btn--primary { width: 100%; }
+  pre { font-size: 12.5px; padding: 12px 14px; }
+}

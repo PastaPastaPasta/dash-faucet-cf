@@ -15,7 +15,7 @@
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
 <body class="dh-fill">
-    <dashhq-bar product="faucet" network="testnet" aria-description="This faucet serves Testnet only. The network cannot be changed here." sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"></dashhq-bar>
+    <dashhq-bar product="faucet" network="testnet" aria-description="This faucet serves Testnet only. The network cannot be changed here." sticky><img slot="logo" src="/favicon.svg" alt="" width="22" height="22"><nav slot="nav" aria-label="Faucet"><a href="/" aria-current="page">Get DASH</a><a href="/invitations">Invitations</a><a href="/keys">API keys</a></nav></dashhq-bar>
     <section class="family-platform-band" id="journeyBand" aria-labelledby="startHeading" hidden>
         <div class="dh-container"><div class="dh-narrow">
             <ol class="dh-steps family-steps" aria-label="Start on Testnet journey">
@@ -25,13 +25,12 @@
         </div></div>
     </section>
     <main class="dh-container dh-page"><div class="faucet-home">
-        <div class="faucet-offers">
-        <div class="faucet-request">
         <header class="dh-page-header">
-            <span class="offer-tile" aria-hidden="true">tD</span>
             <h1 class="dh-page-header__title dh-h1" id="pageTitle">Get testnet DASH</h1>
             <p class="dh-page-header__lede" id="pageSubtitle">Practice funds with no monetary value.</p>
         </header>
+        <div class="faucet-offers">
+        <div class="faucet-request">
 
         <div class="feature-grid" id="featureGrid">
         <!-- Core Faucet Section -->
@@ -106,7 +105,6 @@
 
         <div class="faucet-side">
         <section class="dh-card invitation-entry" id="invitationEntry" aria-labelledby="invitationEntryHeading">
-            <span class="offer-tile" aria-hidden="true">ID</span>
             <p class="network-kicker mainnet">Mainnet · real DASH</p>
             <h2 class="dh-h2" id="invitationEntryHeading">Create a Dash Identity</h2>
             <p class="description">Get an invitation with <span id="invitationEntryAmount">…</span> <span id="invitationEntryCurrency">DASH</span> for one identity and a non-contested name.</p>

@@ -285,7 +285,8 @@ test("shows a primary request action, invitation stock and both reserves before 
   await expect(page.locator('#networkChoice')).toHaveClass('dh-btn');
   const request = await page.locator('.faucet-request').boundingBox();
   const invitation = await page.locator('#invitationEntry').boundingBox();
-  expect(invitation.y).toBeGreaterThanOrEqual(request.y + request.height);
+  expect(invitation.y).toBe(request.y);
+  expect(invitation.width).toBeLessThan(request.width);
   await expect(page.locator('#networkChoice')).toHaveAttribute('href', '/invitations');
   await expect(page.locator('#reserveSummary')).toBeVisible();
   await expect(page.locator('#coreReserveLabel')).toHaveText('Testnet faucet');

@@ -101,33 +101,20 @@ body > main { width: 100%; }
 
 @media(min-width:721px) {
   body:has(#coreFaucetCard) > main.dh-page { padding-block: 32px 64px; }
-  .faucet-home { display: flex; flex-direction: column; min-height: min(560px, calc(100vh - 260px)); }
-  #addressIntro { margin-top: 12px; }
-  .faucet-source { margin-top: auto; padding-top: 24px; }
 }
 
-@media(min-width:900px) {
-  .faucet-home:has(#invitationEntry:not([hidden])) { max-width: none; }
-  .faucet-home:has(#invitationEntry:not([hidden])) .reserve-figures { column-gap: var(--dh-5); }
-  .faucet-offers:has(#invitationEntry:not([hidden])) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-request, .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-side > .dh-card { padding: var(--dh-5); }
-  .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-request { background: var(--dh-surface); border: 1px solid var(--dh-line); border-radius: var(--dh-r3); }
-}
 
 .family-platform-band { background: var(--dh-brand-soft); border-bottom: 1px solid var(--dh-line); }
 .family-platform-band .dh-narrow { min-height: 95px; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding-block: 8px; }
 .family-steps { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 8px; margin: 0; font-size: 14px; }
 .family-steps > li, .family-steps > li:last-child { display: block; text-align: left; white-space: normal; padding-top: 10px; border-top: 3px solid var(--dh-line-2); }
 .dh-steps.family-steps > li::before, .dh-steps.family-steps > li::after { display: none; }
-.offer-tile { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 8px; background: var(--dh-brand-soft); color: var(--dh-brand-ink); font-size: 14px; font-weight: 700; font-stretch: var(--dh-stretch-head); }
-.invitation-entry > .offer-tile { margin-bottom: 16px; }
 .reserve-stat { --reserve-tone: var(--dh-line-2); min-width: 0; padding: 18px; border: 1px solid var(--dh-line); border-top: 3px solid var(--reserve-tone); border-radius: var(--dh-r3); background: var(--dh-surface); }
 .reserve-stat[data-state="warn"] { --reserve-tone: var(--dh-warn); }
 .reserve-stat[data-state="warn"] dd > strong { color: var(--reserve-tone); }
 .reserve-figures .reserve-coverage { display: block; color: var(--dh-ink-2); font-size: 13px; margin-top: 8px; }
 @media(max-width:640px) {
   .family-steps { font-size: 13px; }
-  .offer-tile { width: 36px; height: 36px; }
   .reserve-figures { grid-template-columns: 1fr; }
   .reserve-stat { padding: 14px; }
 }
@@ -170,71 +157,121 @@ body > main { width: 100%; }
 .dev-entry h2 { margin-bottom: 6px; }
 .dev-entry .description { margin-bottom: 10px; }
 @media(max-width:640px) { .faucet-side { gap: var(--dh-3); } }
-@media(max-width:899px) { .dev-entry { display: none; } .faucet-side:not(:has(> :not([hidden]):not(.dev-entry))) { display: none; } }
-@media(max-width:380px) { #coreFaucetCard #addressInput { padding-inline: 8px; letter-spacing: -0.04em; } }
 .reserve-summary { border-bottom: 0; padding-bottom: 0; }
 
-/* One focused column. The request form is the page; the identity offer, the API key and the reserves
-   follow as quieter rows, with hairlines instead of boxes. */
-.faucet-request .offer-tile, .invitation-entry > .offer-tile { display: none; }
-.faucet-home, .faucet-home:has(#invitationEntry:not([hidden])) { max-width: 680px; margin-inline: auto; }
-.faucet-offers, .faucet-offers:has(#invitationEntry:not([hidden])) { grid-template-columns: minmax(0, 1fr); gap: 0; }
-.faucet-offers > .faucet-request, .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-request { padding: 0; background: none; border: 0; }
-.faucet-request .dh-page-header { gap: 12px; margin-bottom: 32px; }
-.faucet-request .dh-page-header__title { font-size: clamp(34px, 4.4vw, 52px); line-height: 1.02; font-stretch: var(--dh-stretch-display); letter-spacing: -.025em; }
-.faucet-request .dh-page-header__lede { font-size: 18px; }
-#coreFaucetCard { padding: 28px; background: var(--dh-surface); border: 1px solid var(--dh-line); border-radius: 14px; box-shadow: var(--faucet-shadow); }
+
+/* Home: the request is one raised card and the page's single task. The identity offer and the API key share a quieter
+   side panel; the two reserves follow as matching panels; the status line closes the page. */
+.faucet-home { --panel-r: 12px; }
+.faucet-home > .dh-page-header { gap: 10px; margin-bottom: 28px; }
+.faucet-home .dh-page-header__title { font-size: 46px; line-height: 1.04; font-stretch: var(--dh-stretch-display); letter-spacing: -.022em; }
+.faucet-home .dh-page-header__lede { font-size: 18px; }
+
+.faucet-offers { gap: 28px; align-items: start; }
+.faucet-request { min-width: 0; padding: 34px 36px 8px; background: var(--faucet-raise); border: 1px solid var(--faucet-raise-line); border-radius: var(--panel-r); box-shadow: var(--faucet-shadow); }
+#coreFaucetCard { padding: 0; background: none; border: 0; }
 .faucet-request .dh-field__label { font-size: 14px; font-weight: 600; color: var(--dh-ink); }
-#addressHint, .amount-hint, #addressValidation { font-size: 13.5px; }
+#addressHint { margin: 2px 0 10px; font-size: 13.5px; }
+.amount-hint, #addressValidation { font-size: 13.5px; }
 #coreFaucetCard .dh-input { height: 46px; font-size: 15px; }
-#coreFaucetCard .dh-input-group__addon { height: 46px; background: var(--dh-sunken); color: var(--dh-ink-2); border-color: var(--dh-line-2); }
+#coreFaucetCard .dh-input-group__addon { height: 46px; padding-inline: 14px; background: var(--dh-sunken); color: var(--dh-ink-2); border-color: var(--dh-line-2); font-weight: 560; }
+.request-fields { gap: 14px 18px; }
 .send-row { margin-top: 20px; }
 .send-row > .dh-btn--primary { width: 100%; height: 50px; font-size: 16px; border-radius: 8px; }
-#addressIntro, body > main #addressIntro { margin-top: 14px; }
+#addressIntro { margin: 26px -36px 0; padding: 6px 36px; border-top: 1px solid var(--faucet-raise-line); }
+#addressIntro a { font-size: 14.5px; }
+#bridgeReturn { margin-top: 16px; }
 
-.faucet-side, .faucet-side:has(> :not([hidden])) { gap: 0; margin-top: 48px; border-top: 1px solid var(--dh-line); }
-.faucet-side > .dh-card, .faucet-offers:has(#invitationEntry:not([hidden])) > .faucet-side > .dh-card { padding: 24px 0; background: none; border: 0; border-bottom: 1px solid var(--dh-line); border-radius: 0; }
-.invitation-entry { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; align-items: start; }
-.invitation-entry > * { grid-column: 1; }
-.invitation-entry .dh-actions { grid-column: 2; grid-row: 1 / span 4; display: grid; justify-items: end; gap: 8px; text-align: right; margin: 0; }
-.invitation-entry .dh-actions__note { margin: 0; }
-.network-kicker.mainnet { display: inline-flex; align-items: center; gap: 8px; width: fit-content; font-size: 12.5px; font-weight: 640; letter-spacing: .06em; text-transform: uppercase; color: var(--faucet-real); }
-.network-kicker.mainnet::before { content: ""; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
-.invitation-entry h2 { font-size: 20px; margin-bottom: 6px; }
-.invitation-entry .description { margin-bottom: 10px; }
-.invitation-steps { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 0; font-size: 14px; }
-.invitation-steps li::before { width: 20px; height: 20px; font-size: 11px; background: var(--dh-sunken); color: var(--dh-ink); }
-.dev-entry h2 { font-size: 16px; }
-.dev-entry .description { margin-bottom: 8px; }
-@media(min-width:900px) { .dev-entry { display: block; } }
+#signInBox .dh-notice__actions { gap: 10px; margin-top: 10px; }
+#signInBox #signInLink { border-color: transparent; background: var(--dh-brand-fill); color: #FFFFFF; font-weight: 620; }
+#signInBox #signInLink:hover { background-image: linear-gradient(var(--dh-shade-1), var(--dh-shade-1)); }
+#signInBox #signInCodeBtn { padding: 0 14px; border: 1px solid var(--dh-raised-line); background: var(--dh-raised); color: var(--dh-ink); font-weight: 560; }
+#signInBox #signInCodeBtn:hover { background: var(--dh-raised-hover); }
+
+.faucet-side { gap: 0; padding: 0; background: var(--faucet-quiet); border: 0; border-radius: var(--panel-r); box-shadow: 0 0 0 1px var(--dh-line); }
+.faucet-side > .dh-card { padding: 24px; background: none; border: 0; border-radius: 0; }
+.faucet-side > .dh-card + .dh-card:not([hidden]) { border-top: 1px solid var(--dh-line); }
+.network-kicker.mainnet { display: inline-flex; align-items: center; gap: 7px; width: fit-content; margin-bottom: 10px; padding: 3px 9px; border-radius: 999px;
+  background: var(--faucet-real-soft); color: var(--faucet-real); font-size: 12px; font-weight: 640; letter-spacing: .01em; }
+.network-kicker.mainnet::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.invitation-entry h2 { margin-bottom: 6px; font-size: 19px; }
+.invitation-entry .description { margin-bottom: 14px; font-size: 14px; }
+.invitation-steps { gap: 8px; margin: 0 0 18px; font-size: 14px; color: var(--dh-ink); }
+.invitation-steps li { align-items: center; }
+.invitation-steps li::before { width: 22px; height: 22px; background: var(--dh-brand-soft); color: var(--dh-brand-ink); font-size: 12px; }
+.invitation-entry .dh-actions { display: grid; gap: 8px; margin: 0; }
+#networkChoice { width: 100%; height: 42px; border-color: var(--dh-brand); background: transparent; color: var(--dh-brand-ink); font-weight: 620; }
+#networkChoice:hover { background: var(--dh-brand-soft); }
+.invitation-entry .dh-actions__note { margin: 0; font-size: 13px; text-align: center; color: var(--dh-ink-2); }
+.dev-entry h2 { margin-bottom: 4px; font-size: 15px; }
+.dev-entry .description { margin-bottom: 8px; font-size: 13.5px; }
+.dev-entry .dh-link--go { font-size: 14px; }
 
 .reserve-summary { margin-top: 48px; padding: 0; border: 0; }
-.reserve-summary-heading .dh-h3 { font-size: 15px; font-weight: 640; letter-spacing: .06em; text-transform: uppercase; color: var(--dh-ink-2); }
-.reserve-intro { font-size: 14px; }
-.reserve-figures { grid-template-columns: minmax(0, 1fr); gap: 0; border-top: 1px solid var(--dh-line); }
-.reserve-stat { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); column-gap: 24px; padding: 18px 0; border: 0; border-bottom: 1px solid var(--dh-line); border-radius: 0; background: none; }
-.reserve-stat > * { grid-column: 1; }
-.reserve-figures .funding-address { grid-column: 2; grid-row: 1 / span 4; margin: 0; align-self: start; background: var(--dh-surface); border: 1px solid var(--dh-line); }
+.reserve-summary-heading { gap: 10px; margin-bottom: 4px; }
+.reserve-summary-heading .dh-h3 { font-size: 20px; font-weight: 640; }
+.reserve-intro { margin-bottom: 16px; font-size: 14px; }
+.reserve-figures { gap: 20px; }
+.reserve-stat { padding: 22px 24px 24px; background: var(--faucet-quiet); border: 1px solid var(--dh-line); border-radius: var(--panel-r); }
+.reserve-stat[data-state="warn"] { border-color: color-mix(in srgb, var(--dh-warn) 55%, var(--dh-line)); }
+.reserve-figures dt { margin-bottom: 6px; font-size: 13px; font-weight: 620; color: var(--dh-ink-2); }
 .reserve-stat[data-state="warn"] dt { color: var(--dh-warn); }
-.reserve-figures dt { font-size: 14px; font-weight: 600; color: var(--dh-ink); }
-.reserve-figures dd > strong { font-size: 22px; font-weight: 640; color: var(--dh-ink); }
-.reserve-figures .reserve-coverage { margin-bottom: 0; }
-.faucet-source { margin-top: 24px; font-size: 13px; }
+.reserve-figures dd > strong { font-size: 36px; line-height: 1.1; font-weight: 660; font-stretch: var(--dh-stretch-stat); letter-spacing: -.01em; color: var(--dh-ink); }
+.reserve-figures dd > span { font-size: 15px; font-weight: 560; }
+.reserve-figures .reserve-note { margin-top: 6px; font-size: 13.5px; }
+.reserve-figures .reserve-coverage { margin: 2px 0 18px; font-size: 13.5px; }
+.reserve-figures .funding-address { padding: 12px 14px 14px; background: var(--dh-sunken); border: 1px solid var(--dh-line); border-radius: 8px; }
+.funding-address-label { font-size: 13px; font-weight: 600; color: var(--dh-ink-2); }
+.funding-address dashhq-hash { margin-top: 2px; font-size: 13.5px; color: var(--dh-ink); }
+.network-warning { font-size: 13px; }
+.faucet-source { margin-top: 32px; padding-top: 14px; font-size: 13px; }
 
-@media(max-width:899px) {
-  .faucet-side { margin-top: 32px; }
-  .invitation-entry { grid-template-columns: minmax(0, 1fr); }
-  .invitation-entry .dh-actions { grid-column: 1; grid-row: auto; justify-items: stretch; text-align: left; margin-top: 16px; }
-  .invitation-steps { display: grid; }
+@media(min-width:1000px) {
+  .faucet-home, .faucet-home:has(#invitationEntry:not([hidden])) { max-width: none; }
+  .faucet-offers:has(.faucet-side > :not([hidden])) { grid-template-columns: minmax(0, 1fr) minmax(300px, 360px); }
+  .faucet-home:not(:has(.faucet-side > :not([hidden]))) { max-width: 760px; }
+}
+@media(max-width:999px) {
+  .faucet-home { max-width: 720px; }
+  .faucet-home .dh-page-header__title { font-size: 38px; }
+  .faucet-offers { gap: 16px; }
 }
 @media(max-width:640px) {
-  #coreFaucetCard { padding: 20px 12px; margin-inline: -8px; }
-  .faucet-request .dh-page-header__title { font-size: 34px; }
-  .reserve-stat { grid-template-columns: minmax(0, 1fr); }
-  .reserve-figures .funding-address { grid-column: 1; grid-row: auto; margin-top: 12px; }
+  body:has(#coreFaucetCard) > main.dh-page { padding-top: 24px; }
+  .faucet-home > .dh-page-header { margin-bottom: 20px; gap: 6px; }
+  .faucet-home .dh-page-header__title { font-size: 31px; }
+  .faucet-home .dh-page-header__lede { font-size: 16px; }
+  .faucet-request { margin-inline: -6px; padding: 20px 14px 4px; }
+  #addressIntro { margin-inline: -14px; padding-inline: 14px; margin-top: 18px; }
+  .faucet-side { margin-inline: -6px; }
+  .faucet-side > .dh-card { padding: 20px 16px; }
+  .reserve-summary { margin-top: 36px; }
+  .reserve-figures { gap: 14px; }
+  .reserve-stat { padding: 18px 16px; }
+  .reserve-figures dd > strong { font-size: 30px; }
 }
-@media(max-width:480px) { #networkChoice { width: 100%; } }
-.page-invitations main > .dh-narrow { max-width: 680px; margin-inline: auto; }
-.page-invitations .dh-page-header__title { font-size: clamp(32px, 3.6vw, 44px); letter-spacing: -.025em; font-stretch: var(--dh-stretch-display); line-height: 1.04; }
-.page-invitations #invitationCard { padding: 28px; border-radius: 14px; box-shadow: var(--faucet-shadow); }
-.page-invitations #invitationBtn { height: 48px; padding-inline: 28px; font-size: 16px; }
+@media(max-width:380px) { #coreFaucetCard #addressInput { padding-inline: 8px; letter-spacing: -0.03em; } }
+
+/* Mainnet invitations */
+.page-invitations main > .dh-narrow { max-width: 720px; margin-inline: auto; }
+.page-invitations .dh-page-header { gap: 10px; margin-bottom: 18px; }
+.page-invitations .dh-page-header__title { font-size: 40px; line-height: 1.06; font-stretch: var(--dh-stretch-display); letter-spacing: -.022em; }
+.page-invitations #networkChoice { margin-bottom: 20px; }
+.page-invitations #networkChoice a { font-size: 14px; font-weight: 560; text-decoration: none; }
+.page-invitations #networkChoice a:hover { text-decoration: underline; }
+.page-invitations #invitationCard { margin: 0; padding: 28px 30px; background: var(--faucet-raise); border-color: var(--faucet-raise-line); border-radius: 12px; box-shadow: var(--faucet-shadow); }
+.page-invitations #invitationCard .initial-view > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.page-invitations #invitationCard .description { font-size: 15px; }
+.page-invitations #invitationBtn { height: 48px; padding-inline: 28px; font-size: 16px; border-radius: 8px; }
+.page-invitations .treasury-panel { margin-top: 16px; background: var(--faucet-quiet); border: 1px solid var(--dh-line); border-radius: 12px; }
+.page-invitations .treasury-panel > summary { padding: 14px 18px; }
+.page-invitations .treasury-panel[open] > :not(summary) { padding-inline: 18px; }
+.page-invitations .treasury-panel[open] { padding-bottom: 18px; }
+.page-invitations .footer-status { margin: 28px 0 0; padding-top: 14px; border-top: 1px solid var(--dh-line); font-size: 13.5px; font-weight: 600; color: var(--dh-ink); }
+.page-invitations .dh-sources { max-width: none; margin-top: 4px; padding-top: 0; border-top: 0; font-size: 13px; }
+@media(max-width:640px) {
+  .page-invitations .dh-page-header__title { font-size: 27px; }
+  .page-invitations .dh-page-header__lede { font-size: 15.5px; }
+  .page-invitations #invitationCard { margin-inline: -6px; padding: 22px 16px; }
+  .page-invitations #invitationBtn { width: 100%; }
+}
