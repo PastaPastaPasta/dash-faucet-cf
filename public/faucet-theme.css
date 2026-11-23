@@ -30,6 +30,9 @@
   --faucet-shadow: 0 1px 2px rgba(11, 26, 46, .06), 0 8px 24px -12px rgba(11, 26, 46, .18);
   --faucet-real: var(--dh-warn);
   --faucet-real-soft: var(--dh-warn-soft);
+  --faucet-raise: #FFFFFF;
+  --faucet-raise-line: #D3DCE8;
+  --faucet-quiet: #F6F8FB;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -62,6 +65,9 @@
     --dh-plate-edge: #17325C;
     --dh-mark-edge: rgba(124, 192, 247, .38);
     --faucet-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 12px 32px -16px rgba(0, 0, 0, .8);
+    --faucet-raise: #152036;
+    --faucet-raise-line: #2A3A57;
+    --faucet-quiet: #0D1626;
   }
 }
 :root[data-theme="dark"] {
@@ -93,7 +99,15 @@
   --dh-plate-edge: #17325C;
   --dh-mark-edge: rgba(124, 192, 247, .38);
   --faucet-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset, 0 12px 32px -16px rgba(0, 0, 0, .8);
+  --faucet-raise: #152036;
+  --faucet-raise-line: #2A3A57;
+  --faucet-quiet: #0D1626;
 }
+
+/* Input groups focus as one unit: the ring goes around the field and its add-on together. */
+.dh-input-group { border-radius: var(--dh-r2); }
+.dh-input-group:focus-within { outline: var(--dh-ring-w) solid var(--dh-focus); outline-offset: var(--dh-ring-offset); }
+.dh-input-group > .dh-input:focus { outline: none; }
 
 /* The bar's network pill: Mainnet means real DASH, so its dot takes the caution tone, never green. */
 dashhq-bar[network="mainnet"] { --dh-good: var(--faucet-real); }
