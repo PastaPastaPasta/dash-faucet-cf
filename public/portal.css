@@ -32,7 +32,7 @@ a:hover { color: var(--dh-brand-ink); }
 .crumb { color: var(--muted); font-size: 15px; }
 .crumb::before { content: "/"; margin-right: 14px; color: var(--rule); }
 .who { margin-left: auto; display: flex; align-items: center; gap: 16px; font-size: 14px; }
-.who-name { color: var(--muted); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.who-name { color: var(--dh-ink-2); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Type */
 h2 { font-size: 17px; font-weight: 600; margin-bottom: 6px; }
